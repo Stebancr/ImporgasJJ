@@ -1,0 +1,21 @@
+services:
+
+
+  frontend:
+    image: node:20
+    container_name: frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    command: sh -c "npm install && npm run dev"
+    networks:
+      - shared_net
+
+networks:
+  shared_net:
+    external: false

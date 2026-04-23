@@ -1,0 +1,122 @@
+/* ==========================================
+   CONTACT PAGE
+   ========================================== */
+
+.contact-page {
+  overflow-x: hidden;
+  animation: pageFadeIn 0.4s ease-out;
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Remove default details marker */
+.contact-page details summary::-webkit-details-marker {
+  display: none;
+}
+
+.contact-page details summary {
+  list-style: none;
+}
+
+/* --- Hero header --- */
+.contact-hero {
+  overflow: hidden;
+}
+
+.contact-hero h1 {
+  word-break: break-word;
+}
+
+/* --- Info cards section (overlaps hero by -mt-8) --- */
+.contact-cards-section {
+  position: relative;
+  z-index: 10;
+  /* Provide enough padding so the negative margin doesn't push cards out */
+  padding-top: 2rem;
+  padding-bottom: 3rem;
+}
+
+/* Info cards grid */
+.contact-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .contact-cards-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .contact-cards-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* Card text — prevent overflow */
+.contact-card p {
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+/* --- Form + FAQ layout --- */
+.contact-main-grid {
+  display: grid;
+  gap: 3rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .contact-main-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Form field grids */
+.contact-field-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .contact-field-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Textarea — never overflow container */
+.contact-form textarea {
+  resize: vertical;
+  min-height: 8rem;
+  max-height: 20rem;
+  width: 100%;
+}
+
+/* FAQ accordion */
+.contact-faq details {
+  transition: box-shadow 0.2s;
+}
+
+.contact-faq details[open] {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.contact-faq summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Rotate chevron when open */
+.contact-faq details[open] .faq-chevron {
+  transform: rotate(180deg);
+}
+
+.faq-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+/* --- Map section --- */
+.contact-map {
+  overflow: hidden;
+  border-radius: 1rem;
+}
+

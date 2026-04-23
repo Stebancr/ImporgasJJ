@@ -1,0 +1,154 @@
+/* ==========================================
+   HOME PAGE
+   ========================================== */
+
+.home-page {
+  overflow-x: hidden;
+  animation: pageFadeIn 0.4s ease-out;
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Hero --- */
+.home-hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.home-hero__inner {
+  position: relative;
+  z-index: 10;
+  padding-bottom: 6rem; /* room for wave + floating card */
+}
+
+.home-hero__wave {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  line-height: 0;
+}
+
+.home-hero__wave svg {
+  display: block;
+  width: 100%;
+}
+
+/* Floating guarantee card */
+.home-hero__float-card {
+  position: absolute;
+  bottom: -1.5rem;
+  left: -1.5rem;
+  z-index: 20;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+
+/* Hero stats row — prevent squish on xs phones */
+.home-hero__stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .home-hero__stats { gap: 2rem; }
+}
+
+/* --- Features band --- */
+.home-features {
+  position: relative;
+  z-index: 10;
+  margin-top: -2.5rem;
+  padding-top: 2.5rem;
+  padding-bottom: 0;
+}
+
+@media (min-width: 1024px) {
+  .home-features {
+    margin-top: -2.5rem;
+    padding-top: 0;
+  }
+}
+
+/* Feature item wrapping */
+.home-feature-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .home-feature-item {
+    flex-direction: row;
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
+/* --- Categories grid --- */
+.home-categories__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+  .home-categories__grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+/* Category card — prevent text overflow */
+.home-category-card {
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* --- Featured products grid --- */
+.home-products__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
+@media (min-width: 640px) {
+  .home-products__grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .home-products__grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* --- CTA Banner --- */
+.home-cta {
+  overflow: hidden;
+  border-radius: 1.5rem;
+}
+
+.home-cta__inner {
+  position: relative;
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+@media (min-width: 1024px) {
+  .home-cta__inner { padding: 5rem 4rem; }
+}
+
+/* Prevent CTA heading overflow on small screens */
+.home-cta__heading {
+  word-break: break-word;
+  overflow-wrap: break-word;
+}

@@ -1,0 +1,124 @@
+/* ==========================================
+   LOGIN PAGE
+   ========================================== */
+
+.login-page {
+  display: flex;
+  min-height: 100dvh; /* dynamic viewport height for mobile browsers */
+  overflow: hidden;
+}
+
+/* --- Form side --- */
+.login-form-side {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 640px) {
+  .login-form-side { padding: 2rem; }
+}
+
+@media (min-width: 1024px) {
+  .login-form-side { padding: 3rem; }
+}
+
+.login-form-container {
+  width: 100%;
+  max-width: 28rem;
+}
+
+/* --- Branding side (hidden below lg) --- */
+.login-brand-side {
+  display: none;
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+@media (min-width: 1024px) {
+  .login-brand-side { display: flex; }
+}
+
+/* --- Social buttons row --- */
+.login-social-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+/* --- Form inputs --- */
+.login-input-wrap {
+  position: relative;
+}
+
+.login-input-wrap input {
+  width: 100%;
+}
+
+/* Password toggle button — ensure it stays inside the input */
+.login-input-wrap__toggle {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: #9CA3AF;
+  transition: color 0.2s;
+}
+
+.login-input-wrap__toggle:hover {
+  color: #4B5563;
+}
+
+/* Mode switcher text — no overflow */
+.login-mode-switcher {
+  text-align: center;
+  overflow-wrap: break-word;
+}
+
+/* Divider */
+.login-divider {
+  position: relative;
+  margin: 2rem 0;
+}
+
+.login-divider::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+}
+
+.login-divider__line {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #E5E7EB;
+}
+
+.login-divider__label {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.login-divider__label span {
+  padding: 0 1rem;
+  background: #FAFBFC;
+  color: #6B7280;
+  font-size: 0.875rem;
+}

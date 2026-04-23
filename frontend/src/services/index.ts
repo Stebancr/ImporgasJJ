@@ -1,0 +1,5 @@
+export { default as api } from './api'
+export { default as productsService } from './products'
+export { default as ordersService } from './orders'
+export { default as authService } from './auth'
+export { default as paymentsService } from './payments'
