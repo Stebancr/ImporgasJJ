@@ -1,0 +1,34 @@
+{
+    "count":  2,
+    "next":  null,
+    "previous":  null,
+    "results":  [
+                    {
+                        "id":  48,
+                        "correo_id":  72,
+                        "uuid_trabajador":  "65b0dd3e-d02f-4753-9bd4-8b041f6b3f30",
+                        "nombre_trabajador":  "Maria Garcia",
+                        "documento_trabajador":  "987654321",
+                        "cargo_nombre":  "ASISTENTE ADMINISTRATIVO",
+                        "empresa_nombre":  "CONSORCIO PEAJES 2526",
+                        "estado_trabajador":  0,
+                        "estado_nombre":  "Pendiente"
+                    },
+                    {
+                        "id":  47,
+                        "correo_id":  72,
+                        "uuid_trabajador":  "de0a05bd-5993-46a1-86e4-c89e9cfe7e9e",
+                        "nombre_trabajador":  "Juan Perez",
+                        "documento_trabajador":  "123456789",
+                        "cargo_nombre":  "ASISTENTE ADMINISTRATIVO",
+                        "empresa_nombre":  "CONSORCIO PEAJES 2526",
+                        "estado_trabajador":  0,
+                        "estado_nombre":  "Pendiente"
+                    }
+                ],
+    "correo_id":  72,
+    "uuid_correo":  "f302d434-20260104114204",
+    "asunto":  "Exámenes médicos",
+    "fecha_envio":  "2026-01-04T16:42:04.335999Z",
+    "total_trabajadores":  2
+}

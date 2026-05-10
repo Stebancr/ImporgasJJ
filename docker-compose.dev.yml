@@ -1,20 +1,97 @@
 services:
 
+  backend:
+    build: ./BACKEND
+    container_name: backend
+    command: sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - ./BACKEND:/app
+    env_file:
+      - .env
+    environment:
+      - DB_ENGINE=django.db.backends.postgresql
+      - DB_NAME=imporgas_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shared_net
 
-  frontend:
+  frontend-ecommerce:
     image: node:20
-    container_name: frontend
+    container_name: frontend-ecommerce
     working_dir: /app
     volumes:
-      - ./frontend:/app
+      - ./frontend_U:/app
       - /app/node_modules
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=development
+      - VITE_API_URL=/api
     command: sh -c "npm install && npm run dev"
     networks:
       - shared_net
+
+  frontend-software:
+    image: node:22
+    container_name: frontend-software
+    working_dir: /app
+    volumes:
+      - ./frontend_S:/app
+      - /app/node_modules
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=/api
+    command: sh -c "corepack enable && pnpm install && pnpm run dev"
+    networks:
+      - shared_net
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: imporgas_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shared_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf
+    ports:
+      - "80:80"
+      - "81:81"
+    depends_on:
+      - backend
+      - frontend-software
+      - frontend-ecommerce
+    networks:
+      - shared_net
+
+volumes:
+  postgres_data:
 
 networks:
   shared_net:

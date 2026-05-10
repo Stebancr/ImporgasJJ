@@ -1,0 +1,12 @@
+{
+    "empresas":  8,
+    "unidades":  13,
+    "proyectos":  29,
+    "centros":  103,
+    "activos":  {
+                    "empresas":  5,
+                    "unidades":  13,
+                    "proyectos":  29,
+                    "centros":  103
+                }
+}

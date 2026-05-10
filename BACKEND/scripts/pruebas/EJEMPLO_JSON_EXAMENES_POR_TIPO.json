@@ -1,0 +1,150 @@
+{
+  "empresas": [
+    {
+      "id": 1,
+      "nombre": "Ambulancias Cruz Roja",
+      "cargos": [
+        {
+          "id": 5,
+          "nombre": "CONDUCTOR AMBULANCIA",
+          "examenes_por_tipo": {
+            "INGRESO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 3,
+                "nombre": "TEST SICOSENSOMETRICO"
+              },
+              {
+                "id": 5,
+                "nombre": "AUDIOMETRIA"
+              }
+            ],
+            "PERIODICO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 2,
+                "nombre": "ENCUESTA DE SINTOMAS RESPIRATORIOS O CONTACTO ESTRECHO CON ENFERMEDADES INFECTOCONTAGIOSAS POR AEROSOLES"
+              },
+              {
+                "id": 5,
+                "nombre": "AUDIOMETRIA"
+              },
+              {
+                "id": 6,
+                "nombre": "OPTOMETRIA"
+              },
+              {
+                "id": 7,
+                "nombre": "GLICEMIA"
+              },
+              {
+                "id": 8,
+                "nombre": "PERFIL LIPIDICO"
+              },
+              {
+                "id": 9,
+                "nombre": "PRUEBA PARA IDENTIFICACION DE CONSUMO DE ALCOHOL Y SPA"
+              },
+              {
+                "id": 10,
+                "nombre": "VACUNA COVID-19"
+              }
+            ],
+            "RETIRO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 11,
+                "nombre": "ANTICUERPOS PARA VARICELA"
+              },
+              {
+                "id": 12,
+                "nombre": "ANTICUERPOS PARA HEPATITIS A"
+              }
+            ]
+          }
+        },
+        {
+          "id": 10,
+          "nombre": "PARAMEDICO AMBULANCIA",
+          "examenes_por_tipo": {
+            "INGRESO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 3,
+                "nombre": "TEST SICOSENSOMETRICO"
+              }
+            ],
+            "PERIODICO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 5,
+                "nombre": "AUDIOMETRIA"
+              },
+              {
+                "id": 10,
+                "nombre": "VACUNA COVID-19"
+              }
+            ],
+            "RETIRO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "nombre": "Bomberos Municipales",
+      "cargos": [
+        {
+          "id": 8,
+          "nombre": "TRIPULANTE DE INCIDENTES",
+          "examenes_por_tipo": {
+            "INGRESO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 4,
+                "nombre": "ENCUESTA DE SINTOMAS RESPIRATORIOS O CONTACTO ESTRECHO CON ENFERMEDADES INFECTOCONTAGIOSAS POR AEROSOLES"
+              }
+            ],
+            "PERIODICO": [
+              {
+                "id": 1,
+                "nombre": "EXAMEN MEDICO OCUPACIONAL"
+              },
+              {
+                "id": 7,
+                "nombre": "GLICEMIA"
+              },
+              {
+                "id": 8,
+                "nombre": "PERFIL LIPIDICO"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

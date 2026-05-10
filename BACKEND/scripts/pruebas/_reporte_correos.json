@@ -1,0 +1,218 @@
+[
+    {
+        "id":  72,
+        "uuid_correo":  "f302d434-20260104114204",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-04T16:42:04.335999Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  71,
+        "uuid_correo":  "932cc1e5-20260104113738",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-04T16:37:38.132076Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  70,
+        "uuid_correo":  "ef15a38f-20260104112147",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-04T16:21:47.570945Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  69,
+        "uuid_correo":  "6b15be94-20260104112017",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-04T16:20:17.675627Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  68,
+        "uuid_correo":  "3f37111e-20260104111948",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-04T16:19:48.128380Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  67,
+        "uuid_correo":  "ae40212e-20260104111525",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-04T16:15:25.368057Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  false
+    },
+    {
+        "id":  66,
+        "uuid_correo":  "dfbc6bfc-20260102163339",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-02T21:33:39.918664Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  65,
+        "uuid_correo":  "387fecd8-20260102163252",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-02T21:32:52.955635Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  64,
+        "uuid_correo":  "f66213dd-20260102153336",
+        "asunto":  "Exámenes médicos",
+        "fecha_envio":  "2026-01-02T20:14:01.078191Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  63,
+        "uuid_correo":  "a5edfcb9-20260102153336",
+        "asunto":  "TEST - Convocatoria Examenes Medicos con UUID",
+        "fecha_envio":  "2026-01-02T20:07:58.701808Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  62,
+        "uuid_correo":  "34aa68ed-20260102153336",
+        "asunto":  "TEST - Convocatoria Examenes Medicos con UUID",
+        "fecha_envio":  "2026-01-02T20:03:21.809470Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  61,
+        "uuid_correo":  "d38fac09-20260102153336",
+        "asunto":  "TEST - Convocatoria Examenes Medicos con UUID",
+        "fecha_envio":  "2026-01-02T20:02:37.166277Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  60,
+        "uuid_correo":  "85979abf-20260102153336",
+        "asunto":  "TEST - Convocatoria con UUID por Trabajador",
+        "fecha_envio":  "2026-01-02T19:49:33.932491Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  59,
+        "uuid_correo":  "1658d9ff-20260102153336",
+        "asunto":  "TEST - Convocatoria a Examenes Medicos (Solo Examenes Requeridos)",
+        "fecha_envio":  "2026-01-02T19:16:14.674396Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  58,
+        "uuid_correo":  "0123cf67-20260102153336",
+        "asunto":  "TEST - Convocatoria a Examenes Medicos Ocupacionales",
+        "fecha_envio":  "2026-01-02T19:13:43.657547Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  57,
+        "uuid_correo":  "b7b633ad-20260102153336",
+        "asunto":  "TEST - Convocatoria a Examenes Medicos Ocupacionales",
+        "fecha_envio":  "2026-01-02T19:11:14.350349Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  56,
+        "uuid_correo":  "05de01f8-20260102153336",
+        "asunto":  "TEST - Convocatoria a Examenes Medicos Ocupacionales",
+        "fecha_envio":  "2026-01-02T19:03:22.164045Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  55,
+        "uuid_correo":  "b9868d88-20260102153336",
+        "asunto":  "Prueba de envio masivo",
+        "fecha_envio":  "2026-01-02T18:44:17.039864Z",
+        "enviado_por_nombre":  "Julio Martin",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  54,
+        "uuid_correo":  "11aaa944-20260102153336",
+        "asunto":  "Exámenes médicos �?? CHOACUE RODRIGUEZ LUIS STEBAN",
+        "fecha_envio":  "2026-01-02T14:57:19.296507Z",
+        "enviado_por_nombre":  "Stefa",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  53,
+        "uuid_correo":  "0adcc657-20260102153336",
+        "asunto":  "Exámenes médicos �?? practicante.desarrollogh@regency.com.co",
+        "fecha_envio":  "2025-12-31T15:50:53.475064Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  52,
+        "uuid_correo":  "b3d3dfb6-20260102153336",
+        "asunto":  "Exámenes médicos �?? practicante.desarrollogh@regency.com.co",
+        "fecha_envio":  "2025-12-31T15:46:56.924656Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  51,
+        "uuid_correo":  "52759852-20260102153336",
+        "asunto":  "Exámenes médicos �?? practicante.desarrollogh@regency.com.co",
+        "fecha_envio":  "2025-12-31T15:46:38.698709Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  50,
+        "uuid_correo":  "6840f2c2-20260102153336",
+        "asunto":  "Exámenes médicos �?? practicante.desarrollogh@regency.com.co",
+        "fecha_envio":  "2025-12-31T15:46:25.993593Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    },
+    {
+        "id":  49,
+        "uuid_correo":  "ab5f01ca-20260102153336",
+        "asunto":  "Exámenes médicos �?? Juan Pérez Gómez",
+        "fecha_envio":  "2025-12-30T21:06:06.639365Z",
+        "enviado_por_nombre":  "LUIS STEBAN",
+        "trabajadores_count":  0,
+        "enviado_correctamente":  true
+    }
+]

@@ -1,0 +1,50 @@
+[
+    {
+        "id_colaborador":  27,
+        "nombre_colaborador":  "admin123",
+        "capacitaciones_totales":  2,
+        "capacitaciones_completadas":  2
+    },
+    {
+        "id_colaborador":  40,
+        "nombre_colaborador":  "ROJAS YENIFER",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  1
+    },
+    {
+        "id_colaborador":  44,
+        "nombre_colaborador":  "ANA ISABELLA",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  1
+    },
+    {
+        "id_colaborador":  46,
+        "nombre_colaborador":  "GUSTAVO ADOLFO",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  4
+    },
+    {
+        "id_colaborador":  52,
+        "nombre_colaborador":  "VASQUEZ VALENTINA",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  4
+    },
+    {
+        "id_colaborador":  54,
+        "nombre_colaborador":  "LUIS STEBAN",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  4
+    },
+    {
+        "id_colaborador":  55,
+        "nombre_colaborador":  "GUTIERREZ DANIELA",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  3
+    },
+    {
+        "id_colaborador":  56,
+        "nombre_colaborador":  "CollazosA",
+        "capacitaciones_totales":  4,
+        "capacitaciones_completadas":  4
+    }
+]
