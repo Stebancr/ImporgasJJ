@@ -25,35 +25,8 @@ interface AuthResponse {
   token: string
 }
 
-const DEMO_ADMIN = {
-  email: 'admin@gmail.com',
-  password: 'admin***',
-}
-
-function createDemoAdminUser(): User {
-  return {
-    id: '1',
-    email: DEMO_ADMIN.email,
-    name: 'Admin Demo',
-    phone: '',
-    address: '',
-    role: 'admin',
-  }
-}
-
 export const authService = {
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    // Demo login: check credentials locally
-    if (credentials.email === DEMO_ADMIN.email && credentials.password === DEMO_ADMIN.password) {
-      const token = 'fake-token-admin-demo-' + Date.now()
-      localStorage.setItem('authToken', token)
-      localStorage.setItem('refreshToken', 'fake-refresh-token')
-      const user = createDemoAdminUser()
-      localStorage.setItem('user', JSON.stringify(user))
-      return { user, token }
-    }
-
-    // Real login from backend
     const response = await api.post<TokenResponse>('/auth/token/', credentials)
     localStorage.setItem('authToken', response.access)
     localStorage.setItem('refreshToken', response.refresh)
