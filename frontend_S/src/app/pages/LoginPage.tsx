@@ -14,7 +14,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [formData, setFormData] = useState({
-    email: '',
+    usuario: '',
     password: '',
   })
 
@@ -68,13 +68,13 @@ export default function LoginPage() {
                 </div>
               )}
               <div className="space-y-2">
-                <Label htmlFor="email">Correo electronico</Label>
+                <Label htmlFor="usuario">Usuario</Label>
                 <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="tu@email.com"
-                  value={formData.email}
+                  id="usuario"
+                  name="usuario"
+                  type="text"
+                  placeholder="tu_usuario"
+                  value={formData.usuario}
                   onChange={handleChange}
                   required
                   disabled={isLoading}

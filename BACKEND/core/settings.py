@@ -50,9 +50,12 @@ ALLOWED_HOSTS = [
     '.ngrok.io',
     'juvenescent-tamelessly-dennis.ngrok-free.dev',
     '127.0.0.1',
+    '0.0.0.0',
     'formacion.cloudregencyapps.com',
     'testserver',
 ]
+
+APPEND_SLASH = False
 
 # Application definition
 

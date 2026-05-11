@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import api from '@/services/api'
+import { authService, usersService } from '@/services'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -51,11 +51,10 @@ export default function RegisterPage() {
   })
 
   useEffect(() => {
-    api.get('/user/cargo-nivel-regional/').then((res) => {
-      const data = res.data
-      setCargos((data.cargos ?? []).map((c: { idcargo: number; nombrecargo: string }) => ({ id: c.idcargo, nombre: c.nombrecargo })))
-      setNiveles((data.niveles ?? []).map((n: { idnivel: number; nombrenivel: string }) => ({ id: n.idnivel, nombre: n.nombrenivel })))
-      setRegionales((data.regionales ?? []).map((r: { idregional: number; nombreregional: string }) => ({ id: r.idregional, nombre: r.nombreregional })))
+    usersService.getCargoNivelRegional().then((data) => {
+      setCargos(data.cargos)
+      setNiveles(data.niveles)
+      setRegionales(data.regionales)
     }).catch(() => {
       // Options not critical — form still works without them
     })
@@ -79,7 +78,7 @@ export default function RegisterPage() {
 
     setIsLoading(true)
     try {
-      await api.post('/user/register/', {
+      await authService.publicRegister({
         usuario: formData.usuario.trim(),
         password: formData.password,
         tipo_usuario: formData.tipo_usuario,

@@ -1,0 +1,424 @@
+{
+  "info": {
+    "name": "Backend API",
+    "_postman_id": "backend-api-collection",
+    "description": "Colección completa de endpoints del backend Django",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Obtener Token (Login)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/token/", "host": ["{{base_url}}"], "path": ["auth", "token", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"tu_usuario\",\n  \"password\": \"tu_password\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Refrescar Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/token/refresh/", "host": ["{{base_url}}"], "path": ["auth", "token", "refresh", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Usuarios - Registro",
+      "item": [
+        {
+          "name": "Registrar Usuario (requiere auth)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/register", "host": ["{{base_url}}"], "path": ["user", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"nuevo_usuario\",\n  \"password\": \"password123\",\n  \"cedula\": \"123456789\",\n  \"nombre_completo\": \"Juan Perez\",\n  \"correo\": \"juan@ejemplo.com\",\n  \"telefono\": \"3001234567\",\n  \"sede\": \"Bogota\",\n  \"cargo\": 1,\n  \"nivel\": 1,\n  \"regional\": 1,\n  \"tipo_usuario\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Obtener Usuario por ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/register/1", "host": ["{{base_url}}"], "path": ["user", "register", "1"] }
+          }
+        },
+        {
+          "name": "Actualizar Usuario",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/register/1", "host": ["{{base_url}}"], "path": ["user", "register", "1"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre_completo\": \"Juan Perez Actualizado\",\n  \"correo\": \"juan_nuevo@ejemplo.com\",\n  \"telefono\": \"3009876543\",\n  \"sede\": \"Medellin\",\n  \"cargo\": 2,\n  \"nivel\": 2,\n  \"regional\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Registrar Usuario Público (sin auth)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/user/register-public", "host": ["{{base_url}}"], "path": ["user", "register-public"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"nuevo_usuario\",\n  \"password\": \"password123\",\n  \"cedula\": \"123456789\",\n  \"nombre_completo\": \"Juan Perez\",\n  \"correo\": \"juan@ejemplo.com\",\n  \"telefono\": \"3001234567\",\n  \"sede\": \"Bogota\",\n  \"cargo\": 1,\n  \"nivel\": 1,\n  \"regional\": 1,\n  \"tipo_usuario\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Registrar Usuario Temporal",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/register-temporal", "host": ["{{base_url}}"], "path": ["user", "register-temporal"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"temporal_user\",\n  \"password\": \"password123\",\n  \"cedula\": \"987654321\",\n  \"nombre_completo\": \"Usuario Temporal\",\n  \"correo\": \"temporal@ejemplo.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Registrar Masivo (CSV)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/registrar-masivo", "host": ["{{base_url}}"], "path": ["user", "registrar-masivo"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "archivo", "type": "file", "src": "" }]
+            }
+          }
+        },
+        {
+          "name": "Actualizar Masivo (CSV)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/registrar-masivo", "host": ["{{base_url}}"], "path": ["user", "registrar-masivo"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "archivo", "type": "file", "src": "" }]
+            }
+          }
+        },
+        {
+          "name": "Descargar Plantilla CSV",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/registrar-masivo", "host": ["{{base_url}}"], "path": ["user", "registrar-masivo"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Usuarios - Perfil",
+      "item": [
+        {
+          "name": "Ver Mi Perfil",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/perfil", "host": ["{{base_url}}"], "path": ["user", "perfil"] }
+          }
+        },
+        {
+          "name": "Ver Perfil por ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/perfil/1", "host": ["{{base_url}}"], "path": ["user", "perfil", "1"] }
+          }
+        },
+        {
+          "name": "Alternar Estado de Perfil",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/perfil/1", "host": ["{{base_url}}"], "path": ["user", "perfil", "1"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Usuarios - Listado y Filtros",
+      "item": [
+        {
+          "name": "Lista de Usuarios",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/user/lista-usuarios?page=1&page_size=10&search=",
+              "host": ["{{base_url}}"],
+              "path": ["user", "lista-usuarios"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "10" },
+                { "key": "search", "value": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Filtrar Usuarios",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{base_url}}/user/filtrar-usuarios?q=nombre&page=1&page_size=10",
+              "host": ["{{base_url}}"],
+              "path": ["user", "filtrar-usuarios"],
+              "query": [
+                { "key": "q", "value": "nombre" },
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reporte Usuarios (Excel)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/reporte-usuarios", "host": ["{{base_url}}"], "path": ["user", "reporte-usuarios"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Usuarios - Estado y Roles",
+      "item": [
+        {
+          "name": "Cambiar Estado (PATCH individual)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/cambiar-estado-usuario/1", "host": ["{{base_url}}"], "path": ["user", "cambiar-estado-usuario", "1"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Cambiar Estado Masivo (POST)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/cambiar-estado-usuario", "host": ["{{base_url}}"], "path": ["user", "cambiar-estado-usuario"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario_ids\": [1, 2, 3],\n  \"cedulas\": [],\n  \"estado\": 1\n}"
+            }
+          }
+        },
+        {
+          "name": "Actualizar Rol de Usuario",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/actualizar-rol-usuario/1", "host": ["{{base_url}}"], "path": ["user", "actualizar-rol-usuario", "1"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_usuario\": 1\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catálogos (Cargo / Nivel / Regional)",
+      "item": [
+        {
+          "name": "Cargo, Nivel y Regional (combo)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/cargo-nivel-regional", "host": ["{{base_url}}"], "path": ["user", "cargo-nivel-regional"] }
+          }
+        },
+        {
+          "name": "Listar Cargos",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/cargo", "host": ["{{base_url}}"], "path": ["user", "cargo"] }
+          }
+        },
+        {
+          "name": "Crear Cargo",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/cargo", "host": ["{{base_url}}"], "path": ["user", "cargo"] },
+            "body": { "mode": "raw", "raw": "{\n  \"nombrecargo\": \"Gerente\"\n}" }
+          }
+        },
+        {
+          "name": "Actualizar Cargo",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/cargo", "host": ["{{base_url}}"], "path": ["user", "cargo"] },
+            "body": { "mode": "raw", "raw": "{\n  \"idcargo\": 1,\n  \"nombrecargo\": \"Gerente General\"\n}" }
+          }
+        },
+        {
+          "name": "Desactivar Cargo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/cargo", "host": ["{{base_url}}"], "path": ["user", "cargo"] },
+            "body": { "mode": "raw", "raw": "{\n  \"idcargo\": 1\n}" }
+          }
+        },
+        {
+          "name": "Listar Niveles",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/nivel", "host": ["{{base_url}}"], "path": ["user", "nivel"] }
+          }
+        },
+        {
+          "name": "Crear Nivel",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/nivel", "host": ["{{base_url}}"], "path": ["user", "nivel"] },
+            "body": { "mode": "raw", "raw": "{\n  \"nombrenivel\": \"Senior\"\n}" }
+          }
+        },
+        {
+          "name": "Actualizar Nivel",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/nivel", "host": ["{{base_url}}"], "path": ["user", "nivel"] },
+            "body": { "mode": "raw", "raw": "{\n  \"idnivel\": 1,\n  \"nombrenivel\": \"Senior Actualizado\"\n}" }
+          }
+        },
+        {
+          "name": "Desactivar Nivel",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/nivel", "host": ["{{base_url}}"], "path": ["user", "nivel"] },
+            "body": { "mode": "raw", "raw": "{\n  \"idnivel\": 1\n}" }
+          }
+        },
+        {
+          "name": "Listar Regionales",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{base_url}}/user/region", "host": ["{{base_url}}"], "path": ["user", "region"] }
+          }
+        },
+        {
+          "name": "Crear Regional",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/region", "host": ["{{base_url}}"], "path": ["user", "region"] },
+            "body": { "mode": "raw", "raw": "{\n  \"nombreregional\": \"Bogota\"\n}" }
+          }
+        },
+        {
+          "name": "Actualizar Regional",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/region", "host": ["{{base_url}}"], "path": ["user", "region"] },
+            "body": { "mode": "raw", "raw": "{\n  \"idregional\": 1,\n  \"nombreregional\": \"Bogota Actualizada\"\n}" }
+          }
+        },
+        {
+          "name": "Desactivar Regional",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/user/region", "host": ["{{base_url}}"], "path": ["user", "region"] },
+            "body": { "mode": "raw", "raw": "{\n  \"idregional\": 1\n}" }
+          }
+        }
+      ]
+    }
+  ]
+}

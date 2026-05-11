@@ -28,6 +28,17 @@ export interface UpdateUserData {
   is_active?: boolean
 }
 
+export interface SelectOption {
+  id: number
+  nombre: string
+}
+
+export interface CargoNivelRegionalData {
+  cargos: SelectOption[]
+  niveles: SelectOption[]
+  regionales: SelectOption[]
+}
+
 export const usersService = {
   async getAll(filters?: UserFilters): Promise<PaginatedResponse<User>> {
     const response = await api.get<PaginatedResponse<User>>('/users', { params: filters })
@@ -65,6 +76,16 @@ export const usersService = {
 
   async resetPassword(id: number, newPassword: string): Promise<void> {
     await api.patch(`/users/${id}/reset-password`, { password: newPassword })
+  },
+
+  async getCargoNivelRegional(): Promise<CargoNivelRegionalData> {
+    const response = await api.get('/user/cargo-nivel-regional')
+    const data = response.data
+    return {
+      cargos: (data.cargos ?? []).map((c: { idcargo: number; nombrecargo: string }) => ({ id: c.idcargo, nombre: c.nombrecargo })),
+      niveles: (data.niveles ?? []).map((n: { idnivel: number; nombrenivel: string }) => ({ id: n.idnivel, nombre: n.nombrenivel })),
+      regionales: (data.regionales ?? []).map((r: { idregional: number; nombreregional: string }) => ({ id: r.idregional, nombre: r.nombreregional })),
+    }
   },
 }
 

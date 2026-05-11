@@ -72,9 +72,77 @@ class Perfil(APIView):
             "nuevo_estado": nuevo_estado,
         })
 
+class registerUsers(APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    def post(self, request, *args, **kwargs):
+        payload = request.data if hasattr(request, 'data') else None
+        if not payload:
+            try:
+                payload = json.loads(request.body.decode('utf-8'))
+            except Exception:
+                return JsonResponse({'error': 'JSON invalido'}, status=400)
+
+        required = ['usuario', 'password', 'cedula', 'nombre_completo']
+        missing = [k for k in required if not payload.get(k, '')]
+        if missing:
+            return JsonResponse({'error': f'Faltan campos requeridos: {missing}'}, status=400)
+
+        usuario_nombre = payload.get('usuario', '').strip()
+        if Credenciales.objects.filter(usuario=usuario_nombre).exists():
+            return JsonResponse({'error': f'El usuario "{usuario_nombre}" ya existe'}, status=400)
+
+        cedula = str(payload.get('cedula', '')).strip()
+        if Usuario.objects.filter(cedula=cedula).exists():
+            return JsonResponse({'error': f'El usuario con cedula "{cedula}" ya existe'}, status=400)
+
+        try:
+            with transaction.atomic():
+                # Validate FK ids — treat non-existent ones as None
+                cargo_id = payload.get('cargo') or None
+                if cargo_id and not Cargo.objects.filter(idcargo=cargo_id).exists():
+                    cargo_id = None
+
+                nivel_id = payload.get('nivel') or None
+                if nivel_id and not Niveles.objects.filter(idnivel=nivel_id).exists():
+                    nivel_id = None
+
+                regional_id = payload.get('regional') or None
+                if regional_id and not Regional.objects.filter(idregional=regional_id).exists():
+                    regional_id = None
+
+                usuario_obj = Usuario.objects.create(
+                    cedula=cedula,
+                    nombre_completo=payload.get('nombre_completo', '').strip(),
+                    correo=payload.get('correo') or '',
+                    telefono=payload.get('telefono') or '',
+                    sede=payload.get('sede') or None,
+                    cargo_id=cargo_id,
+                    nivel_id=nivel_id,
+                    regional_id=regional_id,
+                    estado=1,
+                )
+
+                cred = Credenciales(
+                    usuario=usuario_nombre,
+                    tipo_usuario= 0,
+                    usuario_rel=usuario_obj,
+                    estado=1,
+                )
+                cred.set_password(payload['password'])
+                cred.save()
+
+            return JsonResponse({
+                'mensaje': 'Usuario creado correctamente',
+                'usuario_id': cred.id,
+                'usuario_rel_id': usuario_obj.id,
+            }, status=201)
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+
 
 class Register(APIView):
-    permission_classes = [IsAuthenticated, IsSuperAdmin, IsAdminUser]
 
     def post(self, request, *args, **kwargs):
         payload = request.data if hasattr(request, 'data') else None

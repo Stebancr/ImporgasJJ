@@ -1,6 +1,20 @@
 import api from './api'
 import type { User, LoginCredentials, RegisterData } from '@/types'
 
+export interface PublicRegisterData {
+  usuario: string
+  password: string
+  cedula: string
+  nombre_completo: string
+  tipo_usuario?: number
+  correo?: string | null
+  telefono?: string | null
+  sede?: string | null
+  cargo?: number | null
+  nivel?: number | null
+  regional?: number | null
+}
+
 interface TokenResponse {
   access: string
   refresh: string
@@ -51,20 +65,20 @@ export const authService = {
     localStorage.setItem('token', access)
     localStorage.setItem('refresh', refresh)
 
-    const perfilRes = await api.get<PerfilResponse>('/user/perfil/')
-    const user = mapPerfilToUser(perfilRes.data, credentials.email, is_admin)
+    const perfilRes = await api.get<PerfilResponse>('/user/perfil')
+    const user = mapPerfilToUser(perfilRes.data, credentials.usuario, is_admin)
 
     return { user, token: access }
   },
 
   async register(data: RegisterData): Promise<LoginResponse> {
-    const tokenRes = await api.post<TokenResponse>('/user/register/', data)
+    const tokenRes = await api.post<TokenResponse>('/user/register', data)
     const { access, refresh, is_admin } = tokenRes.data
 
     localStorage.setItem('token', access)
     localStorage.setItem('refresh', refresh)
 
-    const perfilRes = await api.get<PerfilResponse>('/user/perfil/')
+    const perfilRes = await api.get<PerfilResponse>('/user/perfil')
     const user = mapPerfilToUser(perfilRes.data, data.email, is_admin)
 
     return { user, token: access }
@@ -113,6 +127,11 @@ export const authService = {
 
   isAuthenticated(): boolean {
     return !!this.getStoredToken()
+  },
+
+  async publicRegister(data: PublicRegisterData): Promise<{ mensaje: string; usuario_id: number; usuario_rel_id: number }> {
+    const response = await api.post('/user/register-public', data)
+    return response.data
   },
 }
 
