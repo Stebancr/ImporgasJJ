@@ -1,112 +1,55 @@
-import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ShoppingCart, Heart, Share2, Truck, Shield, Star, ChevronLeft, ChevronRight, Minus, Plus, Check } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import { Product } from '../../types'
+import { productsService } from '../../services/products'
+import { useAuth } from '../../context/AuthContext'
+import { useCart } from '../../context/CartContext'
 import './styles/ProductDetailPage.css'
 
-// Mock product data
-const productData: Product = {
+// Fallback mock product while loading
+const fallbackProduct: Product = {
   id: '1',
-  name: 'Calentador de Agua a Gas 13 Litros - Tiro Forzado',
-  description: 'Calentador de paso de alta eficiencia con tecnología de tiro forzado que garantiza una combustión segura. Ideal para hogares con múltiples puntos de agua. Incluye pantalla digital para control de temperatura y sistema de encendido electrónico.',
-  price: 650000,
-  originalPrice: 750000,
-  category: 'calentadores',
-  brand: 'Haceb',
-  images: [
-    'https://placehold.co/600x600/f97316/white?text=Calentador+1',
-    'https://placehold.co/600x600/ea580c/white?text=Calentador+2',
-    'https://placehold.co/600x600/c2410c/white?text=Calentador+3',
-    'https://placehold.co/600x600/9a3412/white?text=Calentador+4',
-  ],
-  rating: 5,
-  reviewsCount: 128,
-  stock: 15,
-  specifications: {
-    'Capacidad': '13 Litros/min',
-    'Tipo de Gas': 'Natural / Propano',
-    'Encendido': 'Electrónico',
-    'Tipo de Tiro': 'Forzado',
-    'Potencia': '26 kW',
-    'Dimensiones': '60 x 35 x 18 cm',
-    'Peso': '12 kg',
-    'Garantía': '5 años',
-  },
+  name: 'Cargando producto...',
+  description: '',
+  price: 0,
+  category: '',
+  brand: '',
+  images: ['https://placehold.co/600x600/f3f4f6/9ca3af?text=Cargando'],
+  rating: 0,
+  reviewsCount: 0,
+  stock: 0,
+  specifications: {},
   isAvailable: true,
-  discount: 13,
 }
-
-const relatedProducts: Product[] = [
-  {
-    id: '5',
-    name: 'Calentador de Agua 10L Tiro Natural',
-    description: 'Calentador económico',
-    price: 450000,
-    category: 'calentadores',
-    brand: 'Challenger',
-    images: ['https://placehold.co/400x400/f97316/white?text=Calentador+10L'],
-    rating: 4,
-    reviewsCount: 95,
-    stock: 20,
-    specifications: {},
-    isAvailable: true,
-  },
-  {
-    id: '3',
-    name: 'Regulador de Gas Alta Presión',
-    description: 'Regulador industrial',
-    price: 85000,
-    category: 'reguladores',
-    brand: 'Fisher',
-    images: ['https://placehold.co/400x400/22c55e/white?text=Regulador'],
-    rating: 5,
-    reviewsCount: 234,
-    stock: 50,
-    specifications: {},
-    isAvailable: true,
-  },
-  {
-    id: '8',
-    name: 'Detector de Fugas de Gas',
-    description: 'Detector portátil',
-    price: 120000,
-    category: 'herramientas',
-    brand: 'Bosch',
-    images: ['https://placehold.co/400x400/eab308/white?text=Detector'],
-    rating: 5,
-    reviewsCount: 78,
-    stock: 25,
-    specifications: {},
-    isAvailable: true,
-  },
-  {
-    id: '4',
-    name: 'Kit de Herramientas Instalación',
-    description: 'Kit profesional',
-    price: 320000,
-    category: 'herramientas',
-    brand: 'Stanley',
-    images: ['https://placehold.co/400x400/eab308/white?text=Kit+Pro'],
-    rating: 4,
-    reviewsCount: 67,
-    stock: 12,
-    specifications: {},
-    isAvailable: true,
-    discount: 16,
-    originalPrice: 380000,
-  },
-]
 
 function ProductDetailPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
+  const { addToCart } = useCart()
   const [selectedImage, setSelectedImage] = useState(0)
   const [quantity, setQuantity] = useState(1)
   const [activeTab, setActiveTab] = useState<'description' | 'specs' | 'reviews'>('description')
+  const [product, setProduct] = useState<Product>(fallbackProduct)
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([])
+  const [_isLoading, setIsLoading] = useState(true)
+  const [addedToCart, setAddedToCart] = useState(false)
 
-  // In a real app, fetch product by id
-  const product = productData
-  console.log('Product ID:', id)
+  useEffect(() => {
+    if (!id) return
+    setIsLoading(true)
+    productsService.getById(id)
+      .then(p => {
+        setProduct(p)
+        return productsService.getRelated(id)
+      })
+      .then(related => setRelatedProducts(related.slice(0, 4)))
+      .catch(() => { /* keep fallback */ })
+      .finally(() => setIsLoading(false))
+  }, [id])
+
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('es-CO', {
@@ -114,6 +57,20 @@ function ProductDetailPage() {
       currency: 'COP',
       minimumFractionDigits: 0,
     }).format(price)
+  }
+
+  const handleAddToCart = () => {
+    if (!isAuthenticated) {
+      sessionStorage.setItem(
+        'pendingCartItem',
+        JSON.stringify({ productId: product.id, quantity })
+      )
+      navigate(`/login?redirect=/producto/${product.id}`)
+      return
+    }
+    addToCart(product, quantity)
+    setAddedToCart(true)
+    setTimeout(() => setAddedToCart(false), 2000)
   }
 
   const nextImage = () => {
@@ -251,11 +208,22 @@ function ProductDetailPage() {
                   </button>
                 </div>
                 <button
+                  onClick={handleAddToCart}
                   disabled={!product.isAvailable}
-                  className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white py-3 px-8 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: addedToCart ? '#16a34a' : '#2563eb' }}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 px-8 rounded-lg font-semibold text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
                 >
-                  <ShoppingCart className="w-5 h-5" />
-                  Agregar al Carrito
+                  {addedToCart ? (
+                    <>
+                      <Check className="w-5 h-5" />
+                      Agregado al Carrito
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingCart className="w-5 h-5" />
+                      {isAuthenticated ? 'Agregar al Carrito' : 'Inicia sesión para comprar'}
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -302,37 +270,28 @@ function ProductDetailPage() {
             <div className="p-6 lg:p-8">
               {activeTab === 'description' && (
                 <div className="prose max-w-none">
-                  <p className="text-gray-600 leading-relaxed">{product.description}</p>
-                  <h3 className="text-lg font-semibold text-gray-900 mt-6 mb-4">Características Principales</h3>
-                  <ul className="space-y-2">
-                    <li className="flex items-start gap-2">
-                      <Check className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-gray-600">Tecnología de tiro forzado para mayor seguridad</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-gray-600">Pantalla digital con control de temperatura</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-gray-600">Encendido electrónico sin piloto</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      <span className="text-gray-600">Compatible con gas natural y propano</span>
-                    </li>
-                  </ul>
+                  <p className="text-gray-600 leading-relaxed">{product.description || 'Sin descripción disponible.'}</p>
                 </div>
               )}
 
               {activeTab === 'specs' && (
-                <div className="grid md:grid-cols-2 gap-4">
-                  {Object.entries(product.specifications).map(([key, value]) => (
-                    <div key={key} className="flex justify-between py-3 border-b">
-                      <span className="text-gray-600">{key}</span>
-                      <span className="font-medium text-gray-900">{value}</span>
+                <div>
+                  {Object.keys(product.specifications).length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">No hay especificaciones disponibles para este producto.</p>
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-gray-200">
+                      <table className="w-full text-sm">
+                        <tbody>
+                          {Object.entries(product.specifications).map(([key, value], index) => (
+                            <tr key={key} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                              <td className="px-4 py-3 font-medium text-gray-700 w-1/3 border-b border-gray-100">{key}</td>
+                              <td className="px-4 py-3 text-gray-900 border-b border-gray-100">{value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
 

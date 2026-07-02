@@ -1,13 +1,19 @@
 import './styles/LoginPage.css'
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Flame, Eye, EyeOff, Mail, Lock, User, Phone, ArrowRight, Shield, Truck, Headphones, CreditCard } from 'lucide-react'
 import { authService } from '../../services/auth'
+import { useAuth } from '../../context/AuthContext'
+import { useCart } from '../../context/CartContext'
+import { productsService } from '../../services/products'
 
 type AuthMode = 'login' | 'register' | 'forgot'
 
 function LoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const { login } = useAuth()
+  const { addToCart } = useCart()
   const [mode, setMode] = useState<AuthMode>('login')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -25,14 +31,30 @@ function LoginPage() {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
+  const restorePendingCartItem = async () => {
+    const raw = sessionStorage.getItem('pendingCartItem')
+    if (!raw) return
+    try {
+      const { productId, quantity } = JSON.parse(raw) as { productId: string; quantity: number }
+      const product = await productsService.getById(productId)
+      addToCart(product, quantity)
+    } catch {
+      // ignore errors restoring cart
+    } finally {
+      sessionStorage.removeItem('pendingCartItem')
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setIsLoading(true)
     try {
       if (mode === 'login') {
-        await authService.login({ email: form.email, password: form.password })
-        navigate('/')
+        await login(form.email, form.password)
+        await restorePendingCartItem()
+        const redirect = searchParams.get('redirect') || '/'
+        navigate(redirect)
       } else if (mode === 'register') {
         if (form.password !== form.confirmPassword) {
           setError('Las contrasenas no coinciden')
@@ -46,8 +68,11 @@ function LoginPage() {
           cc: form.cc,
           phone: form.phone,
         })
-        setMode('login')
-        setForm((prev) => ({ ...prev, password: '', confirmPassword: '' }))
+        // Auto-login after successful registration
+        await login(form.email, form.password)
+        await restorePendingCartItem()
+        const redirect = searchParams.get('redirect') || '/'
+        navigate(redirect)
       }
     } catch (err: unknown) {
       const fetchErr = err as { message?: string }

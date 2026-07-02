@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,18 +20,9 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Search, Edit, Trash2, FolderTree, Flame, Wind, Gauge, Wrench } from 'lucide-react'
-
-interface Category {
-  id: number
-  name: string
-  slug: string
-  icon: string
-  description: string
-  order: number
-  is_active: boolean
-  productsCount: number
-}
+import { Plus, Search, Edit, Trash2, FolderTree, Flame, Wind, Gauge, Wrench, Loader2 } from 'lucide-react'
+import { categoriesService } from '@/services/categories'
+import type { Category } from '@/types'
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   flame: Flame,
@@ -40,49 +31,6 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   wrench: Wrench,
 }
 
-const mockCategories: Category[] = [
-  {
-    id: 1,
-    name: 'Calentadores',
-    slug: 'calentadores',
-    icon: 'flame',
-    description: 'Calentadores de agua a gas y electricos',
-    order: 1,
-    is_active: true,
-    productsCount: 45,
-  },
-  {
-    id: 2,
-    name: 'Aires Acondicionados',
-    slug: 'aires',
-    icon: 'wind',
-    description: 'Aires acondicionados split e inverter',
-    order: 2,
-    is_active: true,
-    productsCount: 32,
-  },
-  {
-    id: 3,
-    name: 'Reguladores de Gas',
-    slug: 'reguladores',
-    icon: 'gauge',
-    description: 'Reguladores y valvulas de gas',
-    order: 3,
-    is_active: true,
-    productsCount: 28,
-  },
-  {
-    id: 4,
-    name: 'Herramientas e Instalacion',
-    slug: 'herramientas',
-    icon: 'wrench',
-    description: 'Herramientas y kits de instalacion',
-    order: 4,
-    is_active: true,
-    productsCount: 51,
-  },
-]
-
 const availableIcons = [
   { value: 'flame', label: 'Llama' },
   { value: 'wind', label: 'Viento' },
@@ -90,8 +38,19 @@ const availableIcons = [
   { value: 'wrench', label: 'Herramienta' },
 ]
 
+const toSlug = (name: string) =>
+  name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+
 export default function CategoriesPage() {
-  const [categories, setCategories] = useState<Category[]>(mockCategories)
+  const [categories, setCategories] = useState<Category[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
@@ -103,17 +62,32 @@ export default function CategoriesPage() {
     is_active: true,
   })
 
+  const fetchCategories = async () => {
+    try {
+      setIsLoading(true)
+      const res = await categoriesService.getAll({ per_page: 100 })
+      setCategories(res.data)
+    } catch {
+      setError('No se pudieron cargar las categorias')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => { fetchCategories() }, [])
+
   const filteredCategories = categories.filter((category) =>
     category.name.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   const handleOpenDialog = (category?: Category) => {
+    setError(null)
     if (category) {
       setEditingCategory(category)
       setFormData({
         name: category.name,
         description: category.description,
-        icon: category.icon,
+        icon: category.icon || 'flame',
         order: category.order.toString(),
         is_active: category.is_active,
       })
@@ -130,40 +104,43 @@ export default function CategoriesPage() {
     setIsDialogOpen(true)
   }
 
-  const handleSave = () => {
-    if (editingCategory) {
-      setCategories(categories.map((c) =>
-        c.id === editingCategory.id
-          ? {
-              ...c,
-              name: formData.name,
-              slug: formData.name.toLowerCase().replace(/ /g, '-'),
-              description: formData.description,
-              icon: formData.icon,
-              order: parseInt(formData.order),
-              is_active: formData.is_active,
-            }
-          : c
-      ))
-    } else {
-      const newCategory: Category = {
-        id: Math.max(...categories.map((c) => c.id)) + 1,
-        name: formData.name,
-        slug: formData.name.toLowerCase().replace(/ /g, '-'),
-        description: formData.description,
-        icon: formData.icon,
-        order: parseInt(formData.order),
-        is_active: formData.is_active,
-        productsCount: 0,
-      }
-      setCategories([...categories, newCategory])
+  const handleSave = async () => {
+    if (!formData.name.trim()) {
+      setError('El nombre es requerido')
+      return
     }
-    setIsDialogOpen(false)
+    setIsSaving(true)
+    setError(null)
+    try {
+      const payload = {
+        name: formData.name.trim(),
+        slug: toSlug(formData.name),
+        description: formData.description.trim(),
+        icon: formData.icon,
+        order: parseInt(formData.order) || 0,
+        is_active: formData.is_active,
+      }
+      if (editingCategory) {
+        await categoriesService.update(editingCategory.id, payload)
+      } else {
+        await categoriesService.create(payload)
+      }
+      setIsDialogOpen(false)
+      await fetchCategories()
+    } catch {
+      setError('Error al guardar la categoria')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const handleDelete = (id: number) => {
-    if (confirm('Esta seguro de eliminar esta categoria?')) {
-      setCategories(categories.filter((c) => c.id !== id))
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Está seguro de eliminar esta categoría?')) return
+    try {
+      await categoriesService.delete(id)
+      setCategories((prev) => prev.filter((c) => c.id !== id))
+    } catch {
+      alert('No se pudo eliminar la categoria')
     }
   }
 
@@ -191,6 +168,9 @@ export default function CategoriesPage() {
             <CardTitle className="flex items-center gap-2">
               <FolderTree className="h-5 w-5" />
               Lista de Categorias
+              {!isLoading && (
+                <Badge variant="secondary">{filteredCategories.length}</Badge>
+              )}
             </CardTitle>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -204,77 +184,90 @@ export default function CategoriesPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead>Descripcion</TableHead>
-                  <TableHead className="text-center">Productos</TableHead>
-                  <TableHead className="text-center">Orden</TableHead>
-                  <TableHead className="text-center">Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCategories.map((category) => (
-                  <TableRow key={category.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                          {renderIcon(category.icon)}
-                        </div>
-                        <span className="font-medium">{category.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-muted-foreground">
-                      {category.description}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant="secondary">{category.productsCount}</Badge>
-                    </TableCell>
-                    <TableCell className="text-center">{category.order}</TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={category.is_active ? 'success' : 'secondary'}>
-                        {category.is_active ? 'Activa' : 'Inactiva'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleOpenDialog(category)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(category.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Categoria</TableHead>
+                    <TableHead>Descripcion</TableHead>
+                    <TableHead className="text-center">Orden</TableHead>
+                    <TableHead className="text-center">Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {filteredCategories.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        No hay categorias registradas
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredCategories.map((category) => (
+                      <TableRow key={category.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                              {renderIcon(category.icon)}
+                            </div>
+                            <span className="font-medium">{category.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate text-muted-foreground">
+                          {category.description}
+                        </TableCell>
+                        <TableCell className="text-center">{category.order}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={category.is_active ? 'success' : 'secondary'}>
+                            {category.is_active ? 'Activa' : 'Inactiva'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleOpenDialog(category)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDelete(category.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Category Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>
               {editingCategory ? 'Editar Categoria' : 'Agregar Categoria'}
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {error && (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="name">Nombre</Label>
               <Input
@@ -335,10 +328,11 @@ export default function CategoriesPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving}>
               Cancelar
             </Button>
-            <Button onClick={handleSave}>
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {editingCategory ? 'Guardar cambios' : 'Crear categoria'}
             </Button>
           </DialogFooter>

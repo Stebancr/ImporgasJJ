@@ -27,28 +27,25 @@ interface AuthResponse {
 
 export const authService = {
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    const response = await api.post<TokenResponse>('/auth/token/', credentials)
+    // Backend USERNAME_FIELD='usuario' — map email → usuario
+    const response = await api.post<TokenResponse>('/auth/token/', {
+      usuario: credentials.email,
+      password: credentials.password,
+    })
     localStorage.setItem('authToken', response.access)
     localStorage.setItem('refreshToken', response.refresh)
     return { user: {} as User, token: response.access }
   },
 
   register: async (data: RegisterData): Promise<AuthResponse> => {
-    const nameParts = data.name.trim().split(' ')
-    const nombre = nameParts[0] || data.name
-    const apellido = nameParts.slice(1).join(' ') || '-'
-    const usuario = data.email.split('@')[0]
-
-    await api.post<{ mensaje: string; usuario_id: number }>('/user/register/', {
-      usuario,
+    // Use full email as 'usuario' so the user can log in with their email
+    await api.post<{ mensaje: string; usuario_id: number }>('/user/registerUsers', {
+      usuario: data.email,
       password: data.password,
-      idcolaborador: {
-        cc_colaborador: data.cc,
-        nombre_colaborador: nombre,
-        apellido_colaborador: apellido,
-        correo_colaborador: data.email,
-        telefo_colaborador: data.phone || '',
-      },
+      cedula: data.cc,
+      nombre_completo: data.name.trim(),
+      correo: data.email,
+      telefono: data.phone || '',
     })
     return { user: {} as User, token: '' }
   },

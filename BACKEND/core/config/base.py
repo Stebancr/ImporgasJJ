@@ -46,11 +46,9 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = [
     'localhost',
-    '62.72.7.176',
     '.ngrok.io',
-    'juvenescent-tamelessly-dennis.ngrok-free.dev',
     '127.0.0.1',
-    'formacion.cloudregencyapps.com',
+    '0.0.0.0',
     'testserver',
 ]
 

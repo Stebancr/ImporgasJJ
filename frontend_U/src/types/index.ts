@@ -14,6 +14,7 @@ export interface Product {
   isAvailable: boolean
   isFeatured?: boolean
   discount?: number
+  slug?: string
 }
 
 export interface Category {

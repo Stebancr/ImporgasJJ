@@ -1,98 +1,273 @@
-import { useState, useRef, useEffect } from 'react'
-import { MessageCircle, X, Send, Bot, Sparkles } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { MessageCircle, X, Send, Bot, Sparkles, Loader2, UserCheck, PhoneOff, RotateCcw } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
+import { chatService } from '../services/chat'
+import { locationsService } from '../services/locations'
+import type { ChatSession } from '../services/chat'
+
+// ─── types ────────────────────────────────────────────────────────────────────
 
 interface Message {
   id: number
   text: string
   isBot: boolean
+  isAgent?: boolean
+  senderName?: string
   timestamp: Date
 }
 
+type ChatMode = 'local' | 'creating' | 'waiting' | 'active' | 'closed'
+type PendingAction = null | 'tracking'
+
+// ─── constants ────────────────────────────────────────────────────────────────────
+
 const quickReplies = [
   'Horarios de atencion',
-  'Servicio de instalacion',
-  'Rastrear mi pedido',
+  'Sedes y servicios',
+  'Consultar pedido',
   'Hablar con asesor',
 ]
 
 const botResponses: Record<string, string> = {
-  'horarios': 'Nuestro horario de atencion es de Lunes a Viernes de 8:00 AM a 6:00 PM y Sabados de 9:00 AM a 2:00 PM. En que mas puedo ayudarte?',
-  'instalación': 'Ofrecemos servicio de instalacion profesional para todos nuestros productos. El costo depende del tipo de producto y la ubicacion. Te gustaria agendar una instalacion?',
-  'rastrear': 'Para rastrear tu pedido, ve a la seccion "Seguimiento" en el menu principal e ingresa tu numero de orden. Tambien recibiras notificaciones automaticas por correo y WhatsApp.',
-  'asesor': 'Te comunicare con uno de nuestros asesores. Por favor, dejanos tu numero de telefono y te contactaremos en menos de 5 minutos.',
-  'default': 'Gracias por contactarnos! Un asesor te respondera pronto. Mientras tanto, hay algo especifico en lo que pueda ayudarte?',
+  horarios:    'Nuestro horario de atencion es de Lunes a Viernes de 8:00 AM a 6:00 PM y Sabados de 9:00 AM a 2:00 PM.',
+  instalacion: 'Ofrecemos servicio de instalacion profesional para todos nuestros productos. Te gustaria agendar una instalacion?',
+  rastrear:    'Para rastrear tu pedido, ve a la seccion "Seguimiento" en el menu principal e ingresa tu numero de orden.',
+  default:     'Gracias por contactarnos. Hay algo especifico en lo que pueda ayudarte?',
 }
 
+function getBotResponse(msg: string): string {
+  const lower = msg.toLowerCase()
+  if (lower.includes('horario')) return botResponses.horarios
+  if (lower.includes('instalac') || lower.includes('instalar')) return botResponses.instalacion
+  if (lower.includes('rastrear') || lower.includes('pedido') || lower.includes('seguimiento')) return botResponses.rastrear
+  return botResponses.default
+}
+
+// ─── component ────────────────────────────────────────────────────────────────
+
 function Chatbot() {
-  const [isOpen, setIsOpen] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      text: 'Hola! Soy el asistente virtual de GasStore. En que puedo ayudarte hoy?',
-      isBot: true,
-      timestamp: new Date(),
-    },
+  const { isAuthenticated } = useAuth()
+
+  const [isOpen, setIsOpen]         = useState(false)
+  const [messages, setMessages]     = useState<Message[]>([
+    { id: 1, text: 'Hola! Soy el asistente virtual de GasStore. En que puedo ayudarte hoy?', isBot: true, timestamp: new Date() },
   ])
   const [inputValue, setInputValue] = useState('')
-  const [isTyping, setIsTyping] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [isTyping, setIsTyping]     = useState(false)
+  const [chatMode, setChatMode]     = useState<ChatMode>('local')
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
+  const [sessionId, setSessionId]   = useState<number | null>(null)
+  const [agentName, setAgentName]   = useState('')
 
-  const scrollToBottom = () => {
+  const messagesEndRef  = useRef<HTMLDivElement>(null)
+  const lastMsgIdRef    = useRef<number | null>(null)
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── scroll ────────────────────────────────────────────────────────────────
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  }, [messages, isTyping])
+
+  // ── resume session on mount ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const storedId = sessionStorage.getItem('chatSessionId')
+    if (!storedId) return
+    const id = parseInt(storedId, 10)
+    chatService.getSession(id)
+      .then((session: ChatSession) => {
+        if (session.status === 'closed') { sessionStorage.removeItem('chatSessionId'); return }
+        setSessionId(id)
+        setChatMode(session.status as ChatMode)
+        setAgentName(session.agent_name || '')
+        return chatService.getMessages(id)
+      })
+      .then((result) => {
+        if (!result) return
+        const msgs: Message[] = result.messages.map((m) => ({
+          id:         m.id,
+          text:       m.text,
+          isBot:      m.sender_type !== 'user',
+          isAgent:    m.sender_type === 'agent',
+          senderName: m.sender_type === 'agent' ? m.sender_name : undefined,
+          timestamp:  new Date(m.created_at),
+        }))
+        if (msgs.length > 0) {
+          setMessages(msgs)
+          lastMsgIdRef.current = result.messages[result.messages.length - 1].id
+        }
+      })
+      .catch(() => sessionStorage.removeItem('chatSessionId'))
+  }, [isAuthenticated])
+
+  // ── polling ───────────────────────────────────────────────────────────────
+  const startPolling = useCallback((id: number) => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+    const poll = async () => {
+      try {
+        const result = await chatService.getMessages(id, lastMsgIdRef.current ?? undefined)
+        if (result.messages.length > 0) {
+          const newMsgs: Message[] = result.messages
+            .filter((m) => m.sender_type !== 'user')
+            .map((m) => ({
+              id:         Date.now() + m.id,
+              text:       m.text,
+              isBot:      true,
+              isAgent:    m.sender_type === 'agent',
+              senderName: m.sender_type === 'agent' ? m.sender_name : undefined,
+              timestamp:  new Date(m.created_at),
+            }))
+          if (newMsgs.length > 0) setMessages((prev) => [...prev, ...newMsgs])
+          lastMsgIdRef.current = result.messages[result.messages.length - 1].id
+        }
+        if (result.status === 'active') { setChatMode('active'); if (result.agent_name) setAgentName(result.agent_name) }
+        if (result.status === 'closed') { setChatMode('closed'); clearInterval(pollIntervalRef.current!) }
+      } catch { /* silent */ }
+    }
+    pollIntervalRef.current = setInterval(poll, 3000)
+  }, [])
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+    if (sessionId && (chatMode === 'waiting' || chatMode === 'active')) startPolling(sessionId)
+    return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current) }
+  }, [sessionId, chatMode, startPolling])
 
-  const getBotResponse = (userMessage: string): string => {
-    const lowerMessage = userMessage.toLowerCase()
-    
-    if (lowerMessage.includes('horario')) return botResponses['horarios']
-    if (lowerMessage.includes('instalación') || lowerMessage.includes('instalar') || lowerMessage.includes('instalacion')) return botResponses['instalación']
-    if (lowerMessage.includes('rastrear') || lowerMessage.includes('pedido') || lowerMessage.includes('seguimiento')) return botResponses['rastrear']
-    if (lowerMessage.includes('asesor') || lowerMessage.includes('humano') || lowerMessage.includes('persona')) return botResponses['asesor']
-    
-    return botResponses['default']
+  // ── helpers ───────────────────────────────────────────────────────────────
+  const pushBotMsg = (text: string) =>
+    setMessages((prev) => [...prev, { id: Date.now(), text, isBot: true, timestamp: new Date() }])
+
+  // ── request agent ─────────────────────────────────────────────────────────
+  const handleRequestAgent = async () => {
+    if (!isAuthenticated) {
+      pushBotMsg('Para hablar con un asesor, necesitas iniciar sesion en tu cuenta primero.')
+      return
+    }
+    setChatMode('creating')
+    try {
+      const initialMsgs = messages.map((m) => ({ text: m.text, is_bot: m.isBot }))
+      const session = await chatService.createSession(initialMsgs)
+      setSessionId(session.id)
+      sessionStorage.setItem('chatSessionId', String(session.id))
+      setChatMode('waiting')
+      pushBotMsg('Tu solicitud fue enviada. Un asesor se conectara contigo en breve...')
+    } catch {
+      setChatMode('local')
+      pushBotMsg('No se pudo conectar con el servicio en este momento. Intenta mas tarde.')
+    }
   }
 
-  const handleSend = (text?: string) => {
-    const messageText = text || inputValue.trim()
+  // ── send ──────────────────────────────────────────────────────────────────
+  const handleSend = async (text?: string) => {
+    const messageText = (text ?? inputValue).trim()
     if (!messageText) return
-
-    const userMessage: Message = {
-      id: messages.length + 1,
-      text: messageText,
-      isBot: false,
-      timestamp: new Date(),
-    }
-
-    setMessages((prev) => [...prev, userMessage])
+    setMessages((prev) => [...prev, { id: Date.now(), text: messageText, isBot: false, timestamp: new Date() }])
     setInputValue('')
-    setIsTyping(true)
 
-    // Simulate bot response delay
-    setTimeout(() => {
-      const botMessage: Message = {
-        id: messages.length + 2,
-        text: getBotResponse(messageText),
-        isBot: true,
-        timestamp: new Date(),
-      }
-      setIsTyping(false)
-      setMessages((prev) => [...prev, botMessage])
-    }, 1200)
-  }
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSend()
+    // Session mode: forward to agent
+    if ((chatMode === 'waiting' || chatMode === 'active') && sessionId) {
+      chatService.sendMessage(sessionId, messageText).catch(() => {})
+      return
     }
+
+    // Pending action: awaiting tracking number
+    if (pendingAction === 'tracking') {
+      setPendingAction(null)
+      setIsTyping(true)
+      try {
+        const result = await chatService.getOrderStatus(messageText)
+        setIsTyping(false)
+        if (result.found) {
+          pushBotMsg(
+            `Pedido encontrado:
+
+Número: ${result.order_number}
+Cliente: ${result.customer_name}
+Estado: ${result.status_label}
+Total: $${Number(result.total).toLocaleString('es-CO')}
+Fecha: ${result.created_at}
+
+¿Necesitas algo más?`
+          )
+        } else {
+          pushBotMsg(`No encontramos ningún pedido con el número "${messageText}". Verifica que sea correcto (Ej: ORD-00001) o ingresa el código de seguimiento.`)
+        }
+      } catch {
+        setIsTyping(false)
+        pushBotMsg('Ocurrió un error al consultar el pedido. Intenta de nuevo en unos momentos.')
+      }
+      return
+    }
+
+    // Local bot response
+    setIsTyping(true)
+    setTimeout(() => { setIsTyping(false); pushBotMsg(getBotResponse(messageText)) }, 1200)
   }
+
+  const handleQuickReply = (reply: string) => {
+    if (reply === 'Hablar con asesor') { handleRequestAgent(); return }
+
+    if (reply === 'Consultar pedido') {
+      setMessages((prev) => [...prev, { id: Date.now(), text: reply, isBot: false, timestamp: new Date() }])
+      setPendingAction('tracking')
+      pushBotMsg('Por favor ingresa tu número de orden (Ej: ORD-00001) o el código de seguimiento:')
+      return
+    }
+
+    if (reply === 'Sedes y servicios') {
+      setMessages((prev) => [...prev, { id: Date.now(), text: reply, isBot: false, timestamp: new Date() }])
+      setIsTyping(true)
+      locationsService.getActive()
+        .then((locs) => {
+          setIsTyping(false)
+          if (locs.length === 0) {
+            pushBotMsg('Por el momento no tenemos sedes registradas. Contáctanos para más información.')
+            return
+          }
+          let msg = 'Nuestras sedes:\n\n'
+          locs.forEach((loc) => {
+            msg += `📍 ${loc.name} — ${loc.city}\n`
+            if (loc.address) msg += `   ${loc.address}\n`
+            if (loc.phone) msg += `   Tel: ${loc.phone}\n`
+            if (loc.hours_weekday) msg += `   L-V: ${loc.hours_weekday}\n`
+            if (loc.hours_saturday) msg += `   Sáb: ${loc.hours_saturday}\n`
+            msg += '\n'
+          })
+          msg += 'Servicios disponibles:\n🔧 Instalacion de gasodomesticos (estufa, calentador, horno)\n🔧 Mantenimiento preventivo y correctivo\n🔧 Revision de fugas y conexiones\n\n¿Deseas agendar un servicio? Escribe "Hablar con asesor"'
+          pushBotMsg(msg)
+        })
+        .catch(() => {
+          setIsTyping(false)
+          pushBotMsg('Servicios disponibles:\n🔧 Instalacion de gasodomesticos\n🔧 Mantenimiento y reparacion\n🔧 Revision de fugas y conexiones\n\nPara ver sedes y horarios visita nuestra pagina o haz clic en "Hablar con asesor".')
+        })
+      return
+    }
+
+    handleSend(reply)
+  }
+
+  const handleClose = async () => {
+    if (sessionId && (chatMode === 'waiting' || chatMode === 'active')) {
+      await chatService.closeSession(sessionId).catch(() => {})
+      setChatMode('closed')
+      sessionStorage.removeItem('chatSessionId')
+    }
+    setIsOpen(false)
+  }
+
+  // ── status label ──────────────────────────────────────────────────────────
+  const { dot, statusText } = (() => {
+    if (chatMode === 'waiting' || chatMode === 'creating')
+      return { dot: 'bg-yellow-400 animate-pulse', statusText: chatMode === 'creating' ? 'Conectando...' : 'Esperando asesor...' }
+    if (chatMode === 'active')
+      return { dot: 'bg-[#10B981]', statusText: agentName ? `Con ${agentName}` : 'Con asesor' }
+    if (chatMode === 'closed')
+      return { dot: 'bg-gray-400', statusText: 'Chat cerrado' }
+    return { dot: 'bg-[#10B981] animate-pulse', statusText: 'En linea' }
+  })()
 
   return (
     <>
-      {/* Chat Button */}
+      {/* Float button */}
       <button
         onClick={() => setIsOpen(true)}
         className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ${isOpen ? 'scale-0 opacity-0' : 'scale-100 opacity-100'}`}
@@ -102,38 +277,32 @@ function Chatbot() {
           <div className="relative w-14 h-14 bg-gradient-to-r from-[#0066FF] to-[#0052CC] rounded-full flex items-center justify-center shadow-lg">
             <MessageCircle className="w-6 h-6 text-white" />
           </div>
-          <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#10B981] rounded-full border-2 border-white animate-pulse" />
+          <span className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${dot}`} />
         </div>
       </button>
 
-      {/* Chat Window */}
-      <div 
-        className={`fixed bottom-6 right-6 z-50 w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 ${
-          isOpen 
-            ? 'opacity-100 translate-y-0 scale-100' 
-            : 'opacity-0 translate-y-4 scale-95 pointer-events-none'
-        }`}
-      >
+      {/* Chat window */}
+      <div className={`fixed bottom-6 right-6 z-50 w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 ${
+        isOpen ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-4 scale-95 pointer-events-none'
+      }`}>
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-[#E5E7EB]">
+
           {/* Header */}
           <div className="bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 bg-white/20 backdrop-blur rounded-xl flex items-center justify-center">
-                  <Bot className="w-6 h-6" />
+                  {chatMode === 'active' ? <UserCheck className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg">Asistente GasStore</h3>
                   <div className="flex items-center gap-1.5 text-sm text-white/80">
-                    <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse" />
-                    En linea
+                    <span className={`w-2 h-2 rounded-full ${dot}`} />
+                    {statusText}
                   </div>
                 </div>
               </div>
-              <button 
-                onClick={() => setIsOpen(false)} 
-                className="w-10 h-10 hover:bg-white/10 rounded-xl transition-colors flex items-center justify-center"
-              >
+              <button onClick={handleClose} className="w-10 h-10 hover:bg-white/10 rounded-xl transition-colors flex items-center justify-center">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -143,33 +312,30 @@ function Chatbot() {
           <div className="h-80 overflow-y-auto p-4 bg-[#F9FAFB]">
             <div className="space-y-4">
               {messages.map((message) => (
-                <div 
-                  key={message.id} 
-                  className={`flex ${message.isBot ? 'justify-start' : 'justify-end'} animate-fade-in`}
-                >
+                <div key={message.id} className={`flex ${message.isBot ? 'justify-start' : 'justify-end'}`}>
                   {message.isBot && (
                     <div className="w-8 h-8 bg-gradient-to-br from-[#0066FF] to-[#0052CC] rounded-lg flex items-center justify-center mr-2 flex-shrink-0">
-                      <Sparkles className="w-4 h-4 text-white" />
+                      {message.isAgent ? <UserCheck className="w-4 h-4 text-white" /> : <Sparkles className="w-4 h-4 text-white" />}
                     </div>
                   )}
-                  <div 
-                    className={`max-w-[75%] px-4 py-3 rounded-2xl ${
-                      message.isBot 
-                        ? 'bg-white text-[#1A1D21] shadow-sm border border-[#E5E7EB] rounded-tl-none' 
-                        : 'bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-tr-none'
-                    }`}
-                  >
-                    <p className="text-sm leading-relaxed">{message.text}</p>
+                  <div className={`max-w-[75%] px-4 py-3 rounded-2xl ${
+                    message.isBot
+                      ? 'bg-white text-[#1A1D21] shadow-sm border border-[#E5E7EB] rounded-tl-none'
+                      : 'bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-tr-none'
+                  }`}>
+                    {message.isAgent && message.senderName && (
+                      <p className="text-[10px] font-semibold text-[#0066FF] mb-1">{message.senderName}</p>
+                    )}
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.text}</p>
                     <p className={`text-xs mt-1.5 ${message.isBot ? 'text-[#9CA3AF]' : 'text-white/70'}`}>
                       {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
                 </div>
               ))}
-              
-              {/* Typing indicator */}
-              {isTyping && (
-                <div className="flex items-center gap-2 animate-fade-in">
+
+              {(isTyping || chatMode === 'creating') && (
+                <div className="flex items-center gap-2">
                   <div className="w-8 h-8 bg-gradient-to-br from-[#0066FF] to-[#0052CC] rounded-lg flex items-center justify-center">
                     <Sparkles className="w-4 h-4 text-white" />
                   </div>
@@ -182,44 +348,79 @@ function Chatbot() {
                   </div>
                 </div>
               )}
+
+              {chatMode === 'waiting' && (
+                <div className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 text-xs text-yellow-700">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                  Un asesor se conectara en breve. Puedes seguir escribiendo.
+                </div>
+              )}
+              {chatMode === 'closed' && (
+                <div className="flex flex-col gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-500">
+                  <div className="flex items-center gap-1.5">
+                    <PhoneOff className="w-3.5 h-3.5 flex-shrink-0" />
+                    La conversacion ha sido cerrada.
+                  </div>
+                  <button
+                    onClick={handleReset}
+                    className="flex items-center gap-1.5 text-[#0066FF] font-medium hover:underline self-start"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Hacer otra consulta
+                  </button>
+                </div>
+              )}
+
               <div ref={messagesEndRef} />
             </div>
           </div>
 
-          {/* Quick Replies */}
-          <div className="px-4 py-3 bg-white border-t border-[#E5E7EB]">
-            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-              {quickReplies.map((reply, index) => (
-                <button
-                  key={index}
-                  onClick={() => handleSend(reply)}
-                  className="flex-shrink-0 px-3 py-1.5 text-xs bg-[#F3F4F6] text-[#4B5563] rounded-full hover:bg-[#E5E7EB] hover:text-[#1A1D21] transition-colors whitespace-nowrap"
-                >
-                  {reply}
-                </button>
-              ))}
+          {/* Quick replies — local mode only */}
+          {chatMode === 'local' && (
+            <div className="px-4 py-3 bg-white border-t border-[#E5E7EB]">
+              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                {quickReplies.map((reply) => (
+                  <button
+                    key={reply}
+                    onClick={() => handleQuickReply(reply)}
+                    className="flex-shrink-0 px-3 py-1.5 text-xs bg-[#F3F4F6] text-[#4B5563] rounded-full hover:bg-[#E5E7EB] hover:text-[#1A1D21] transition-colors whitespace-nowrap"
+                  >
+                    {reply}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Input */}
           <div className="p-4 bg-white border-t border-[#E5E7EB]">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Escribe un mensaje..."
-                className="flex-1 px-4 py-3 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:outline-none focus:border-[#0066FF] focus:bg-white transition-all text-sm"
-              />
+            {chatMode === 'closed' ? (
               <button
-                onClick={() => handleSend()}
-                disabled={!inputValue.trim()}
-                className="w-12 h-12 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-[#0066FF]/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                onClick={handleReset}
+                className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-[#0066FF] bg-[#F0F5FF] rounded-xl hover:bg-[#E0ECFF] transition-colors"
               >
-                <Send className="w-5 h-5" />
+                <RotateCcw className="w-4 h-4" />
+                Nueva consulta
               </button>
-            </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                  placeholder={chatMode === 'waiting' ? 'Escribe, tu asesor lo vera...' : 'Escribe un mensaje...'}
+                  className="flex-1 px-4 py-3 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:outline-none focus:border-[#0066FF] focus:bg-white transition-all text-sm"
+                />
+                <button
+                  onClick={() => handleSend()}
+                  disabled={!inputValue.trim()}
+                  className="w-12 h-12 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-[#0066FF]/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

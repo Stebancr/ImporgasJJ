@@ -46,12 +46,9 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = [
     'localhost',
-    '62.72.7.176',
     '.ngrok.io',
-    'juvenescent-tamelessly-dennis.ngrok-free.dev',
     '127.0.0.1',
     '0.0.0.0',
-    'formacion.cloudregencyapps.com',
     'testserver',
 ]
 
@@ -72,6 +69,7 @@ INSTALLED_APPS = [
     'usuarios',
     'ecommerce',
     'gestion',
+    'crmChat',
 ]
 
 MIDDLEWARE = [
@@ -215,6 +213,11 @@ X_FRAME_OPTIONS = 'ALLOWALL'
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Media files — uploaded images (products, brands, etc.)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -5,7 +5,6 @@ import DashboardLayout from '@/components/layout/DashboardLayout'
 
 // Pages
 import LoginPage from '@/app/pages/LoginPage'
-import RegisterPage from '@/app/pages/RegisterPage'
 import DashboardPage from '@/app/pages/DashboardPage'
 import ProductsPage from '@/app/pages/ProductsPage'
 import CategoriesPage from '@/app/pages/CategoriesPage'
@@ -14,6 +13,8 @@ import LocationsPage from '@/app/pages/LocationsPage'
 import OrdersPage from '@/app/pages/OrdersPage'
 import UsersPage from '@/app/pages/UsersPage'
 import ProfilePage from '@/app/pages/ProfilePage'
+import GestionPage from '@/app/pages/GestionPage'
+import ChatPage from '@/app/pages/ChatPage'
 
 export default function App() {
   return (
@@ -21,7 +22,7 @@ export default function App() {
       <Routes>
         {/* Public Routes */}
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/register" element={<Navigate to="/login" replace />} />
 
         {/* Protected Routes */}
         <Route
@@ -46,7 +47,27 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="gestion">
+            <Route index element={<Navigate to="cotizaciones" replace />} />
+            <Route
+              path="cotizaciones"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <GestionPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="facturas"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <GestionPage />
+                </ProtectedRoute>
+              }
+            />
+          </Route>
           <Route path="profile" element={<ProfilePage />} />
+          <Route path="chat" element={<ChatPage />} />
         </Route>
 
         {/* Redirect root to dashboard or login */}

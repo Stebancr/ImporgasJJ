@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -114,12 +114,6 @@ export default function LoginPage() {
                   'Iniciar sesion'
                 )}
               </Button>
-              <p className="text-sm text-muted-foreground text-center">
-                No tienes una cuenta?{' '}
-                <Link to="/register" className="text-primary hover:underline font-medium">
-                  Registrate
-                </Link>
-              </p>
             </CardFooter>
           </form>
         </Card>

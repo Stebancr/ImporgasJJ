@@ -19,6 +19,8 @@ interface TokenResponse {
   access: string
   refresh: string
   is_admin: number
+  location_id: number | null
+  location_name: string | null
 }
 
 interface PerfilResponse {
@@ -39,7 +41,13 @@ interface LoginResponse {
   token: string
 }
 
-function mapPerfilToUser(perfil: PerfilResponse, email: string, isAdmin: number): User {
+function mapPerfilToUser(
+  perfil: PerfilResponse,
+  email: string,
+  isAdmin: number,
+  locationId: number | null = null,
+  locationName: string | null = null,
+): User {
   return {
     id: perfil.id,
     email,
@@ -47,6 +55,9 @@ function mapPerfilToUser(perfil: PerfilResponse, email: string, isAdmin: number)
     phone: perfil.telefono ?? '',
     address: '',
     role: isAdmin > 0 ? 'admin' : 'operator',
+    tipo_usuario: isAdmin,
+    location_id: locationId,
+    location_name: locationName,
     is_active: perfil.estado === 1,
     is_staff: isAdmin > 0,
     is_superuser: isAdmin > 1,
@@ -59,14 +70,14 @@ function mapPerfilToUser(perfil: PerfilResponse, email: string, isAdmin: number)
 export const authService = {
   async login(credentials: LoginCredentials): Promise<LoginResponse> {
     const tokenRes = await api.post<TokenResponse>('/auth/token/', credentials)
-    const { access, refresh, is_admin } = tokenRes.data
+    const { access, refresh, is_admin, location_id, location_name } = tokenRes.data
 
     // Store tokens so the request interceptor sends Authorization header on the next call
     localStorage.setItem('token', access)
     localStorage.setItem('refresh', refresh)
 
     const perfilRes = await api.get<PerfilResponse>('/user/perfil')
-    const user = mapPerfilToUser(perfilRes.data, credentials.usuario, is_admin)
+    const user = mapPerfilToUser(perfilRes.data, credentials.usuario, is_admin, location_id ?? null, location_name ?? null)
 
     return { user, token: access }
   },

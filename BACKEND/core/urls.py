@@ -24,8 +24,10 @@ urlpatterns = [
     path('auth/token/', TokenLMSView.as_view(), name='token_obtain_pair'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('user/', include('usuarios.urls')),
-    path('ecommerce/', include('ecommerce.urls')),
+    path('ecommerce/', include('ecommerce.urls')),  # kept for legacy
+    path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.
     path('gestion/', include('gestion.urls')),
+    path('crm-chat/', include('crmChat.urls')),
 ]
 
 # Servir archivos media en desarrollo

@@ -1,12 +1,15 @@
 import './styles/HomePage.css'
 import { Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import { ArrowRight, Truck, Shield, Headphones, Wrench, Play, Zap, ThermometerSun, Gauge, PenToolIcon as Tool } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import GoogleMap from '../../components/GoogleMap'
 import { Product } from '../../types'
+import { productsService } from '../../services/products'
+import { locationsService, ApiLocation } from '../../services/locations'
 
-// Mock data
-const featuredProducts: Product[] = [
+// Fallback featured products (shown while loading)
+const mockFeaturedProducts: Product[] = [
   {
     id: '1',
     name: 'Calentador de Agua a Gas 13L Premium',
@@ -146,6 +149,24 @@ const features = [
 ]
 
 function HomePage() {
+  const [featuredProducts, setFeaturedProducts] = useState<Product[]>([])
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true)
+  const [storeLocations, setStoreLocations] = useState<ApiLocation[]>([])
+
+  useEffect(() => {
+    setIsLoadingProducts(true)
+    productsService.getFeatured()
+      .then(products => setFeaturedProducts(products))
+      .catch(() => setFeaturedProducts(mockFeaturedProducts))
+      .finally(() => setIsLoadingProducts(false))
+  }, [])
+
+  useEffect(() => {
+    locationsService.getActive()
+      .then(locs => setStoreLocations(locs))
+      .catch(() => {})
+  }, [])
+
   return (
     <div className="min-h-screen bg-[#FAFBFC]">
       {/* Hero Section */}
@@ -367,9 +388,20 @@ function HomePage() {
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {featuredProducts.map((product) => (
-              <ProductCard key={product.id} product={product} />
-            ))}
+            {isLoadingProducts
+              ? Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="rounded-xl bg-gray-100 animate-pulse h-72" />
+                ))
+              : featuredProducts.length > 0
+                ? featuredProducts.map((product) => (
+                    <ProductCard key={product.id} product={product} />
+                  ))
+                : (
+                  <p className="col-span-4 text-center text-gray-500 py-12">
+                    No hay productos disponibles en este momento.
+                  </p>
+                )
+            }
           </div>
         </div>
       </section>
@@ -424,7 +456,7 @@ function HomePage() {
               Encuentra nuestra tienda fisica y recibe atencion personalizada
             </p>
           </div>
-          <GoogleMap />
+          <GoogleMap locations={storeLocations} />
         </div>
       </section>
     </div>

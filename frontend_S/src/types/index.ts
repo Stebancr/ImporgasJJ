@@ -6,6 +6,9 @@ export interface User {
   phone: string
   address: string
   role: 'admin' | 'operator' | 'client'
+  tipo_usuario: number          // 0=cliente, 1=admin sede, 4=super admin
+  location_id: number | null    // sede asignada (tipo_usuario=1)
+  location_name: string | null
   is_active: boolean
   is_staff: boolean
   is_superuser: boolean
@@ -58,6 +61,9 @@ export interface Location {
   address: string
   city: string
   phone: string
+  hours_weekday: string
+  hours_saturday: string
+  hours_sunday: string
   is_active: boolean
   created_at: string
 }
@@ -81,7 +87,9 @@ export interface Product {
   price: number
   original_price: number | null
   category_id: number
+  category_name?: string
   brand_id: number
+  brand_name?: string
   total_stock: number
   is_available: boolean
   is_featured: boolean
@@ -92,6 +100,7 @@ export interface Product {
   category?: Category
   brand?: Brand
   images?: ProductImage[]
+  specifications?: ProductSpec[]
   specs?: ProductSpec[]
   stock?: ProductStock[]
 }
@@ -100,6 +109,7 @@ export interface ProductImage {
   id: number
   product_id: number
   image: string
+  image_url?: string
   alt_text: string
   is_primary: boolean
   order: number
@@ -118,9 +128,10 @@ export interface ProductSpec {
   id: number
   product_id: number
   attribute_id: number
+  attribute_name: string
+  attribute_unit: string
   value: string
   order: number
-  attribute?: SpecAttribute
 }
 
 // Review Types
@@ -137,20 +148,33 @@ export interface Review {
 }
 
 // Order Types
-export type OrderStatus = 'pending' | 'paid' | 'preparing' | 'shipping' | 'delivered' | 'installed'
+export type OrderStatus = 'pending' | 'paid' | 'preparing' | 'shipping' | 'delivered' | 'installed' | 'cancelled'
 
 export interface Order {
   id: number
-  user_id: number
+  order_number: string
+  tracking_code: string | null
+  user_id: number | null
+  customer_name: string
+  customer_email: string
+  customer_phone: string
+  shipping_address: string
+  city: string
+  department: string
+  postal_code: string
+  subtotal: number
+  shipping_cost: number
   total: number
   status: OrderStatus
-  payment_method: string
-  shipping_address: string
+  payment_method: 'wompi' | 'cash'
+  wompi_transaction_id: string
+  wompi_reference: string
+  notes: string
   created_at: string
   updated_at: string
   user?: User
   items?: OrderItem[]
-  tracking_events?: TrackingEvent[]
+  tracking_history?: TrackingEvent[]
 }
 
 export interface OrderItem {

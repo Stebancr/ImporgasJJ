@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,31 +20,23 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Search, Edit, Trash2, Tags } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Tags, Loader2 } from 'lucide-react'
+import { brandsService } from '@/services/brands'
+import type { Brand } from '@/types'
 
-interface Brand {
-  id: number
-  name: string
-  slug: string
-  logo: string
-  description: string
-  is_active: boolean
-  productsCount: number
-}
-
-const mockBrands: Brand[] = [
-  { id: 1, name: 'Haceb', slug: 'haceb', logo: '', description: 'Marca colombiana de electrodomesticos', is_active: true, productsCount: 25 },
-  { id: 2, name: 'Samsung', slug: 'samsung', logo: '', description: 'Marca coreana de tecnologia', is_active: true, productsCount: 18 },
-  { id: 3, name: 'LG', slug: 'lg', logo: '', description: 'Marca coreana de electrodomesticos', is_active: true, productsCount: 15 },
-  { id: 4, name: 'Fisher', slug: 'fisher', logo: '', description: 'Especialistas en reguladores de gas', is_active: true, productsCount: 12 },
-  { id: 5, name: 'Stanley', slug: 'stanley', logo: '', description: 'Herramientas profesionales', is_active: true, productsCount: 30 },
-  { id: 6, name: 'Bosch', slug: 'bosch', logo: '', description: 'Tecnologia alemana de calidad', is_active: true, productsCount: 22 },
-  { id: 7, name: 'Challenger', slug: 'challenger', logo: '', description: 'Electrodomesticos colombianos', is_active: true, productsCount: 20 },
-  { id: 8, name: 'Coltgas', slug: 'coltgas', logo: '', description: 'Accesorios y reguladores de gas', is_active: true, productsCount: 14 },
-]
+const toSlug = (name: string) =>
+  name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
 
 export default function BrandsPage() {
-  const [brands, setBrands] = useState<Brand[]>(mockBrands)
+  const [brands, setBrands] = useState<Brand[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingBrand, setEditingBrand] = useState<Brand | null>(null)
@@ -55,63 +47,77 @@ export default function BrandsPage() {
     is_active: true,
   })
 
+  const fetchBrands = async () => {
+    try {
+      setIsLoading(true)
+      const res = await brandsService.getAll({ per_page: 100 })
+      setBrands(res.data)
+    } catch {
+      setError('No se pudieron cargar las marcas')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => { fetchBrands() }, [])
+
   const filteredBrands = brands.filter((brand) =>
     brand.name.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   const handleOpenDialog = (brand?: Brand) => {
+    setError(null)
     if (brand) {
       setEditingBrand(brand)
       setFormData({
         name: brand.name,
         description: brand.description,
-        logo: brand.logo,
+        logo: brand.logo || '',
         is_active: brand.is_active,
       })
     } else {
       setEditingBrand(null)
-      setFormData({
-        name: '',
-        description: '',
-        logo: '',
-        is_active: true,
-      })
+      setFormData({ name: '', description: '', logo: '', is_active: true })
     }
     setIsDialogOpen(true)
   }
 
-  const handleSave = () => {
-    if (editingBrand) {
-      setBrands(brands.map((b) =>
-        b.id === editingBrand.id
-          ? {
-              ...b,
-              name: formData.name,
-              slug: formData.name.toLowerCase().replace(/ /g, '-'),
-              description: formData.description,
-              logo: formData.logo,
-              is_active: formData.is_active,
-            }
-          : b
-      ))
-    } else {
-      const newBrand: Brand = {
-        id: Math.max(...brands.map((b) => b.id)) + 1,
-        name: formData.name,
-        slug: formData.name.toLowerCase().replace(/ /g, '-'),
-        description: formData.description,
-        logo: formData.logo,
-        is_active: formData.is_active,
-        productsCount: 0,
-      }
-      setBrands([...brands, newBrand])
+  const handleSave = async () => {
+    if (!formData.name.trim()) {
+      setError('El nombre es requerido')
+      return
     }
-    setIsDialogOpen(false)
+    setIsSaving(true)
+    setError(null)
+    try {
+      const payload = {
+        name: formData.name.trim(),
+        slug: toSlug(formData.name),
+        description: formData.description.trim(),
+        logo: formData.logo.trim(),
+        is_active: formData.is_active,
+      }
+      if (editingBrand) {
+        await brandsService.update(editingBrand.id, payload)
+      } else {
+        await brandsService.create(payload)
+      }
+      setIsDialogOpen(false)
+      await fetchBrands()
+    } catch {
+      setError('Error al guardar la marca')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const handleDelete = (id: number) => {
-    if (confirm('Esta seguro de eliminar esta marca?')) {
-      setBrands(brands.filter((b) => b.id !== id))
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Está seguro de eliminar esta marca?')) return
+    try {
+      await brandsService.delete(id)
+      setBrands((prev) => prev.filter((b) => b.id !== id))
+    } catch {
+      alert('No se pudo eliminar la marca')
     }
   }
 
@@ -134,6 +140,9 @@ export default function BrandsPage() {
             <CardTitle className="flex items-center gap-2">
               <Tags className="h-5 w-5" />
               Lista de Marcas
+              {!isLoading && (
+                <Badge variant="secondary">{filteredBrands.length}</Badge>
+              )}
             </CardTitle>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -147,75 +156,102 @@ export default function BrandsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Marca</TableHead>
-                  <TableHead>Descripcion</TableHead>
-                  <TableHead className="text-center">Productos</TableHead>
-                  <TableHead className="text-center">Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredBrands.map((brand) => (
-                  <TableRow key={brand.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold">
-                          {brand.name.charAt(0)}
-                        </div>
-                        <span className="font-medium">{brand.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate text-muted-foreground">
-                      {brand.description}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant="secondary">{brand.productsCount}</Badge>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={brand.is_active ? 'success' : 'secondary'}>
-                        {brand.is_active ? 'Activa' : 'Inactiva'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleOpenDialog(brand)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(brand.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Marca</TableHead>
+                    <TableHead>Descripcion</TableHead>
+                    <TableHead className="text-center">Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {filteredBrands.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        No hay marcas registradas
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredBrands.map((brand) => (
+                      <TableRow key={brand.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            {brand.logo ? (
+                              <img
+                                src={brand.logo}
+                                alt={brand.name}
+                                className="h-10 w-10 rounded-lg object-contain border border-border bg-white p-1"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none'
+                                  e.currentTarget.nextElementSibling?.removeAttribute('style')
+                                }}
+                              />
+                            ) : null}
+                            <div
+                              className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold"
+                              style={brand.logo ? { display: 'none' } : undefined}
+                            >
+                              {brand.name.charAt(0)}
+                            </div>
+                            <span className="font-medium">{brand.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate text-muted-foreground">
+                          {brand.description}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={brand.is_active ? 'success' : 'secondary'}>
+                            {brand.is_active ? 'Activa' : 'Inactiva'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleOpenDialog(brand)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDelete(brand.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Brand Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>
               {editingBrand ? 'Editar Marca' : 'Agregar Marca'}
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {error && (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="name">Nombre</Label>
               <Input
@@ -243,6 +279,17 @@ export default function BrandsPage() {
                 onChange={(e) => setFormData({ ...formData, logo: e.target.value })}
                 placeholder="https://ejemplo.com/logo.png"
               />
+              {formData.logo && (
+                <div className="flex items-center gap-3 p-2 border border-border rounded-md bg-muted/30">
+                  <img
+                    src={formData.logo}
+                    alt="preview"
+                    className="h-10 w-10 object-contain rounded border border-border bg-white p-0.5"
+                    onError={(e) => { e.currentTarget.style.opacity = '0.3' }}
+                  />
+                  <span className="text-xs text-muted-foreground truncate">{formData.logo}</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -258,10 +305,11 @@ export default function BrandsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving}>
               Cancelar
             </Button>
-            <Button onClick={handleSave}>
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {editingBrand ? 'Guardar cambios' : 'Crear marca'}
             </Button>
           </DialogFooter>

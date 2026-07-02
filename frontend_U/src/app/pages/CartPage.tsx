@@ -1,51 +1,11 @@
 import './styles/CartPage.css'
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Trash2, Minus, Plus, ShoppingBag, ArrowRight, ShieldCheck, Truck, Tag } from 'lucide-react'
-import { CartItem } from '../../types'
-
-// Mock cart data
-const initialCartItems: CartItem[] = [
-  {
-    product: {
-      id: '1',
-      name: 'Calentador de Agua a Gas 13L Premium',
-      description: 'Calentador de paso de alta eficiencia con encendido electronico',
-      price: 650000,
-      originalPrice: 750000,
-      category: 'calentadores',
-      brand: 'Haceb',
-      images: ['https://placehold.co/120x120/FF6B35/white?text=Calentador'],
-      rating: 5,
-      reviewsCount: 128,
-      stock: 15,
-      specifications: {},
-      isAvailable: true,
-      discount: 13,
-    },
-    quantity: 1,
-  },
-  {
-    product: {
-      id: '3',
-      name: 'Regulador de Gas Alta Presion Industrial',
-      description: 'Regulador industrial certificado con valvula de seguridad',
-      price: 85000,
-      category: 'reguladores',
-      brand: 'Fisher',
-      images: ['https://placehold.co/120x120/10B981/white?text=Regulador'],
-      rating: 5,
-      reviewsCount: 234,
-      stock: 50,
-      specifications: {},
-      isAvailable: true,
-    },
-    quantity: 2,
-  },
-]
+import { useState } from 'react'
+import { useCart } from '../../context/CartContext'
 
 function CartPage() {
-  const [cartItems, setCartItems] = useState<CartItem[]>(initialCartItems)
+  const { items: cartItems, removeFromCart, updateQuantity } = useCart()
   const [couponCode, setCouponCode] = useState('')
 
   const formatPrice = (price: number) => {
@@ -54,21 +14,6 @@ function CartPage() {
       currency: 'COP',
       minimumFractionDigits: 0,
     }).format(price)
-  }
-
-  const updateQuantity = (productId: string, newQuantity: number) => {
-    if (newQuantity < 1) return
-    setCartItems((prev) =>
-      prev.map((item) =>
-        item.product.id === productId
-          ? { ...item, quantity: Math.min(newQuantity, item.product.stock) }
-          : item
-      )
-    )
-  }
-
-  const removeItem = (productId: string) => {
-    setCartItems((prev) => prev.filter((item) => item.product.id !== productId))
   }
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
@@ -143,7 +88,7 @@ function CartPage() {
                         <p className="text-sm text-[#6B7280] mt-1 line-clamp-1">{item.product.description}</p>
                       </div>
                       <button
-                        onClick={() => removeItem(item.product.id)}
+                        onClick={() => removeFromCart(item.product.id)}
                         className="w-10 h-10 flex items-center justify-center text-[#9CA3AF] hover:text-[#EF4444] hover:bg-[#FEE2E2] rounded-xl transition-all flex-shrink-0"
                       >
                         <Trash2 className="w-5 h-5" />

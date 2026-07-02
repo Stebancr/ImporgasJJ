@@ -87,6 +87,13 @@ class Credenciales(AbstractBaseUser):
     usuario_rel = models.OneToOneField(Usuario, models.CASCADE, null=True, blank=True, related_name='credenciales')
     estado = models.IntegerField(default=1)
     tipo_usuario = models.IntegerField(default=0)
+    location = models.ForeignKey(
+        'ecommerce.Location',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='admins',
+        verbose_name="Sede asignada",
+    )
     fecha_creacion = models.DateTimeField(auto_now_add=True, null=True)
     fecha_ultimo_acceso = models.DateTimeField(null=True, blank=True)
 

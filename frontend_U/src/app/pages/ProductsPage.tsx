@@ -1,12 +1,16 @@
 import './styles/ProductsPage.css'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { SlidersHorizontal, X, ChevronDown, Grid3X3, LayoutList, Search } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import { Product, FilterOptions } from '../../types'
+import { productsService } from '../../services/products'
 
-// Mock data
-const allProducts: Product[] = [
+// Static categories for the filter sidebar
+const _placeholder: Product[] = []  // replaced by API
+void _placeholder  // suppress unused warning
+
+const allProductsMock: Product[] = [
   {
     id: '1',
     name: 'Calentador de Agua a Gas 13L Premium',
@@ -128,7 +132,7 @@ const allProducts: Product[] = [
 ]
 
 const categories = [
-  { value: '', label: 'Todas las categorias', count: allProducts.length },
+  { value: '', label: 'Todas las categorias', count: 0 },
   { value: 'calentadores', label: 'Calentadores', count: 45 },
   { value: 'aires', label: 'Aires Acondicionados', count: 32 },
   { value: 'reguladores', label: 'Reguladores', count: 28 },
@@ -149,6 +153,8 @@ function ProductsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [isFilterOpen, setIsFilterOpen] = useState(false)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [allProducts, setAllProducts] = useState<Product[]>(allProductsMock)
+  const [_isLoadingProducts, setIsLoadingProducts] = useState(true)
   const [filters, setFilters] = useState<FilterOptions>({
     category: searchParams.get('category') || '',
     brand: searchParams.get('brand') || '',
@@ -167,6 +173,16 @@ function ProductsPage() {
     }
     setSearchParams(searchParams)
   }
+
+  useEffect(() => {
+    setIsLoadingProducts(true)
+    productsService.getAll({ inStock: true })
+      .then(products => {
+        if (products.length > 0) setAllProducts(products)
+      })
+      .catch(() => { /* keep mock data on error */ })
+      .finally(() => setIsLoadingProducts(false))
+  }, [])
 
   const clearFilters = () => {
     setFilters({

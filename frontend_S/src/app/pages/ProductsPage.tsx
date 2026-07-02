@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -27,199 +27,263 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Plus, Search, Edit, Trash2, Package } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Package, Upload, X } from 'lucide-react'
+import { productsService } from '@/services/products'
+import type { CreateProductData } from '@/services/products'
+import { brandsService } from '@/services/brands'
+import { categoriesService } from '@/services/categories'
+import { locationsService } from '@/services/locations'
+import api from '@/services/api'
+import type { Product, Brand, Category, ProductSpec, Location } from '@/types'
 
-interface Product {
-  id: number
+interface FormData {
   name: string
-  slug: string
   description: string
-  price: number
-  original_price: number | null
+  price: string
+  original_price: string
   category: string
   brand: string
-  total_stock: number
   is_available: boolean
   is_featured: boolean
-  rating: number
 }
 
-const mockProducts: Product[] = [
-  {
-    id: 1,
-    name: 'Calentador de Paso Haceb 10L',
-    slug: 'calentador-haceb-10l',
-    description: 'Calentador de paso a gas natural, 10 litros por minuto',
-    price: 450000,
-    original_price: 500000,
-    category: 'Calentadores',
-    brand: 'Haceb',
-    total_stock: 15,
-    is_available: true,
-    is_featured: true,
-    rating: 4.5,
-  },
-  {
-    id: 2,
-    name: 'Regulador de Gas Fisher',
-    slug: 'regulador-gas-fisher',
-    description: 'Regulador de gas para cilindros de 40 y 100 libras',
-    price: 35000,
-    original_price: null,
-    category: 'Reguladores de Gas',
-    brand: 'Fisher',
-    total_stock: 50,
-    is_available: true,
-    is_featured: false,
-    rating: 4.8,
-  },
-  {
-    id: 3,
-    name: 'Aire Acondicionado Samsung 12000 BTU',
-    slug: 'aire-samsung-12000',
-    description: 'Aire acondicionado inverter, alta eficiencia energetica',
-    price: 1850000,
-    original_price: 2100000,
-    category: 'Aires Acondicionados',
-    brand: 'Samsung',
-    total_stock: 8,
-    is_available: true,
-    is_featured: true,
-    rating: 4.7,
-  },
-  {
-    id: 4,
-    name: 'Kit Instalacion Gas',
-    slug: 'kit-instalacion-gas',
-    description: 'Kit completo para instalacion de gas domiciliario',
-    price: 85000,
-    original_price: null,
-    category: 'Herramientas e Instalacion',
-    brand: 'Stanley',
-    total_stock: 25,
-    is_available: true,
-    is_featured: false,
-    rating: 4.3,
-  },
-]
-
-const categories = ['Calentadores', 'Aires Acondicionados', 'Reguladores de Gas', 'Herramientas e Instalacion']
-const brands = ['Haceb', 'Samsung', 'LG', 'Fisher', 'Stanley', 'Bosch', 'Challenger', 'Coltgas']
+const defaultForm: FormData = {
+  name: '',
+  description: '',
+  price: '',
+  original_price: '',
+  category: '',
+  brand: '',
+  is_available: true,
+  is_featured: false,
+}
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>(mockProducts)
+  const [products, setProducts] = useState<Product[]>([])
+  const [brands, setBrands] = useState<Brand[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [locations, setLocations] = useState<Location[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [searchTerm, setSearchTerm] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isLoadingProduct, setIsLoadingProduct] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    price: '',
-    original_price: '',
-    category: '',
-    brand: '',
-    total_stock: '',
-    is_available: true,
-    is_featured: false,
-  })
+  const [formData, setFormData] = useState<FormData>(defaultForm)
 
-  const filteredProducts = products.filter(
-    (product) =>
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.brand.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  // Image upload state
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [imagePreviews, setImagePreviews] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('es-CO', {
-      style: 'currency',
-      currency: 'COP',
-      minimumFractionDigits: 0,
-    }).format(price)
+  // Spec state
+  const [existingSpecs, setExistingSpecs] = useState<ProductSpec[]>([])
+  const [newSpecRows, setNewSpecRows] = useState<{ name: string; value: string }[]>([])
+
+  // Stock state: locationId -> quantity string
+  const [stockValues, setStockValues] = useState<Record<number, string>>({})
+
+  const PER_PAGE = 20
+
+  const fetchProducts = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const res = await productsService.getAll({
+        search: searchTerm || undefined,
+        page,
+        per_page: PER_PAGE,
+      })
+      setProducts(res.data)
+      setTotal(res.total)
+    } catch {
+      setError('Error al cargar los productos')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handleOpenDialog = (product?: Product) => {
+  useEffect(() => {
+    fetchProducts()
+  }, [searchTerm, page])
+
+  useEffect(() => {
+    brandsService.getAll({ is_active: true, per_page: 100 }).then(r => setBrands(r.data)).catch(() => {})
+    categoriesService.getAll({ is_active: true, per_page: 100 }).then(r => setCategories(r.data)).catch(() => {})
+    locationsService.getAll({ is_active: true, per_page: 100 }).then(r => setLocations(r.data)).catch(() => {})
+  }, [])
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    setImageFiles(prev => [...prev, ...files])
+    const previews = files.map(f => URL.createObjectURL(f))
+    setImagePreviews(prev => [...prev, ...previews])
+  }
+
+  const removeImage = (index: number) => {
+    URL.revokeObjectURL(imagePreviews[index])
+    setImageFiles(prev => prev.filter((_, i) => i !== index))
+    setImagePreviews(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const handleOpenDialog = async (product?: Product) => {
+    setImageFiles([])
+    setImagePreviews([])
+    setExistingSpecs([])
+    setNewSpecRows([])
+    setStockValues({})
+    setError(null)
     if (product) {
       setEditingProduct(product)
-      setFormData({
-        name: product.name,
-        description: product.description,
-        price: product.price.toString(),
-        original_price: product.original_price?.toString() || '',
-        category: product.category,
-        brand: product.brand,
-        total_stock: product.total_stock.toString(),
-        is_available: product.is_available,
-        is_featured: product.is_featured,
-      })
+      setFormData(defaultForm)
+      setIsDialogOpen(true)
+      setIsLoadingProduct(true)
+      try {
+        const [full, stockEntries] = await Promise.all([
+          productsService.getById(product.id),
+          productsService.getStock(product.id),
+        ])
+        setEditingProduct(full)
+        setFormData({
+          name: full.name,
+          description: full.description ?? '',
+          price: full.price.toString(),
+          original_price: full.original_price?.toString() ?? '',
+          category: full.category_id.toString(),
+          brand: full.brand_id.toString(),
+          is_available: full.is_available,
+          is_featured: full.is_featured,
+        })
+        setExistingSpecs(full.specifications ?? [])
+        const stockMap: Record<number, string> = {}
+        stockEntries.forEach(s => { stockMap[s.location_id] = s.quantity.toString() })
+        setStockValues(stockMap)
+      } catch {
+        setError('Error al cargar los datos del producto')
+      } finally {
+        setIsLoadingProduct(false)
+      }
     } else {
       setEditingProduct(null)
-      setFormData({
-        name: '',
-        description: '',
-        price: '',
-        original_price: '',
-        category: '',
-        brand: '',
-        total_stock: '',
-        is_available: true,
-        is_featured: false,
-      })
+      setFormData(defaultForm)
+      setIsDialogOpen(true)
     }
-    setIsDialogOpen(true)
   }
 
-  const handleSave = () => {
-    if (editingProduct) {
-      setProducts(products.map((p) =>
-        p.id === editingProduct.id
-          ? {
-              ...p,
-              name: formData.name,
-              slug: formData.name.toLowerCase().replace(/ /g, '-'),
-              description: formData.description,
-              price: parseFloat(formData.price),
-              original_price: formData.original_price ? parseFloat(formData.original_price) : null,
-              category: formData.category,
-              brand: formData.brand,
-              total_stock: parseInt(formData.total_stock),
-              is_available: formData.is_available,
-              is_featured: formData.is_featured,
-            }
-          : p
-      ))
-    } else {
-      const newProduct: Product = {
-        id: Math.max(...products.map((p) => p.id)) + 1,
+  const handleSave = async () => {
+    if (!formData.name || !formData.price || !formData.category || !formData.brand) {
+      setError('Completa los campos obligatorios: nombre, precio, categoría y marca')
+      return
+    }
+    setIsSaving(true)
+    setError(null)
+    try {
+      const payload = {
         name: formData.name,
-        slug: formData.name.toLowerCase().replace(/ /g, '-'),
         description: formData.description,
         price: parseFloat(formData.price),
-        original_price: formData.original_price ? parseFloat(formData.original_price) : null,
-        category: formData.category,
-        brand: formData.brand,
-        total_stock: parseInt(formData.total_stock),
+        original_price: formData.original_price ? parseFloat(formData.original_price) : undefined,
+        category: parseInt(formData.category),
+        brand: parseInt(formData.brand),
         is_available: formData.is_available,
         is_featured: formData.is_featured,
-        rating: 0,
       }
-      setProducts([...products, newProduct])
+
+      let savedProduct: Product
+      if (editingProduct) {
+        savedProduct = await productsService.update(editingProduct.id, payload as Partial<CreateProductData>)
+      } else {
+        savedProduct = await productsService.create(payload as CreateProductData)
+      }
+
+      // Upload images one by one
+      for (let i = 0; i < imageFiles.length; i++) {
+        await productsService.addImage(savedProduct.id, imageFiles[i], i === 0 && !editingProduct)
+      }
+
+      // Save new specs
+      const specErrors: string[] = []
+      for (const row of newSpecRows.filter(r => r.name.trim() && r.value.trim())) {
+        try {
+          const attrRes = await api.post<{ id: number } | { data: { id: number } }>('/spec-attributes', { name: row.name.trim() })
+          const attrData = attrRes.data as { data?: { id: number }; id?: number }
+          const attrId = attrData.data?.id ?? attrData.id
+          if (attrId) await productsService.addSpec(savedProduct.id, attrId, row.value.trim())
+          else specErrors.push(row.name)
+        } catch {
+          specErrors.push(row.name)
+        }
+      }
+      if (specErrors.length > 0) {
+        setError(`No se guardaron algunas especificaciones: ${specErrors.join(', ')}`)
+      }
+
+      // Save stock per location
+      for (const [locIdStr, qtyStr] of Object.entries(stockValues)) {
+        const qty = parseInt(qtyStr)
+        if (!isNaN(qty) && qty >= 0) {
+          await productsService.upsertStock(savedProduct.id, parseInt(locIdStr), qty)
+        }
+      }
+
+      setIsDialogOpen(false)
+      await fetchProducts()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data
+      setError(msg?.detail || msg?.error || 'Error al guardar el producto')
+    } finally {
+      setIsSaving(false)
     }
-    setIsDialogOpen(false)
   }
 
-  const handleDelete = (id: number) => {
-    if (confirm('Esta seguro de eliminar este producto?')) {
-      setProducts(products.filter((p) => p.id !== id))
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Está seguro de eliminar este producto?')) return
+    try {
+      await productsService.delete(id)
+      await fetchProducts()
+    } catch {
+      setError('Error al eliminar el producto')
     }
   }
+
+  const handleDeleteExistingImage = async (imageId: number) => {
+    if (!editingProduct) return
+    try {
+      await productsService.deleteImage(editingProduct.id, imageId)
+      setEditingProduct(prev =>
+        prev ? { ...prev, images: prev.images?.filter(img => img.id !== imageId) } : null
+      )
+    } catch {
+      setError('Error al eliminar la imagen')
+    }
+  }
+
+  const handleDeleteSpec = async (specId: number) => {
+    if (!editingProduct) return
+    try {
+      await productsService.deleteSpec(editingProduct.id, specId)
+      setExistingSpecs(prev => prev.filter(s => s.id !== specId))
+    } catch {
+      setError('Error al eliminar la especificación')
+    }
+  }
+
+
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(price)
+
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE))
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Productos</h1>
-          <p className="text-muted-foreground">Administra el catalogo de productos</p>
+          <p className="text-muted-foreground">Administra el catálogo de productos</p>
         </div>
         <Button onClick={() => handleOpenDialog()}>
           <Plus className="h-4 w-4 mr-2" />
@@ -227,111 +291,145 @@ export default function ProductsPage() {
         </Button>
       </div>
 
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="flex items-center gap-2">
               <Package className="h-5 w-5" />
               Lista de Productos
+              <Badge variant="secondary">{total}</Badge>
             </CardTitle>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar productos..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => { setSearchTerm(e.target.value); setPage(1) }}
                 className="pl-9"
               />
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Producto</TableHead>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead>Marca</TableHead>
-                  <TableHead className="text-right">Precio</TableHead>
-                  <TableHead className="text-center">Stock</TableHead>
-                  <TableHead className="text-center">Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProducts.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{product.name}</p>
-                        {product.is_featured && (
-                          <Badge variant="secondary" className="mt-1">Destacado</Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>{product.category}</TableCell>
-                    <TableCell>{product.brand}</TableCell>
-                    <TableCell className="text-right">
-                      <div>
-                        <p className="font-medium">{formatPrice(product.price)}</p>
-                        {product.original_price && (
-                          <p className="text-sm text-muted-foreground line-through">
-                            {formatPrice(product.original_price)}
-                          </p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge
-                        variant={product.total_stock > 10 ? 'success' : product.total_stock > 0 ? 'warning' : 'destructive'}
-                      >
-                        {product.total_stock}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={product.is_available ? 'success' : 'secondary'}>
-                        {product.is_available ? 'Disponible' : 'No disponible'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleOpenDialog(product)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(product.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+          {isLoading ? (
+            <div className="py-12 text-center text-muted-foreground">Cargando...</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Producto</TableHead>
+                    <TableHead>categoría</TableHead>
+                    <TableHead>Marca</TableHead>
+                    <TableHead className="text-right">Precio</TableHead>
+                    <TableHead className="text-center">Stock</TableHead>
+                    <TableHead className="text-center">Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {products.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                        No hay productos
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    products.map((product) => (
+                      <TableRow key={product.id}>
+                        <TableCell>
+                          <p className="font-medium">{product.name}</p>
+                          {product.is_featured && (
+                            <Badge variant="secondary" className="mt-1">Destacado</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>{product.category_name || product.category?.name || '—'}</TableCell>
+                        <TableCell>{product.brand_name || product.brand?.name || '—'}</TableCell>
+                        <TableCell className="text-right">
+                          <div>
+                            <p className="font-medium">{formatPrice(product.price)}</p>
+                            {product.original_price && (
+                              <p className="text-sm text-muted-foreground line-through">
+                                {formatPrice(product.original_price)}
+                              </p>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge
+                            variant={product.total_stock > 10 ? 'success' : product.total_stock > 0 ? 'warning' : 'destructive'}
+                          >
+                            {product.total_stock}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={product.is_available ? 'success' : 'secondary'}>
+                            {product.is_available ? 'Disponible' : 'No disponible'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(product)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDelete(product.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+              <p className="text-sm text-muted-foreground">
+                Página {page} de {totalPages} ({total} productos)
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
+                  Anterior
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={page === totalPages}>
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Product Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>
               {editingProduct ? 'Editar Producto' : 'Agregar Producto'}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          {isLoadingProduct ? (
+            <div className="py-12 text-center text-muted-foreground">Cargando datos del producto...</div>
+          ) : (
+            <>
+            <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="name">Nombre del producto</Label>
+              <Label htmlFor="name">Nombre del producto *</Label>
               <Input
                 id="name"
                 value={formData.name}
@@ -340,18 +438,18 @@ export default function ProductsPage() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="description">Descripcion</Label>
+              <Label htmlFor="description">Descripción</Label>
               <Textarea
                 id="description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Descripcion del producto..."
+                placeholder="Descripción del producto..."
                 rows={3}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="price">Precio</Label>
+                <Label htmlFor="price">Precio *</Label>
                 <Input
                   id="price"
                   type="number"
@@ -373,25 +471,25 @@ export default function ProductsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="category">Categoria</Label>
+                <Label>Categoría *</Label>
                 <Select
                   value={formData.category}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar categoria" />
+                    <SelectValue placeholder="Seleccionar categoría" />
                   </SelectTrigger>
                   <SelectContent>
                     {categories.map((cat) => (
-                      <SelectItem key={cat} value={cat}>
-                        {cat}
+                      <SelectItem key={cat.id} value={cat.id.toString()}>
+                        {cat.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="brand">Marca</Label>
+                <Label>Marca *</Label>
                 <Select
                   value={formData.brand}
                   onValueChange={(value) => setFormData({ ...formData, brand: value })}
@@ -401,24 +499,202 @@ export default function ProductsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     {brands.map((brand) => (
-                      <SelectItem key={brand} value={brand}>
-                        {brand}
+                      <SelectItem key={brand.id} value={brand.id.toString()}>
+                        {brand.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            {/* Specifications */}
             <div className="grid gap-2">
-              <Label htmlFor="total_stock">Stock total</Label>
-              <Input
-                id="total_stock"
-                type="number"
-                value={formData.total_stock}
-                onChange={(e) => setFormData({ ...formData, total_stock: e.target.value })}
-                placeholder="100"
-              />
+              <div className="flex items-center justify-between">
+                <Label>Especificaciones del producto</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setNewSpecRows(prev => [...prev, { name: '', value: '' }])}
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Agregar
+                </Button>
+              </div>
+              {existingSpecs.length > 0 && (
+                <div className="rounded-md border overflow-hidden text-sm">
+                  <table className="w-full">
+                    <thead className="bg-muted">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Característica</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Valor</th>
+                        <th className="w-8" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {existingSpecs.map(spec => (
+                        <tr key={spec.id} className="border-t">
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {spec.attribute_name}{spec.attribute_unit ? ` (${spec.attribute_unit})` : ''}
+                          </td>
+                          <td className="px-3 py-2 font-medium">{spec.value}</td>
+                          <td className="px-2 py-2">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSpec(spec.id)}
+                              className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {newSpecRows.map((row, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <Input
+                    placeholder="Característica (ej: Capacidad)"
+                    value={row.name}
+                    onChange={e => setNewSpecRows(prev => prev.map((r, j) => j === i ? { ...r, name: e.target.value } : r))}
+                    className="flex-1"
+                  />
+                  <Input
+                    placeholder="Valor (ej: 13 litros)"
+                    value={row.value}
+                    onChange={e => setNewSpecRows(prev => prev.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}
+                    className="flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setNewSpecRows(prev => prev.filter((_, j) => j !== i))}
+                    className="h-8 w-8 rounded flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              {newSpecRows.length === 0 && existingSpecs.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Agrega las características del producto (marca, modelo, capacidad, etc.)
+                </p>
+              )}
             </div>
+
+            {/* Stock per location */}
+            {locations.length > 0 && (
+              <div className="grid gap-2">
+                <Label>Stock por sede</Label>
+                <div className="rounded-md border overflow-hidden text-sm">
+                  <table className="w-full">
+                    <thead className="bg-muted">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Sede</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Ciudad</th>
+                        <th className="px-3 py-2 font-medium text-muted-foreground w-32">Cantidad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {locations.map(loc => (
+                        <tr key={loc.id} className="border-t">
+                          <td className="px-3 py-2 font-medium">{loc.name}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{loc.city}</td>
+                          <td className="px-3 py-2">
+                            <Input
+                              type="number"
+                              min="0"
+                              className="h-7 w-24 text-sm"
+                              placeholder="0"
+                              value={stockValues[loc.id] ?? ''}
+                              onChange={e => setStockValues(prev => ({ ...prev, [loc.id]: e.target.value }))}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Image upload */}
+            <div className="grid gap-2">
+              <Label>Imágenes del producto</Label>              <div
+                className="border-2 border-dashed rounded-lg p-4 cursor-pointer hover:bg-muted/30 transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Upload className="h-8 w-8" />
+                  <p className="text-sm">Haz clic para seleccionar Imágenes</p>
+                  <p className="text-xs">PNG, JPG, WEBP (múltiples)</p>
+                </div>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+              {imagePreviews.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {imagePreviews.map((preview, index) => (
+                    <div key={index} className="relative">
+                      <img
+                        src={preview}
+                        alt={`Preview ${index + 1}`}
+                        className="h-20 w-20 object-cover rounded border"
+                      />
+                      {index === 0 && (
+                        <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-xs text-center py-0.5 rounded-b">
+                          Principal
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeImage(index)}
+                        className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {editingProduct && editingProduct.images && editingProduct.images.length > 0 && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Imágenes actuales:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {editingProduct.images.map((img) => (
+                      <div key={img.id} className="relative">
+                        <img
+                          src={img.image_url || img.image}
+                          alt={img.alt_text || 'imagen'}
+                          className={`h-16 w-16 object-cover rounded border-2 ${img.is_primary ? 'border-primary' : 'border-muted'}`}
+                        />
+                        {img.is_primary && (
+                          <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-xs text-center py-0.5 rounded-b">
+                            Principal
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteExistingImage(img.id)}
+                          className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -441,15 +717,18 @@ export default function ProductsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving}>
               Cancelar
             </Button>
-            <Button onClick={handleSave}>
-              {editingProduct ? 'Guardar cambios' : 'Crear producto'}
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Guardando...' : editingProduct ? 'Guardar cambios' : 'Crear producto'}
             </Button>
           </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
   )
 }
+

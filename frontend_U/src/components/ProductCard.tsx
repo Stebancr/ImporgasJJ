@@ -1,13 +1,18 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ShoppingCart, Star, Heart, Eye } from 'lucide-react'
 import { useState } from 'react'
 import { Product } from '../types'
+import { useAuth } from '../context/AuthContext'
+import { useCart } from '../context/CartContext'
 
 interface ProductCardProps {
   product: Product
 }
 
 function ProductCard({ product }: ProductCardProps) {
+  const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
+  const { addToCart } = useCart()
   const [isHovered, setIsHovered] = useState(false)
   const [isWishlisted, setIsWishlisted] = useState(false)
 
@@ -17,6 +22,19 @@ function ProductCard({ product }: ProductCardProps) {
       currency: 'COP',
       minimumFractionDigits: 0,
     }).format(price)
+  }
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!isAuthenticated) {
+      sessionStorage.setItem(
+        'pendingCartItem',
+        JSON.stringify({ productId: product.id, quantity: 1 })
+      )
+      navigate(`/login?redirect=/producto/${product.id}`)
+      return
+    }
+    addToCart(product, 1)
   }
 
   return (
@@ -89,6 +107,7 @@ function ProductCard({ product }: ProductCardProps) {
           }`}
         >
           <button
+            onClick={handleAddToCart}
             disabled={!product.isAvailable}
             className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:shadow-[#0066FF]/25 transition-all disabled:opacity-50"
           >
@@ -150,6 +169,7 @@ function ProductCard({ product }: ProductCardProps) {
 
         {/* Mobile: always-visible add-to-cart */}
         <button
+          onClick={handleAddToCart}
           disabled={!product.isAvailable}
           className="sm:hidden w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
         >

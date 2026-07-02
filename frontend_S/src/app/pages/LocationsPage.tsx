@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,36 +20,44 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Plus, Search, Edit, Trash2, MapPin } from 'lucide-react'
+import { locationsService } from '@/services/locations'
+import type { Location } from '@/types'
 
-interface Location {
-  id: number
-  name: string
-  address: string
-  city: string
-  phone: string
-  is_active: boolean
+const defaultForm = {
+  name: '',
+  address: '',
+  city: '',
+  phone: '',
+  hours_weekday: '',
+  hours_saturday: '',
+  hours_sunday: '',
+  is_active: true,
 }
 
-const mockLocations: Location[] = [
-  { id: 1, name: 'Bodega Principal', address: 'Calle 45 #23-56', city: 'Bogota', phone: '+57 1 234 5678', is_active: true },
-  { id: 2, name: 'Sucursal Norte', address: 'Carrera 15 #78-90', city: 'Bogota', phone: '+57 1 345 6789', is_active: true },
-  { id: 3, name: 'Sucursal Medellin', address: 'Avenida 70 #32-15', city: 'Medellin', phone: '+57 4 456 7890', is_active: true },
-  { id: 4, name: 'Sucursal Cali', address: 'Calle 5 #45-67', city: 'Cali', phone: '+57 2 567 8901', is_active: true },
-  { id: 5, name: 'Punto de Venta Centro', address: 'Carrera 7 #12-34', city: 'Bogota', phone: '+57 1 678 9012', is_active: false },
-]
-
 export default function LocationsPage() {
-  const [locations, setLocations] = useState<Location[]>(mockLocations)
+  const [locations, setLocations] = useState<Location[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingLocation, setEditingLocation] = useState<Location | null>(null)
-  const [formData, setFormData] = useState({
-    name: '',
-    address: '',
-    city: '',
-    phone: '',
-    is_active: true,
-  })
+  const [formData, setFormData] = useState(defaultForm)
+
+  const fetchLocations = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const res = await locationsService.getAll({ per_page: 100 })
+      setLocations(res.data)
+    } catch {
+      setError('Error al cargar las ubicaciones')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => { fetchLocations() }, [])
 
   const filteredLocations = locations.filter(
     (location) =>
@@ -65,52 +73,57 @@ export default function LocationsPage() {
         address: location.address,
         city: location.city,
         phone: location.phone,
+        hours_weekday: location.hours_weekday,
+        hours_saturday: location.hours_saturday,
+        hours_sunday: location.hours_sunday,
         is_active: location.is_active,
       })
     } else {
       setEditingLocation(null)
-      setFormData({
-        name: '',
-        address: '',
-        city: '',
-        phone: '',
-        is_active: true,
-      })
+      setFormData(defaultForm)
     }
+    setError(null)
     setIsDialogOpen(true)
   }
 
-  const handleSave = () => {
-    if (editingLocation) {
-      setLocations(locations.map((l) =>
-        l.id === editingLocation.id
-          ? {
-              ...l,
-              name: formData.name,
-              address: formData.address,
-              city: formData.city,
-              phone: formData.phone,
-              is_active: formData.is_active,
-            }
-          : l
-      ))
-    } else {
-      const newLocation: Location = {
-        id: Math.max(...locations.map((l) => l.id)) + 1,
-        name: formData.name,
-        address: formData.address,
-        city: formData.city,
-        phone: formData.phone,
-        is_active: formData.is_active,
-      }
-      setLocations([...locations, newLocation])
+  const handleSave = async () => {
+    if (!formData.name || !formData.address || !formData.city) {
+      setError('Nombre, dirección y ciudad son obligatorios')
+      return
     }
-    setIsDialogOpen(false)
+    setIsSaving(true)
+    setError(null)
+    try {
+      if (editingLocation) {
+        await locationsService.update(editingLocation.id, formData)
+      } else {
+        await locationsService.create(formData)
+      }
+      setIsDialogOpen(false)
+      await fetchLocations()
+    } catch {
+      setError('Error al guardar la ubicación')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const handleDelete = (id: number) => {
-    if (confirm('Esta seguro de eliminar esta ubicacion?')) {
-      setLocations(locations.filter((l) => l.id !== id))
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Está seguro de eliminar esta ubicación?')) return
+    try {
+      await locationsService.delete(id)
+      await fetchLocations()
+    } catch {
+      setError('Error al eliminar la ubicación')
+    }
+  }
+
+  const handleToggleActive = async (id: number) => {
+    try {
+      const updated = await locationsService.toggleActive(id)
+      setLocations(prev => prev.map(l => l.id === id ? updated : l))
+    } catch {
+      setError('Error al cambiar el estado')
     }
   }
 
@@ -119,13 +132,19 @@ export default function LocationsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Ubicaciones</h1>
-          <p className="text-muted-foreground">Administra los puntos fisicos y bodegas</p>
+          <p className="text-muted-foreground">Administra los puntos físicos y bodegas</p>
         </div>
         <Button onClick={() => handleOpenDialog()}>
           <Plus className="h-4 w-4 mr-2" />
-          Agregar Ubicacion
+          Agregar Ubicación
         </Button>
       </div>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -133,6 +152,7 @@ export default function LocationsPage() {
             <CardTitle className="flex items-center gap-2">
               <MapPin className="h-5 w-5" />
               Lista de Ubicaciones
+              <Badge variant="secondary">{locations.length}</Badge>
             </CardTitle>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -146,75 +166,90 @@ export default function LocationsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Direccion</TableHead>
-                  <TableHead>Ciudad</TableHead>
-                  <TableHead>Telefono</TableHead>
-                  <TableHead className="text-center">Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLocations.map((location) => (
-                  <TableRow key={location.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                          <MapPin className="h-4 w-4" />
-                        </div>
-                        <span className="font-medium">{location.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{location.address}</TableCell>
-                    <TableCell>{location.city}</TableCell>
-                    <TableCell className="text-muted-foreground">{location.phone}</TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={location.is_active ? 'success' : 'secondary'}>
-                        {location.is_active ? 'Activa' : 'Inactiva'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleOpenDialog(location)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(location.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+          {isLoading ? (
+            <div className="py-12 text-center text-muted-foreground">Cargando...</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead>Dirección</TableHead>
+                    <TableHead>Ciudad</TableHead>
+                    <TableHead>Teléfono</TableHead>
+                    <TableHead className="text-center">Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {filteredLocations.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        No hay ubicaciones
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredLocations.map((location) => (
+                      <TableRow key={location.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                              <MapPin className="h-4 w-4" />
+                            </div>
+                            <span className="font-medium">{location.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{location.address}</TableCell>
+                        <TableCell>{location.city}</TableCell>
+                        <TableCell className="text-muted-foreground">{location.phone || '—'}</TableCell>
+                        <TableCell className="text-center">
+                          <button onClick={() => handleToggleActive(location.id)}>
+                            <Badge variant={location.is_active ? 'success' : 'secondary'} className="cursor-pointer">
+                              {location.is_active ? 'Activa' : 'Inactiva'}
+                            </Badge>
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(location)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDelete(location.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Location Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>
-              {editingLocation ? 'Editar Ubicacion' : 'Agregar Ubicacion'}
+              {editingLocation ? 'Editar Ubicación' : 'Agregar Ubicación'}
             </DialogTitle>
           </DialogHeader>
+          {error && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/30 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="name">Nombre</Label>
+              <Label htmlFor="name">Nombre *</Label>
               <Input
                 id="name"
                 value={formData.name}
@@ -223,7 +258,7 @@ export default function LocationsPage() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="address">Direccion</Label>
+              <Label htmlFor="address">Dirección *</Label>
               <Input
                 id="address"
                 value={formData.address}
@@ -233,16 +268,16 @@ export default function LocationsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="city">Ciudad</Label>
+                <Label htmlFor="city">Ciudad *</Label>
                 <Input
                   id="city"
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  placeholder="Ej: Bogota"
+                  placeholder="Ej: Bogotá"
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="phone">Telefono</Label>
+                <Label htmlFor="phone">Teléfono</Label>
                 <Input
                   id="phone"
                   value={formData.phone}
@@ -250,8 +285,35 @@ export default function LocationsPage() {
                   placeholder="+57 1 234 5678"
                 />
               </div>
-            </div>
-            <div className="flex items-center gap-2">
+            </div>            <div className="grid gap-2">
+              <Label>Horarios de atención</Label>
+              <div className="grid grid-cols-1 gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground w-20 shrink-0">Lun - Vie</span>
+                  <Input
+                    value={formData.hours_weekday}
+                    onChange={(e) => setFormData({ ...formData, hours_weekday: e.target.value })}
+                    placeholder="Ej: 8:00 AM - 6:00 PM"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground w-20 shrink-0">Sábado</span>
+                  <Input
+                    value={formData.hours_saturday}
+                    onChange={(e) => setFormData({ ...formData, hours_saturday: e.target.value })}
+                    placeholder="Ej: 9:00 AM - 2:00 PM"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground w-20 shrink-0">Domingo</span>
+                  <Input
+                    value={formData.hours_sunday}
+                    onChange={(e) => setFormData({ ...formData, hours_sunday: e.target.value })}
+                    placeholder="Ej: Cerrado"
+                  />
+                </div>
+              </div>
+            </div>            <div className="flex items-center gap-2">
               <input
                 type="checkbox"
                 id="is_active"
@@ -260,16 +322,16 @@ export default function LocationsPage() {
                 className="h-4 w-4 rounded border-input"
               />
               <Label htmlFor="is_active" className="cursor-pointer">
-                Ubicacion activa
+                Ubicación activa
               </Label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving}>
               Cancelar
             </Button>
-            <Button onClick={handleSave}>
-              {editingLocation ? 'Guardar cambios' : 'Crear ubicacion'}
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Guardando...' : editingLocation ? 'Guardar cambios' : 'Crear ubicación'}
             </Button>
           </DialogFooter>
         </DialogContent>

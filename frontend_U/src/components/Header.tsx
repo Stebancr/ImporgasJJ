@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { Menu, X, ShoppingCart, User, Search, Flame, ChevronDown } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Menu, X, ShoppingCart, User, Search, Flame, ChevronDown, LogOut } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
+import { useCart } from '../context/CartContext'
 
 function Header() {
+  const { isAuthenticated, logout } = useAuth()
+  const { totalItems } = useCart()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [isScrolled, setIsScrolled] = useState(false)
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
 
   useEffect(() => {
     const handleScroll = () => {
@@ -137,18 +142,39 @@ function Header() {
               className="relative p-2.5 lg:p-3 text-[#4B5563] hover:text-[#0066FF] hover:bg-[#F3F4F6] rounded-xl transition-all duration-200 group"
             >
               <ShoppingCart className="w-5 h-5 lg:w-6 lg:h-6" />
-              <span className="absolute -top-0.5 -right-0.5 lg:top-0 lg:right-0 min-w-[20px] h-5 bg-gradient-to-r from-[#FF6B35] to-[#E55A2B] text-white text-xs font-bold rounded-full flex items-center justify-center px-1.5 shadow-lg shadow-[#FF6B35]/30 group-hover:scale-110 transition-transform">
-                0
-              </span>
+              {totalItems > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 lg:top-0 lg:right-0 min-w-[20px] h-5 bg-gradient-to-r from-[#FF6B35] to-[#E55A2B] text-white text-xs font-bold rounded-full flex items-center justify-center px-1.5 shadow-lg shadow-[#FF6B35]/30 group-hover:scale-110 transition-transform">
+                  {totalItems}
+                </span>
+              )}
             </Link>
             
-            <Link 
-              to="/login" 
-              className="hidden md:flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-xl font-semibold hover:shadow-lg hover:shadow-[#0066FF]/25 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
-            >
-              <User className="w-4 h-4" />
-              <span>Ingresar</span>
-            </Link>
+            {isAuthenticated ? (
+              <div className="hidden md:flex items-center gap-2">
+                <Link
+                  to="/perfil"
+                  className="flex items-center gap-2 px-4 py-2.5 text-[#4B5563] hover:text-[#0066FF] hover:bg-[#F3F4F6] rounded-xl font-medium transition-all duration-200 text-sm"
+                >
+                  <User className="w-4 h-4" />
+                  <span>Mis Pedidos</span>
+                </Link>
+                <button
+                  onClick={() => { logout(); navigate('/') }}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gray-100 text-[#4B5563] rounded-xl font-medium hover:bg-gray-200 transition-all duration-200 text-sm"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Salir</span>
+                </button>
+              </div>
+            ) : (
+              <Link 
+                to="/login" 
+                className="hidden md:flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-xl font-semibold hover:shadow-lg hover:shadow-[#0066FF]/25 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
+              >
+                <User className="w-4 h-4" />
+                <span>Ingresar</span>
+              </Link>
+            )}
 
             {/* Mobile Menu Button */}
             <button
@@ -203,13 +229,33 @@ function Header() {
           </nav>
 
           {/* Mobile Login Button */}
-          <Link
-            to="/login"
-            className="mt-4 flex items-center justify-center gap-2 w-full px-5 py-3 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-xl font-semibold"
-          >
-            <User className="w-5 h-5" />
-            <span>Ingresar</span>
-          </Link>
+          {isAuthenticated ? (
+            <div className="mt-4 flex flex-col gap-2">
+              <Link
+                to="/perfil"
+                onClick={() => setIsMenuOpen(false)}
+                className="flex items-center justify-center gap-2 w-full px-5 py-3 bg-[#E6F0FF] text-[#0066FF] rounded-xl font-semibold"
+              >
+                <User className="w-5 h-5" />
+                <span>Mis Pedidos</span>
+              </Link>
+              <button
+                onClick={() => { logout(); navigate('/'); setIsMenuOpen(false) }}
+                className="flex items-center justify-center gap-2 w-full px-5 py-3 bg-gray-100 text-[#4B5563] rounded-xl font-semibold"
+              >
+                <LogOut className="w-5 h-5" />
+                <span>Cerrar sesión</span>
+              </button>
+            </div>
+          ) : (
+            <Link
+              to="/login"
+              className="mt-4 flex items-center justify-center gap-2 w-full px-5 py-3 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white rounded-xl font-semibold"
+            >
+              <User className="w-5 h-5" />
+              <span>Ingresar</span>
+            </Link>
+          )}
         </div>
       </div>
     </header>

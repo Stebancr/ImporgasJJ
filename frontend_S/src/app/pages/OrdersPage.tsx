@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -26,107 +26,46 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
-import { Search, Eye, ShoppingCart } from 'lucide-react'
-import type { OrderStatus } from '@/types'
-
-interface Order {
-  id: number
-  orderNumber: string
-  customer: string
-  email: string
-  total: number
-  status: OrderStatus
-  payment_method: string
-  shipping_address: string
-  created_at: string
-  items: {
-    product: string
-    quantity: number
-    unit_price: number
-  }[]
-}
-
-const mockOrders: Order[] = [
-  {
-    id: 1,
-    orderNumber: 'ORD-001',
-    customer: 'Juan Perez',
-    email: 'juan@email.com',
-    total: 485000,
-    status: 'delivered',
-    payment_method: 'Tarjeta de credito',
-    shipping_address: 'Calle 45 #23-56, Bogota',
-    created_at: '2024-01-15T10:30:00',
-    items: [
-      { product: 'Calentador Haceb 10L', quantity: 1, unit_price: 450000 },
-      { product: 'Regulador de Gas', quantity: 1, unit_price: 35000 },
-    ],
-  },
-  {
-    id: 2,
-    orderNumber: 'ORD-002',
-    customer: 'Maria Garcia',
-    email: 'maria@email.com',
-    total: 1850000,
-    status: 'shipping',
-    payment_method: 'Transferencia',
-    shipping_address: 'Carrera 15 #78-90, Medellin',
-    created_at: '2024-01-16T14:20:00',
-    items: [
-      { product: 'Aire Samsung 12000 BTU', quantity: 1, unit_price: 1850000 },
-    ],
-  },
-  {
-    id: 3,
-    orderNumber: 'ORD-003',
-    customer: 'Carlos Lopez',
-    email: 'carlos@email.com',
-    total: 170000,
-    status: 'preparing',
-    payment_method: 'Contraentrega',
-    shipping_address: 'Avenida 70 #32-15, Cali',
-    created_at: '2024-01-17T09:15:00',
-    items: [
-      { product: 'Kit Instalacion Gas', quantity: 2, unit_price: 85000 },
-    ],
-  },
-  {
-    id: 4,
-    orderNumber: 'ORD-004',
-    customer: 'Ana Martinez',
-    email: 'ana@email.com',
-    total: 520000,
-    status: 'pending',
-    payment_method: 'Tarjeta debito',
-    shipping_address: 'Calle 100 #15-20, Bogota',
-    created_at: '2024-01-18T16:45:00',
-    items: [
-      { product: 'Calentador Haceb 10L', quantity: 1, unit_price: 450000 },
-      { product: 'Manguera Gas 1.5m', quantity: 2, unit_price: 35000 },
-    ],
-  },
-]
+import { Search, Eye, ShoppingCart, RefreshCw } from 'lucide-react'
+import type { Order, OrderStatus } from '@/types'
+import { ordersService } from '@/services/orders'
 
 const statusConfig: Record<OrderStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' }> = {
-  pending: { label: 'Pendiente', variant: 'secondary' },
-  paid: { label: 'Pagado', variant: 'default' },
-  preparing: { label: 'Preparando', variant: 'warning' },
-  shipping: { label: 'En camino', variant: 'default' },
-  delivered: { label: 'Entregado', variant: 'success' },
-  installed: { label: 'Instalado', variant: 'success' },
+  pending:   { label: 'Pendiente',     variant: 'secondary' },
+  paid:      { label: 'Pagado',        variant: 'default' },
+  preparing: { label: 'Preparando',    variant: 'warning' },
+  shipping:  { label: 'En camino',     variant: 'default' },
+  delivered: { label: 'Entregado',     variant: 'success' },
+  installed: { label: 'Instalado',     variant: 'success' },
+  cancelled: { label: 'Cancelado',     variant: 'destructive' },
 }
 
 export default function OrdersPage() {
-  const [orders, setOrders] = useState<Order[]>(mockOrders)
+  const [orders, setOrders] = useState<Order[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const [updatingId, setUpdatingId] = useState<number | null>(null)
+
+  const fetchOrders = () => {
+    setLoading(true)
+    ordersService.getAll()
+      .then((res) => setOrders(Array.isArray(res?.data) ? res.data : []))
+      .catch(() => setOrders([]))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    fetchOrders()
+  }, [])
 
   const filteredOrders = orders.filter((order) => {
     const matchesSearch =
-      order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.customer.toLowerCase().includes(searchTerm.toLowerCase())
+      (order.order_number ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (order.customer_name ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (order.customer_email ?? '').toLowerCase().includes(searchTerm.toLowerCase())
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter
     return matchesSearch && matchesStatus
   })
@@ -154,12 +93,18 @@ export default function OrdersPage() {
     setIsDetailOpen(true)
   }
 
-  const handleStatusChange = (orderId: number, newStatus: OrderStatus) => {
-    setOrders(orders.map((o) =>
-      o.id === orderId ? { ...o, status: newStatus } : o
-    ))
-    if (selectedOrder?.id === orderId) {
-      setSelectedOrder({ ...selectedOrder, status: newStatus })
+  const handleStatusChange = async (orderId: number, newStatus: OrderStatus) => {
+    setUpdatingId(orderId)
+    try {
+      await ordersService.updateStatus(orderId, newStatus)
+      setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, status: newStatus } : o))
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder({ ...selectedOrder, status: newStatus })
+      }
+    } catch {
+      alert('Error al actualizar el estado')
+    } finally {
+      setUpdatingId(null)
     }
   }
 
@@ -178,6 +123,9 @@ export default function OrdersPage() {
               Lista de Ordenes
             </CardTitle>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button variant="outline" size="icon" onClick={fetchOrders} title="Actualizar">
+                <RefreshCw className="h-4 w-4" />
+              </Button>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-full sm:w-40">
                   <SelectValue placeholder="Filtrar por estado" />
@@ -190,6 +138,7 @@ export default function OrdersPage() {
                   <SelectItem value="shipping">En camino</SelectItem>
                   <SelectItem value="delivered">Entregado</SelectItem>
                   <SelectItem value="installed">Instalado</SelectItem>
+                  <SelectItem value="cancelled">Cancelado</SelectItem>
                 </SelectContent>
               </Select>
               <div className="relative w-full sm:w-64">
@@ -206,6 +155,9 @@ export default function OrdersPage() {
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
+            {loading ? (
+              <p className="text-center py-8 text-muted-foreground">Cargando órdenes...</p>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -219,25 +171,51 @@ export default function OrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredOrders.map((order) => (
+                {filteredOrders.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
+                      {searchTerm || statusFilter !== 'all'
+                        ? 'No se encontraron órdenes con ese filtro.'
+                        : 'No hay órdenes registradas aún.'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                filteredOrders.map((order) => (
                   <TableRow key={order.id}>
-                    <TableCell className="font-medium">{order.orderNumber}</TableCell>
+                    <TableCell className="font-medium">{order.order_number}</TableCell>
                     <TableCell>
                       <div>
-                        <p className="font-medium">{order.customer}</p>
-                        <p className="text-sm text-muted-foreground">{order.email}</p>
+                        <p className="font-medium">{order.customer_name}</p>
+                        <p className="text-sm text-muted-foreground">{order.customer_email}</p>
                       </div>
                     </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatPrice(order.total)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {order.payment_method}
+                      {order.payment_method === 'wompi' ? 'Wompi' : 'Contra entrega'}
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge variant={statusConfig[order.status].variant}>
-                        {statusConfig[order.status].label}
-                      </Badge>
+                      <Select
+                        value={order.status}
+                        onValueChange={(value) => handleStatusChange(order.id, value as OrderStatus)}
+                        disabled={updatingId === order.id}
+                      >
+                        <SelectTrigger className="h-7 w-36 mx-auto text-xs border-none shadow-none focus:ring-0 px-2">
+                          <Badge variant={statusConfig[order.status]?.variant ?? 'secondary'} className="cursor-pointer">
+                            {updatingId === order.id ? '...' : (statusConfig[order.status]?.label ?? order.status)}
+                          </Badge>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pending">Pendiente</SelectItem>
+                          <SelectItem value="paid">Pagado</SelectItem>
+                          <SelectItem value="preparing">Preparando</SelectItem>
+                          <SelectItem value="shipping">En camino</SelectItem>
+                          <SelectItem value="delivered">Entregado</SelectItem>
+                          <SelectItem value="installed">Instalado</SelectItem>
+                          <SelectItem value="cancelled">Cancelado</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDate(order.created_at)}
@@ -252,9 +230,11 @@ export default function OrdersPage() {
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                ))
+                )}
               </TableBody>
             </Table>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -263,28 +243,43 @@ export default function OrdersPage() {
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Detalle de Orden {selectedOrder?.orderNumber}</DialogTitle>
+            <DialogTitle>Detalle de Orden {selectedOrder?.order_number}</DialogTitle>
           </DialogHeader>
           {selectedOrder && (
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Cliente</p>
-                  <p className="font-medium">{selectedOrder.customer}</p>
-                  <p className="text-sm text-muted-foreground">{selectedOrder.email}</p>
+                  <p className="font-medium">{selectedOrder.customer_name}</p>
+                  <p className="text-sm text-muted-foreground">{selectedOrder.customer_email}</p>
+                  {selectedOrder.customer_phone && (
+                    <p className="text-sm text-muted-foreground">{selectedOrder.customer_phone}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Direccion de envio</p>
                   <p className="font-medium">{selectedOrder.shipping_address}</p>
+                  {selectedOrder.city && (
+                    <p className="text-sm text-muted-foreground">{selectedOrder.city}{selectedOrder.department ? `, ${selectedOrder.department}` : ''}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Metodo de pago</p>
-                  <p className="font-medium">{selectedOrder.payment_method}</p>
+                  <p className="font-medium">{selectedOrder.payment_method === 'wompi' ? 'Wompi' : 'Contra entrega'}</p>
+                  {selectedOrder.wompi_reference && (
+                    <p className="text-xs text-muted-foreground font-mono">Ref: {selectedOrder.wompi_reference}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Fecha</p>
                   <p className="font-medium">{formatDate(selectedOrder.created_at)}</p>
                 </div>
+                {selectedOrder.tracking_code && (
+                  <div className="col-span-2">
+                    <p className="text-sm text-muted-foreground">Código de seguimiento</p>
+                    <p className="font-mono text-xs text-blue-700">{String(selectedOrder.tracking_code)}</p>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -300,9 +295,9 @@ export default function OrdersPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selectedOrder.items.map((item, index) => (
+                      {(selectedOrder.items ?? []).map((item, index) => (
                         <TableRow key={index}>
-                          <TableCell>{item.product}</TableCell>
+                          <TableCell>{item.product?.name ?? `Producto #${item.product_id}`}</TableCell>
                           <TableCell className="text-center">{item.quantity}</TableCell>
                           <TableCell className="text-right">{formatPrice(item.unit_price)}</TableCell>
                           <TableCell className="text-right font-medium">
@@ -311,12 +306,18 @@ export default function OrdersPage() {
                         </TableRow>
                       ))}
                       <TableRow>
-                        <TableCell colSpan={3} className="text-right font-bold">
-                          Total
-                        </TableCell>
-                        <TableCell className="text-right font-bold">
-                          {formatPrice(selectedOrder.total)}
-                        </TableCell>
+                        <TableCell colSpan={3} className="text-right text-muted-foreground">Subtotal</TableCell>
+                        <TableCell className="text-right">{formatPrice(Number(selectedOrder.subtotal ?? selectedOrder.total))}</TableCell>
+                      </TableRow>
+                      {selectedOrder.shipping_cost != null && Number(selectedOrder.shipping_cost) > 0 && (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-right text-muted-foreground">Envío</TableCell>
+                          <TableCell className="text-right">{formatPrice(Number(selectedOrder.shipping_cost))}</TableCell>
+                        </TableRow>
+                      )}
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-right font-bold">Total</TableCell>
+                        <TableCell className="text-right font-bold">{formatPrice(Number(selectedOrder.total))}</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -339,6 +340,7 @@ export default function OrdersPage() {
                     <SelectItem value="shipping">En camino</SelectItem>
                     <SelectItem value="delivered">Entregado</SelectItem>
                     <SelectItem value="installed">Instalado</SelectItem>
+                    <SelectItem value="cancelled">Cancelado</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

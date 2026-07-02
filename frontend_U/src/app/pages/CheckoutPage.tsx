@@ -1,7 +1,13 @@
 import './styles/CheckoutPage.css'
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { CreditCard, Truck, Shield, ChevronLeft, Check } from 'lucide-react'
+import { useCart } from '../../context/CartContext'
+import WompiCheckout from '../../components/WompiCheckout'
+import ordersService from '../../services/orders'
+
+// Replace with your real Wompi public key from https://comercios.wompi.co
+const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? 'pub_test_YOUR_KEY_HERE'
 
 interface CheckoutForm {
   email: string
@@ -14,18 +20,12 @@ interface CheckoutForm {
   paymentMethod: 'wompi' | 'cash'
 }
 
-const cartSummary = {
-  items: [
-    { name: 'Calentador de Agua a Gas 13L', price: 650000, quantity: 1 },
-    { name: 'Regulador de Gas Alta Presión', price: 85000, quantity: 2 },
-  ],
-  subtotal: 820000,
-  shipping: 0,
-  total: 820000,
-}
-
 function CheckoutPage() {
+  const { items, clearCart } = useCart()
+  const navigate = useNavigate()
   const [step, setStep] = useState<'info' | 'payment' | 'confirm'>('info')
+  const [submitting, setSubmitting] = useState(false)
+  const [orderTrackingCode, setOrderTrackingCode] = useState<string>('')
   const [form, setForm] = useState<CheckoutForm>({
     email: '',
     name: '',
@@ -37,13 +37,26 @@ function CheckoutPage() {
     paymentMethod: 'wompi',
   })
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('es-CO', {
+  const subtotal = useMemo(
+    () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
+    [items]
+  )
+  const shipping = subtotal >= 500000 ? 0 : 25000
+  const total = subtotal + shipping
+  const amountInCents = total * 100
+
+  // Unique reference per session
+  const reference = useMemo(
+    () => `GS-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
+    []
+  )
+
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat('es-CO', {
       style: 'currency',
       currency: 'COP',
       minimumFractionDigits: 0,
     }).format(price)
-  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
@@ -54,15 +67,56 @@ function CheckoutPage() {
     setStep('payment')
   }
 
-  const handleSubmitPayment = (e: React.FormEvent) => {
+  const handleCashConfirm = async (e: React.FormEvent) => {
     e.preventDefault()
-    setStep('confirm')
+    setSubmitting(true)
+    try {
+      const order = await ordersService.create({
+        customer_name: form.name,
+        customer_email: form.email,
+        customer_phone: form.phone,
+        shipping_address: form.address,
+        city: form.city,
+        department: form.department,
+        postal_code: form.postalCode,
+        payment_method: 'cash',
+        wompi_reference: reference,
+        items: items.map((i) => ({
+          product_id: parseInt(i.product.id),
+          quantity: i.quantity,
+        })),
+      })
+      setOrderTrackingCode(String(order.tracking_code ?? order.id))
+      clearCart()
+      setStep('confirm')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
+      alert(message)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const departments = [
     'Amazonas', 'Antioquia', 'Arauca', 'Atlántico', 'Bogotá D.C.', 'Bolívar', 'Boyacá',
     'Caldas', 'Caquetá', 'Casanare', 'Cauca', 'Cesar', 'Chocó', 'Córdoba', 'Cundinamarca',
+    'Guainía', 'Guaviare', 'Huila', 'La Guajira', 'Magdalena', 'Meta', 'Nariño',
+    'Norte de Santander', 'Putumayo', 'Quindío', 'Risaralda', 'San Andrés', 'Santander',
+    'Sucre', 'Tolima', 'Valle del Cauca', 'Vaupés', 'Vichada',
   ]
+
+  if (items.length === 0 && step !== 'confirm') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">No tienes productos en el carrito</p>
+          <Link to="/productos" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700">
+            Ver Productos
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="checkout-page bg-gray-50 min-h-screen py-8">
@@ -190,9 +244,7 @@ function CheckoutPage() {
                       >
                         <option value="">Seleccionar</option>
                         {departments.map((dept) => (
-                          <option key={dept} value={dept}>
-                            {dept}
-                          </option>
+                          <option key={dept} value={dept}>{dept}</option>
                         ))}
                       </select>
                     </div>
@@ -221,11 +273,14 @@ function CheckoutPage() {
 
             {/* Payment Step */}
             {step === 'payment' && (
-              <form onSubmit={handleSubmitPayment} className="bg-white rounded-xl p-6 shadow-sm">
+              <div className="bg-white rounded-xl p-6 shadow-sm">
                 <h2 className="text-xl font-semibold text-gray-900 mb-6">Método de Pago</h2>
 
-                <div className="space-y-4">
-                  <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-colors ${form.paymentMethod === 'wompi' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
+                <div className="space-y-4 mb-6">
+                  {/* Wompi Option */}
+                  <label
+                    className={`block p-4 border-2 rounded-xl cursor-pointer transition-colors ${form.paymentMethod === 'wompi' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}
+                  >
                     <div className="flex items-center gap-4">
                       <input
                         type="radio"
@@ -238,12 +293,15 @@ function CheckoutPage() {
                       <CreditCard className="w-8 h-8 text-blue-600" />
                       <div>
                         <p className="font-semibold text-gray-900">Pago con Wompi</p>
-                        <p className="text-sm text-gray-500">Tarjeta de crédito, débito, PSE, Nequi</p>
+                        <p className="text-sm text-gray-500">Tarjeta crédito/débito, PSE, Nequi, Bancolombia</p>
                       </div>
                     </div>
                   </label>
 
-                  <label className={`block p-4 border-2 rounded-xl cursor-pointer transition-colors ${form.paymentMethod === 'cash' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
+                  {/* Cash Option */}
+                  <label
+                    className={`block p-4 border-2 rounded-xl cursor-pointer transition-colors ${form.paymentMethod === 'cash' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}
+                  >
                     <div className="flex items-center gap-4">
                       <input
                         type="radio"
@@ -254,7 +312,7 @@ function CheckoutPage() {
                         className="w-5 h-5 text-blue-600"
                       />
                       <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                        <span className="text-lg">💵</span>
+                        <span className="text-lg">ðŸ’µ</span>
                       </div>
                       <div>
                         <p className="font-semibold text-gray-900">Pago Contra Entrega</p>
@@ -264,7 +322,27 @@ function CheckoutPage() {
                   </label>
                 </div>
 
-                <div className="flex gap-4 mt-6">
+                {/* Wompi widget */}
+                {form.paymentMethod === 'wompi' && (
+                  <div className="mb-4">
+                    <p className="text-sm text-gray-500 mb-3">
+                      Al hacer clic en el botón de Wompi serás redirigido al checkout seguro para completar el pago de{' '}
+                      <strong>{formatPrice(total)}</strong>.
+                    </p>
+                    <WompiCheckout
+                      publicKey={WOMPI_PUBLIC_KEY}
+                      amountInCents={amountInCents}
+                      reference={reference}
+                      redirectUrl={`${window.location.origin}/checkout?status=success`}
+                      className="flex justify-center"
+                    />
+                    <p className="text-xs text-gray-400 mt-2 text-center">
+                      Tu pedido se registrará automáticamente al confirmar el pago en Wompi.
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex gap-4 mt-4">
                   <button
                     type="button"
                     onClick={() => setStep('info')}
@@ -272,14 +350,18 @@ function CheckoutPage() {
                   >
                     Atrás
                   </button>
-                  <button
-                    type="submit"
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
-                  >
-                    Confirmar Pedido
-                  </button>
+                  {form.paymentMethod === 'cash' && (
+                    <button
+                      type="button"
+                      onClick={handleCashConfirm as unknown as React.MouseEventHandler}
+                      disabled={submitting}
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60"
+                    >
+                      {submitting ? 'Procesando...' : 'Confirmar Pedido'}
+                    </button>
+                  )}
                 </div>
-              </form>
+              </div>
             )}
 
             {/* Confirmation Step */}
@@ -290,45 +372,54 @@ function CheckoutPage() {
                 </div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-4">¡Pedido Confirmado!</h2>
                 <p className="text-gray-600 mb-6">
-                  Tu pedido #GS-2024-001234 ha sido procesado exitosamente.
-                  <br />
-                  Recibirás un correo de confirmación en {form.email}
+                  Tu pedido ha sido procesado exitosamente.
+                  {orderTrackingCode && (
+                    <span className="block mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                      <span className="block text-xs text-blue-500 font-medium mb-1">Código de seguimiento</span>
+                      <span className="font-mono text-blue-700 font-bold break-all">{orderTrackingCode}</span>
+                    </span>
+                  )}
+                  {form.email && (
+                    <span className="block mt-2 text-sm">
+                      Recibirás un correo de confirmación en <strong>{form.email}</strong>
+                    </span>
+                  )}
                 </p>
                 <div className="bg-gray-50 rounded-xl p-6 mb-6">
                   <h3 className="font-semibold text-gray-900 mb-4">Próximos Pasos</h3>
                   <div className="space-y-3 text-left">
-                    <div className="flex items-start gap-3">
-                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-semibold text-blue-600">1</span>
+                    {[
+                      'Recibirás un correo con los detalles de tu pedido',
+                      'Te notificaremos cuando tu pedido sea enviado',
+                      'Coordinaremos la instalación contigo',
+                    ].map((text, i) => (
+                      <div key={i} className="flex items-start gap-3">
+                        <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-semibold text-blue-600">{i + 1}</span>
+                        </div>
+                        <p className="text-sm text-gray-600">{text}</p>
                       </div>
-                      <p className="text-sm text-gray-600">Recibirás un correo con los detalles de tu pedido</p>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-semibold text-blue-600">2</span>
-                      </div>
-                      <p className="text-sm text-gray-600">Te notificaremos cuando tu pedido sea enviado</p>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-semibold text-blue-600">3</span>
-                      </div>
-                      <p className="text-sm text-gray-600">Coordinaremos la instalación contigo</p>
-                    </div>
+                    ))}
                   </div>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4">
                   <Link
-                    to="/seguimiento"
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+                    to={orderTrackingCode ? `/pedido/${orderTrackingCode}` : '/perfil'}
+                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center"
                   >
                     Ver Estado del Pedido
                   </Link>
                   <Link
-                    to="/"
-                    className="flex-1 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    to="/perfil"
+                    className="flex-1 py-3 border border-blue-300 rounded-lg font-semibold text-blue-600 hover:bg-blue-50 transition-colors text-center"
                   >
-                    Volver al Inicio
+                    Mis Pedidos
+                  </Link>
+                  <Link
+                    to="/"
+                    className="flex-1 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-colors text-center"
+                  >
+                    Inicio
                   </Link>
                 </div>
               </div>
@@ -341,13 +432,22 @@ function CheckoutPage() {
               <h2 className="text-lg font-semibold text-gray-900 mb-6">Resumen del Pedido</h2>
 
               <div className="space-y-4 mb-6">
-                {cartSummary.items.map((item, index) => (
-                  <div key={index} className="flex justify-between gap-4">
-                    <div>
-                      <p className="text-gray-900 font-medium line-clamp-1">{item.name}</p>
-                      <p className="text-sm text-gray-500">Cantidad: {item.quantity}</p>
+                {items.map((item) => (
+                  <div key={item.product.id} className="flex justify-between gap-4">
+                    <div className="flex gap-3 min-w-0">
+                      <img
+                        src={item.product.images[0]}
+                        alt={item.product.name}
+                        className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-gray-900 font-medium line-clamp-1 text-sm">{item.product.name}</p>
+                        <p className="text-xs text-gray-500">Cant: {item.quantity}</p>
+                      </div>
                     </div>
-                    <p className="font-medium text-gray-900 flex-shrink-0">{formatPrice(item.price * item.quantity)}</p>
+                    <p className="font-medium text-gray-900 flex-shrink-0 text-sm">
+                      {formatPrice(item.product.price * item.quantity)}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -355,16 +455,20 @@ function CheckoutPage() {
               <div className="border-t pt-4 space-y-3">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Subtotal</span>
-                  <span className="font-medium">{formatPrice(cartSummary.subtotal)}</span>
+                  <span className="font-medium">{formatPrice(subtotal)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Envío</span>
-                  <span className="text-green-600 font-medium">Gratis</span>
+                  {shipping === 0 ? (
+                    <span className="text-green-600 font-medium">Gratis</span>
+                  ) : (
+                    <span className="font-medium">{formatPrice(shipping)}</span>
+                  )}
                 </div>
                 <div className="border-t pt-3">
                   <div className="flex justify-between">
                     <span className="text-lg font-semibold text-gray-900">Total</span>
-                    <span className="text-lg font-bold text-gray-900">{formatPrice(cartSummary.total)}</span>
+                    <span className="text-lg font-bold text-gray-900">{formatPrice(total)}</span>
                   </div>
                 </div>
               </div>

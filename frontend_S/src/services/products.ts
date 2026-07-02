@@ -15,12 +15,11 @@ export interface ProductFilters {
 
 export interface CreateProductData {
   name: string
-  slug: string
   description: string
   price: number
   original_price?: number
-  category_id: number
-  brand_id: number
+  category: number
+  brand: number
   is_available?: boolean
   is_featured?: boolean
 }
@@ -90,6 +89,14 @@ export const productsService = {
   },
 
   // Product Stock
+  async upsertStock(productId: number, locationId: number, quantity: number): Promise<ProductStock> {
+    const response = await api.post<ApiResponse<ProductStock>>(`/products/${productId}/stock`, {
+      location_id: locationId,
+      quantity,
+    })
+    return response.data.data
+  },
+
   async updateStock(productId: number, locationId: number, quantity: number): Promise<ProductStock> {
     const response = await api.put<ApiResponse<ProductStock>>(`/products/${productId}/stock`, {
       location_id: locationId,
@@ -108,6 +115,24 @@ export const productsService = {
     const response = await api.get<ApiResponse<Product[]>>('/products/search', { params: { q: query } })
     return response.data.data
   },
+}
+
+/**
+ * Convierte un precio en pesos colombianos (COP) a centavos.
+ * Los procesadores de pago en Colombia (Wompi, PayU, etc.) requieren
+ * el monto en centavos como entero.
+ *
+ * Ejemplo: toCentavos(1850000) → 185000000
+ */
+export function toCentavos(priceCOP: number): number {
+  return Math.round(priceCOP * 100)
+}
+
+/**
+ * Convierte centavos de vuelta a pesos colombianos.
+ */
+export function fromCentavos(centavos: number): number {
+  return centavos / 100
 }
 
 export default productsService

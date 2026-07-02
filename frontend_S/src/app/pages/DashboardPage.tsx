@@ -1,73 +1,154 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useAuth } from '@/context/AuthContext'
+import { gestionService } from '@/services/gestion'
+import type { StockEntry, Factura } from '@/services/gestion'
+import { productsService, usersService, locationsService } from '@/services'
+import type { Location } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Package, Users, ShoppingCart, TrendingUp, DollarSign, AlertTriangle } from 'lucide-react'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import {
+  Package, Users, FileText, DollarSign, TrendingUp,
+  AlertTriangle, Receipt, Loader2, TrendingDown,
+} from 'lucide-react'
 
-const stats = [
-  {
-    title: 'Total Productos',
-    value: '156',
-    change: '+12%',
-    changeType: 'positive' as const,
-    icon: Package,
-  },
-  {
-    title: 'Usuarios Activos',
-    value: '45',
-    change: '+5%',
-    changeType: 'positive' as const,
-    icon: Users,
-  },
-  {
-    title: 'Ordenes del Mes',
-    value: '89',
-    change: '+18%',
-    changeType: 'positive' as const,
-    icon: ShoppingCart,
-  },
-  {
-    title: 'Ingresos del Mes',
-    value: '$12,450',
-    change: '+8%',
-    changeType: 'positive' as const,
-    icon: DollarSign,
-  },
-]
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-const lowStockProducts = [
-  { id: 1, name: 'Calentador Haceb 10L', stock: 3, minStock: 5 },
-  { id: 2, name: 'Regulador de Gas Fisher', stock: 2, minStock: 10 },
-  { id: 3, name: 'Manguera Gas 1.5m', stock: 5, minStock: 15 },
-]
+const fmt = (val: number) =>
+  val.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })
 
-const recentOrders = [
-  { id: 'ORD-001', customer: 'Juan Perez', total: '$350.00', status: 'Entregado' },
-  { id: 'ORD-002', customer: 'Maria Garcia', total: '$180.00', status: 'En camino' },
-  { id: 'ORD-003', customer: 'Carlos Lopez', total: '$520.00', status: 'Preparando' },
-  { id: 'ORD-004', customer: 'Ana Martinez', total: '$95.00', status: 'Pendiente' },
-]
+const ESTADO_COLORS: Record<string, string> = {
+  emitida: 'bg-green-100 text-green-700',
+  anulada: 'bg-red-100 text-red-700',
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const { user } = useAuth()
+  const isSuperAdmin = (user?.tipo_usuario ?? 0) === 4
+  const locationId = user?.location_id ?? null
+
+  const [loading, setLoading] = useState(true)
+  const [totalProductos, setTotalProductos] = useState(0)
+  const [totalUsuarios, setTotalUsuarios] = useState(0)
+  const [totalFacturas, setTotalFacturas] = useState(0)
+  const [ingresosMes, setIngresosMes] = useState(0)
+  const [recentFacturas, setRecentFacturas] = useState<Factura[]>([])
+  const [lowStock, setLowStock] = useState<StockEntry[]>([])
+  const [locations, setLocations] = useState<Location[]>([])
+  const [selectedLocation, setSelectedLocation] = useState<string>('__all__')
+
+  // Load locations list for super admin sede picker
+  useEffect(() => {
+    if (isSuperAdmin) {
+      locationsService.getAll({ per_page: 100 })
+        .then((res) => setLocations(res.data))
+        .catch(() => {})
+    }
+  }, [isSuperAdmin])
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      // Stock params: super admin can filter by sede or see aggregate
+      const stockParams: Record<string, unknown> = { per_page: 50 }
+      if (isSuperAdmin && selectedLocation !== '__all__') {
+        stockParams.location_id = Number(selectedLocation)
+      } else if (!isSuperAdmin && locationId) {
+        stockParams.location_id = locationId
+      }
+
+      const [stockRes, facturasRes, prodRes, userRes] = await Promise.allSettled([
+        gestionService.getStock(stockParams as never),
+        gestionService.getFacturas({ per_page: 8 }),
+        productsService.getAll({ per_page: 1 } as never),
+        usersService.listarColaboradores({ page: 1, page_size: 1 }),
+      ])
+
+      if (stockRes.status === 'fulfilled') {
+        const low = stockRes.value.data.filter((e) => e.quantity <= 5).sort((a, b) => a.quantity - b.quantity)
+        setLowStock(low)
+      }
+
+      if (facturasRes.status === 'fulfilled') {
+        const { data, total } = facturasRes.value
+        setTotalFacturas(total)
+        setRecentFacturas(data)
+        const ingreso = data
+          .filter((f) => f.estado === 'emitida')
+          .reduce((s, f) => s + Number(f.total), 0)
+        setIngresosMes(ingreso)
+      }
+
+      if (prodRes.status === 'fulfilled') {
+        const pr = prodRes.value as unknown as { total?: number; count?: number }
+        setTotalProductos(pr.total ?? pr.count ?? 0)
+      }
+
+      if (userRes.status === 'fulfilled') {
+        setTotalUsuarios(userRes.value.count)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [isSuperAdmin, locationId, selectedLocation])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const stats = [
+    { title: 'Total Productos', value: totalProductos, icon: Package, color: 'text-blue-500' },
+    { title: 'Usuarios Registrados', value: totalUsuarios, icon: Users, color: 'text-violet-500' },
+    { title: 'Facturas Totales', value: totalFacturas, icon: FileText, color: 'text-orange-500' },
+    { title: 'Ingresos (últimas 8)', value: fmt(ingresosMes), icon: DollarSign, color: 'text-emerald-500', isCurrency: true },
+  ]
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground">Resumen general del sistema de inventario</p>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-muted-foreground text-sm">Resumen general del sistema</p>
+        </div>
+        {isSuperAdmin && locations.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Sede:</span>
+            <Select value={selectedLocation} onValueChange={setSelectedLocation}>
+              <SelectTrigger className="h-9 w-52">
+                <SelectValue placeholder="Todas las sedes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todas las sedes</SelectItem>
+                {locations.map((l) => (
+                  <SelectItem key={l.id} value={String(l.id)}>{l.name} — {l.city}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
-      {/* Stats Grid */}
+      {/* Stats cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <Card key={stat.title}>
+        {stats.map((s) => (
+          <Card key={s.title}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {stat.title}
-              </CardTitle>
-              <stat.icon className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium text-muted-foreground">{s.title}</CardTitle>
+              <s.icon className={`h-4 w-4 ${s.color}`} />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
-              <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+              {loading ? (
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              ) : (
+                <div className="text-2xl font-bold">
+                  {typeof s.value === 'number' ? s.value.toLocaleString('es-CO') : s.value}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                 <TrendingUp className="h-3 w-3 text-emerald-500" />
-                <span className="text-emerald-500">{stat.change}</span> vs mes anterior
+                {s.isCurrency ? 'facturas activas recientes' : 'en el sistema'}
               </p>
             </CardContent>
           </Card>
@@ -75,68 +156,97 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Low Stock Alert */}
+        {/* Low / Negative Stock */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
+            <CardTitle className="flex items-center gap-2 text-base">
               <AlertTriangle className="h-5 w-5 text-amber-500" />
-              Productos con Bajo Stock
+              Stock bajo o negativo
+              {!isSuperAdmin && locationId && (
+                <span className="text-xs font-normal text-muted-foreground ml-1">— su sede</span>
+              )}
+              {isSuperAdmin && selectedLocation === '__all__' && (
+                <span className="text-xs font-normal text-muted-foreground ml-1">— todas las sedes (agregado)</span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {lowStockProducts.map((product) => (
-                <div
-                  key={product.id}
-                  className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900"
-                >
-                  <div>
-                    <p className="font-medium text-foreground">{product.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      Stock minimo: {product.minStock} unidades
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold text-amber-600 dark:text-amber-500">
-                      {product.stock}
-                    </p>
-                    <p className="text-xs text-muted-foreground">unidades</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {loading ? (
+              <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
+            ) : lowStock.length === 0 ? (
+              <div className="text-center py-6 text-muted-foreground text-sm">
+                ✓ Sin productos con stock crítico
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {lowStock.map((e) => {
+                  const isNeg = e.quantity < 0
+                  const isZero = e.quantity === 0
+                  const rowColor = isNeg
+                    ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900'
+                    : isZero
+                    ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900'
+                    : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900'
+                  const qtyColor = isNeg || isZero ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-500'
+                  return (
+                    <div key={e.id} className={`flex items-center justify-between px-3 py-2 rounded-lg border ${rowColor}`}>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm truncate">{e.producto_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {isNeg ? 'Stock negativo — faltante' : isZero ? 'Sin unidades' : 'Stock bajo'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 ml-3 shrink-0">
+                        {isNeg && <TrendingDown className="h-4 w-4 text-red-500" />}
+                        <span className={`text-lg font-bold ${qtyColor}`}>{e.quantity}</span>
+                        <span className="text-xs text-muted-foreground">uds</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Recent Orders */}
+        {/* Recent Facturas */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <ShoppingCart className="h-5 w-5 text-primary" />
-              Ordenes Recientes
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Receipt className="h-5 w-5 text-primary" />
+              Facturas recientes
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {recentOrders.map((order) => (
-                <div
-                  key={order.id}
-                  className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
-                >
-                  <div>
-                    <p className="font-medium text-foreground">{order.id}</p>
-                    <p className="text-sm text-muted-foreground">{order.customer}</p>
+            {loading ? (
+              <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
+            ) : recentFacturas.length === 0 ? (
+              <div className="text-center py-6 text-muted-foreground text-sm">Sin facturas registradas</div>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {recentFacturas.map((fac) => (
+                  <div key={fac.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-medium">{fac.numero}</span>
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${ESTADO_COLORS[fac.estado] ?? ''}`}>
+                          {fac.estado}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{fac.cliente_nombre}</p>
+                    </div>
+                    <div className="text-right ml-3 shrink-0">
+                      <p className="font-semibold text-sm">{fmt(Number(fac.total))}</p>
+                      <p className="text-xs text-muted-foreground">{fac.fecha_emision}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-medium text-foreground">{order.total}</p>
-                    <p className="text-xs text-muted-foreground">{order.status}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
     </div>
   )
 }
+

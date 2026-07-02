@@ -226,19 +226,22 @@ class Register(APIView):
             return Response({"error": "Usuario no encontrado"}, status=404)
 
         data = request.data
-        mapeo = {
-            'nombre_completo': 'nombre_completo',
-            'correo': 'correo',
-            'telefono': 'telefono',
-            'sede': 'sede',
-            'cargo': 'cargo_id',
-            'nivel': 'nivel_id',
-            'regional': 'regional_id',
-        }
-        for campo_front, campo_modelo in mapeo.items():
-            if campo_front in data:
-                setattr(usuario, campo_modelo, data[campo_front])
+        if 'nombre_completo' in data: usuario.nombre_completo = data['nombre_completo']
+        if 'correo' in data: usuario.correo = data['correo']
+        if 'telefono' in data: usuario.telefono = data['telefono']
+        if 'cargo' in data: usuario.cargo_id = data['cargo']
         usuario.save()
+
+        # Update location (sede) in Credenciales
+        if 'location_id' in data:
+            try:
+                cred = getattr(usuario, 'credenciales', None)
+                if cred:
+                    loc_id = data['location_id']
+                    cred.location_id = int(loc_id) if loc_id else None
+                    cred.save(update_fields=['location_id'])
+            except Exception:
+                pass
 
         serializer = UsuarioListadoSerializer(usuario)
         return Response(serializer.data)
@@ -320,7 +323,7 @@ class ListaUsuarios(APIView):
             base_qs = (
                 Usuario.objects
                 .filter(estado=1)
-                .select_related('cargo', 'nivel', 'regional')
+                .select_related('cargo', 'credenciales', 'credenciales__location')
                 .order_by('id')
             )
 
@@ -330,6 +333,13 @@ class ListaUsuarios(APIView):
                     Q(cedula__icontains=search) |
                     Q(correo__icontains=search)
                 )
+
+            # Filter by user type: 'normal' = tipo 0, 'trabajador' = tipo 1-4
+            tipo = request.GET.get('tipo', '').strip()
+            if tipo == 'normal':
+                base_qs = base_qs.filter(credenciales__tipo_usuario=0)
+            elif tipo == 'trabajador':
+                base_qs = base_qs.filter(credenciales__tipo_usuario__in=[1, 2, 3, 4])
 
             total = base_qs.count()
             start = (page - 1) * page_size
@@ -346,6 +356,44 @@ class ListaUsuarios(APIView):
             })
         except Exception as e:
             return Response({'error': str(e)}, status=500)
+
+
+class CargosView(APIView):
+    """CRUD de cargos para trabajadores."""
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request):
+        cargos = Cargo.objects.filter(estadocargo=1).order_by('nombrecargo')
+        return Response(CargoSerializer(cargos, many=True).data)
+
+    def post(self, request):
+        nombre = request.data.get('nombrecargo', '').strip()
+        if not nombre:
+            return Response({'error': 'El nombre del cargo es requerido'}, status=400)
+        if Cargo.objects.filter(nombrecargo__iexact=nombre, estadocargo=1).exists():
+            return Response({'error': 'Ya existe un cargo con ese nombre'}, status=400)
+        cargo = Cargo.objects.create(nombrecargo=nombre, estadocargo=1)
+        return Response(CargoSerializer(cargo).data, status=201)
+
+    def put(self, request, cargo_id):
+        try:
+            cargo = Cargo.objects.get(idcargo=cargo_id)
+        except Cargo.DoesNotExist:
+            return Response({'error': 'Cargo no encontrado'}, status=404)
+        nombre = request.data.get('nombrecargo', '').strip()
+        if nombre:
+            cargo.nombrecargo = nombre
+            cargo.save()
+        return Response(CargoSerializer(cargo).data)
+
+    def delete(self, request, cargo_id):
+        try:
+            cargo = Cargo.objects.get(idcargo=cargo_id)
+        except Cargo.DoesNotExist:
+            return Response({'error': 'Cargo no encontrado'}, status=404)
+        cargo.estadocargo = 0
+        cargo.save()
+        return Response(status=204)
 
 
 class CargoNivelRegionalView(APIView):
@@ -380,7 +428,7 @@ class FiltrarUsuariosView(APIView):
         base_qs = (
             Usuario.objects
             .exclude(estado=3)
-            .select_related('cargo', 'nivel', 'regional')
+            .select_related('cargo', 'credenciales', 'credenciales__location')
             .order_by('id')
         )
         if query:
