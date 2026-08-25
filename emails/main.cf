@@ -1,0 +1,31 @@
+# =========================
+# Postfix main configuration
+# =========================
+
+# Nombre del servidor
+myhostname = mail.tudominio.com
+myorigin = /etc/mailname
+
+# Red de escucha
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Relay SMTP (configura según tu proveedor)
+relayhost = [smtp.gmail.com]:587
+
+# Autenticación SASL (para relay externo)
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options = noanonymous
+smtp_sasl_tls_security_options = noanonymous
+
+# TLS
+smtp_tls_security_level = encrypt
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+
+# Logs
+maillog_file = /dev/stdout
+
+# Límites
+message_size_limit = 20971520
+mailbox_size_limit = 0

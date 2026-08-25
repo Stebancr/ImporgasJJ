@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Product } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { useCart } from '../context/CartContext'
+import { useFavorites } from '../context/FavoritesContext'
 
 interface ProductCardProps {
   product: Product
@@ -13,8 +14,31 @@ function ProductCard({ product }: ProductCardProps) {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const { addToCart } = useCart()
+  const { isFavorite, addToFavorites, removeByProduct } = useFavorites()
   const [isHovered, setIsHovered] = useState(false)
-  const [isWishlisted, setIsWishlisted] = useState(false)
+  const [favLoading, setFavLoading] = useState(false)
+
+  const isWishlisted = isFavorite(parseInt(product.id))
+
+  const handleToggleFavorite = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!isAuthenticated) {
+      navigate(`/login?redirect=/producto/${product.id}`)
+      return
+    }
+    setFavLoading(true)
+    try {
+      if (isWishlisted) {
+        await removeByProduct(parseInt(product.id))
+      } else {
+        await addToFavorites(parseInt(product.id))
+      }
+    } catch {
+      // silent
+    } finally {
+      setFavLoading(false)
+    }
+  }
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('es-CO', {
@@ -39,7 +63,7 @@ function ProductCard({ product }: ProductCardProps) {
 
   return (
     <div 
-      className="group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-[#E5E7EB] hover:border-[#0066FF]/20"
+      className="group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-[#E5E7EB] hover:border-[#001575]/20"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -61,7 +85,7 @@ function ProductCard({ product }: ProductCardProps) {
             </span>
           )}
           {product.isFeatured && (
-            <span className="px-2.5 py-1 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white text-xs font-bold rounded-lg shadow-lg">
+            <span className="px-2.5 py-1 bg-gradient-to-r from-[#001575] to-[#00104f] text-white text-xs font-bold rounded-lg shadow-lg">
               Destacado
             </span>
           )}
@@ -70,22 +94,52 @@ function ProductCard({ product }: ProductCardProps) {
         {/* Quick Actions */}
         <div 
           className={`absolute top-3 right-3 flex flex-col gap-2 transition-all duration-300 ${
-            isHovered ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'
+            isHovered || isWishlisted ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'
           }`}
         >
           <button
-            onClick={() => setIsWishlisted(!isWishlisted)}
+            onClick={handleToggleFavorite}
+            disabled={favLoading}
+            className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all duration-200 ${
+              isWishlisted
+                ? 'bg-[#EF4444] text-white hover:bg-[#DC2626]'
+                : 'bg-white text-[#6B7280] hover:text-[#EF4444] hover:bg-red-50'
+            } ${
+              favLoading ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            <Heart className={`w-4 h-4 ${
+              isWishlisted ? 'fill-current' : ''
+            }`} />
+          </button>
+          <Link
+            to={`/producto/${product.id}`}
+            className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-lg text-[#6B7280] hover:text-[#001575] transition-colors"
+          >
+            <Eye className="w-4 h-4" />
+          </Link>
+        </div>
+
+        {/* Add to Cart Overlay (Desktop) */}
+        <div
+          className={`hidden sm:block absolute bottom-0 left-0 right-0 p-4 transition-all duration-300 ${
+            isHovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+          }`}
+        >
+          <button
+            onClick={handleToggleFavorite}
+            disabled={favLoading}
             className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all duration-200 ${
               isWishlisted 
                 ? 'bg-[#EF4444] text-white' 
                 : 'bg-white text-[#6B7280] hover:text-[#EF4444]'
-            }`}
+            } ${favLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-current' : ''}`} />
           </button>
           <Link
             to={`/producto/${product.id}`}
-            className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-lg text-[#6B7280] hover:text-[#0066FF] transition-colors"
+            className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-lg text-[#6B7280] hover:text-[#001575] transition-colors"
           >
             <Eye className="w-4 h-4" />
           </Link>
@@ -109,7 +163,7 @@ function ProductCard({ product }: ProductCardProps) {
           <button
             onClick={handleAddToCart}
             disabled={!product.isAvailable}
-            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:shadow-[#0066FF]/25 transition-all disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:shadow-[#001575]/25 transition-all disabled:opacity-50"
           >
             <ShoppingCart className="w-5 h-5" />
             <span>Agregar al carrito</span>
@@ -121,7 +175,7 @@ function ProductCard({ product }: ProductCardProps) {
       <div className="p-4 lg:p-5">
         {/* Brand */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#0066FF] bg-[#E6F0FF] px-2 py-0.5 rounded-md">
+          <span className="text-xs font-medium text-[#001575] bg-[#e8ecff] px-2 py-0.5 rounded-md">
             {product.brand}
           </span>
           <span className="text-xs text-[#6B7280]">
@@ -131,7 +185,7 @@ function ProductCard({ product }: ProductCardProps) {
 
         {/* Name */}
         <Link to={`/producto/${product.id}`}>
-          <h3 className="font-semibold text-[#1A1D21] mb-2 line-clamp-2 group-hover:text-[#0066FF] transition-colors leading-snug">
+          <h3 className="font-semibold text-[#1A1D21] mb-2 line-clamp-2 group-hover:text-[#001575] transition-colors leading-snug">
             {product.name}
           </h3>
         </Link>
@@ -171,7 +225,7 @@ function ProductCard({ product }: ProductCardProps) {
         <button
           onClick={handleAddToCart}
           disabled={!product.isAvailable}
-          className="sm:hidden w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
+          className="sm:hidden w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
         >
           <ShoppingCart className="w-4 h-4" />
           <span>{product.isAvailable ? 'Agregar al carrito' : 'Agotado'}</span>

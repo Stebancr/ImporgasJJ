@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     'ecommerce',
     'gestion',
     'crmChat',
+    'AppVisits',
 ]
 
 MIDDLEWARE = [
@@ -249,6 +250,11 @@ EMAIL_MEDICAL_TIMEOUT = config('EMAIL_MEDICAL_TIMEOUT', default=30, cast=int)  #
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
+# Ollama Chatbot Configuration
+# En Docker usa 'ollama', en desarrollo local usa 'localhost'
+OLLAMA_API_URL = config('OLLAMA_API_URL', default='http://ollama:11434/api/chat')
+OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen2.5:1.5b')
+
 # Cache Configuration
 # Usa cache en memoria para desarrollo, Redis para producción
 import sys
@@ -288,3 +294,9 @@ CACHE_TTL_CAPACITACIONES_LIST = 60 * 5  # 5 minutos para lista de capacitaciones
 CACHE_TTL_CAPACITACION_DETAIL = 60 * 10  # 10 minutos para detalle de capacitación
 CACHE_TTL_MIS_CAPACITACIONES = 60 * 2  # 2 minutos para mis capacitaciones (cambia más frecuentemente)
 CACHE_TTL_PROGRESO_EMPRESARIAL = 60 * 30  # 30 minutos para analítica empresarial (datos pesados)
+
+# ─── Wompi Payment Gateway ────────────────────────────────────────────────────
+WOMPI_PUBLIC_KEY = config('WOMPI_PUBLIC_KEY', default='')
+WOMPI_PRIVATE_KEY = config('WOMPI_PRIVATE_KEY', default='')
+WOMPI_EVENTS_SECRET = config('WOMPI_EVENTS_SECRET', default='')
+WOMPI_INTEGRITY_SECRET = config('WOMPI_INTEGRITY_SECRET', default='')

@@ -77,7 +77,7 @@ export default function OrderDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#0066FF]" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#001575]" />
       </div>
     )
   }
@@ -89,7 +89,7 @@ export default function OrderDetailPage() {
           <XCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-gray-900 mb-2">Pedido no encontrado</h2>
           <p className="text-gray-500 text-sm mb-6">{error || 'Verifica el código de seguimiento.'}</p>
-          <Link to="/seguimiento" className="inline-flex items-center gap-2 text-[#0066FF] font-medium hover:underline">
+          <Link to="/seguimiento" className="inline-flex items-center gap-2 text-[#001575] font-medium hover:underline">
             <ChevronLeft className="w-4 h-4" />
             Buscar otro pedido
           </Link>
@@ -107,7 +107,7 @@ export default function OrderDetailPage() {
 
         {/* Back + refresh */}
         <div className="flex items-center justify-between mb-6">
-          <Link to="/perfil" className="inline-flex items-center gap-2 text-gray-500 hover:text-[#0066FF] text-sm transition-colors">
+          <Link to="/perfil" className="inline-flex items-center gap-2 text-gray-500 hover:text-[#001575] text-sm transition-colors">
             <ChevronLeft className="w-4 h-4" />
             Mis pedidos
           </Link>
@@ -139,7 +139,7 @@ export default function OrderDetailPage() {
 
           {/* Status badge */}
           <div className={`mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold ${
-            isCancelled ? 'bg-red-100 text-red-700' : 'bg-blue-50 text-[#0066FF]'
+            isCancelled ? 'bg-red-100 text-red-700' : 'bg-blue-50 text-[#001575]'
           }`}>
             {isCancelled ? <XCircle className="w-4 h-4" /> : <Package className="w-4 h-4" />}
             {STATUS_LABEL[order.status]}
@@ -159,7 +159,7 @@ export default function OrderDetailPage() {
               {/* Progress line */}
               <div className="absolute left-5 top-5 bottom-5 w-0.5 bg-gray-100" />
               <div
-                className="absolute left-5 top-5 w-0.5 bg-[#0066FF] transition-all duration-500"
+                className="absolute left-5 top-5 w-0.5 bg-[#001575] transition-all duration-500"
                 style={{ height: `${(currentStep / (STATUS_STEPS.length - 1)) * 100}%` }}
               />
 
@@ -173,7 +173,7 @@ export default function OrderDetailPage() {
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all z-10 ${
                         done
                           ? active
-                            ? 'bg-[#0066FF] shadow-lg shadow-[#0066FF]/30 scale-110'
+                            ? 'bg-[#001575] shadow-lg shadow-[#001575]/30 scale-110'
                             : 'bg-green-500'
                           : 'bg-gray-100'
                       }`}>
@@ -184,7 +184,7 @@ export default function OrderDetailPage() {
                           {step.label}
                         </p>
                         {active && (
-                          <p className="text-xs text-[#0066FF] mt-0.5 font-medium">Estado actual</p>
+                          <p className="text-xs text-[#001575] mt-0.5 font-medium">Estado actual</p>
                         )}
                       </div>
                     </div>
@@ -202,7 +202,7 @@ export default function OrderDetailPage() {
             <div className="space-y-4">
               {[...order.tracking_history].reverse().map((event, idx) => (
                 <div key={event.id ?? idx} className="flex items-start gap-3">
-                  <div className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ${idx === 0 ? 'bg-[#0066FF]' : 'bg-gray-300'}`} />
+                  <div className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ${idx === 0 ? 'bg-[#001575]' : 'bg-gray-300'}`} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-800">{event.description}</p>
                     {event.location && (

@@ -1,7 +1,8 @@
 import './styles/ContactPage.css'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Phone, Mail, MapPin, Clock, Send, MessageCircle, CheckCircle } from 'lucide-react'
 import GoogleMap from '../../components/GoogleMap'
+import { locationsService, ApiLocation } from '../../services/locations'
 
 interface ContactForm {
   name: string
@@ -21,6 +22,13 @@ function ContactPage() {
   })
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [storeLocations, setStoreLocations] = useState<ApiLocation[]>([])
+
+  useEffect(() => {
+    locationsService.getActive()
+      .then(locs => setStoreLocations(locs))
+      .catch(err => console.error('Error loading locations:', err))
+  }, [])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
@@ -288,7 +296,7 @@ function ContactPage() {
       <section className="py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">Nuestra Ubicación</h2>
-          <GoogleMap />
+          <GoogleMap locations={storeLocations} />
         </div>
       </section>
     </div>

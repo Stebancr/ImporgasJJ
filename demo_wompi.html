@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Wompi - GasStore</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .product-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 20px;
+        }
+
+        .product-image {
+            width: 80px;
+            height: 80px;
+            background: #e9ecef;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+        }
+
+        .product-info {
+            flex: 1;
+        }
+
+        .product-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .product-description {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .product-price {
+            font-size: 20px;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .total-section {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .total-row.final {
+            font-size: 18px;
+            font-weight: 700;
+            color: #333;
+            padding-top: 10px;
+            border-top: 2px solid #dee2e6;
+            margin-top: 10px;
+        }
+
+        .wompi-widget {
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #333;
+        }
+
+        .info-box strong {
+            display: block;
+            margin-bottom: 5px;
+            color: #667eea;
+        }
+
+        .test-cards {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 12px;
+        }
+
+        .test-cards h3 {
+            margin-bottom: 10px;
+            color: #856404;
+            font-size: 14px;
+        }
+
+        .test-cards code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 Demo de Pago - GasStore</h1>
+        <p class="subtitle">Prueba la integración de Wompi <span class="badge">SANDBOX</span></p>
+
+        <!-- Producto -->
+        <div class="product-card">
+            <div class="product-image">🔥</div>
+            <div class="product-info">
+                <div class="product-name">Calentador de Agua 10L</div>
+                <div class="product-description">Calentador instantáneo de gas, ideal para baños pequeños</div>
+                <div class="product-price">$250,000 COP</div>
+            </div>
+        </div>
+
+        <!-- Formulario -->
+        <form id="checkoutForm">
+            <div class="form-group">
+                <label for="name">Nombre Completo</label>
+                <input type="text" id="name" value="Juan Pérez" required>
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" value="juan@test.com" required>
+            </div>
+
+            <div class="form-group">
+                <label for="phone">Teléfono</label>
+                <input type="tel" id="phone" value="+57 300 123 4567" required>
+            </div>
+        </form>
+
+        <!-- Total -->
+        <div class="total-section">
+            <div class="total-row">
+                <span>Subtotal</span>
+                <span>$250,000</span>
+            </div>
+            <div class="total-row">
+                <span>Envío</span>
+                <span>Gratis</span>
+            </div>
+            <div class="total-row final">
+                <span>Total</span>
+                <span>$250,000 COP</span>
+            </div>
+        </div>
+
+        <!-- Widget de Wompi -->
+        <div class="wompi-widget">
+            <form action="https://checkout.wompi.co/p/" method="GET">
+                <input type="hidden" name="public-key" value="pub_test_wrhmXXJLZGHgUIqSsdRDhn5XsENolPk6" />
+                <input type="hidden" name="currency" value="COP" />
+                <input type="hidden" name="amount-in-cents" value="25000000" />
+                <input type="hidden" name="reference" id="reference" value="" />
+                <input type="hidden" name="redirect-url" value="http://localhost:81/orden-confirmada" />
+                
+                <!-- El widget de Wompi se renderizará aquí -->
+                <script 
+                    src="https://checkout.wompi.co/widget.js" 
+                    data-render="button"
+                    data-button-text="Pagar con Wompi"
+                    data-button-style="border-radius: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 15px 40px; font-size: 16px; font-weight: 600; border: none; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+                </script>
+            </form>
+        </div>
+
+        <!-- Información -->
+        <div class="info-box">
+            <strong>ℹ️ Modo de Prueba</strong>
+            Este es un demo en modo sandbox. No se procesarán pagos reales.
+            Al hacer clic en el botón de Wompi, serás redirigido a su checkout de prueba.
+        </div>
+
+        <!-- Tarjetas de Prueba -->
+        <div class="test-cards">
+            <h3>🧪 Tarjetas de Prueba</h3>
+            <p><strong>Visa aprobada:</strong> <code>4242 4242 4242 4242</code></p>
+            <p><strong>Mastercard aprobada:</strong> <code>5555 5555 5555 4444</code></p>
+            <p><strong>Vencimiento:</strong> Cualquier fecha futura (ej: 12/25)</p>
+            <p><strong>CVC:</strong> Cualquier 3 dígitos (ej: 123)</p>
+        </div>
+
+        <footer>
+            <p>© 2025 GasStore - Demo de Integración Wompi</p>
+            <p>Llave pública: pub_test_wrhmXXJLZGHgUIqSsdRDhn5XsENolPk6</p>
+        </footer>
+    </div>
+
+    <script>
+        // Generar referencia única
+        function generateReference() {
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(2, 7).toUpperCase();
+            return `DEMO-${timestamp}-${random}`;
+        }
+
+        // Establecer referencia al cargar la página
+        document.getElementById('reference').value = generateReference();
+
+        // Log para debugging
+        console.log('Wompi Demo cargado');
+        console.log('Referencia:', document.getElementById('reference').value);
+        console.log('Monto: $250,000 COP (25000000 centavos)');
+        console.log('Llave pública: pub_test_wrhmXXJLZGHgUIqSsdRDhn5XsENolPk6');
+    </script>
+</body>
+</html>

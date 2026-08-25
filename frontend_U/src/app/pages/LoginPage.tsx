@@ -89,7 +89,7 @@ function LoginPage() {
         <div className="w-full max-w-md">
           {/* Logo */}
           <Link to="/" className="inline-flex items-center gap-2.5 mb-10 group">
-            <div className="w-11 h-11 bg-gradient-to-br from-[#FF6B35] to-[#E55A2B] rounded-xl flex items-center justify-center shadow-lg shadow-[#FF6B35]/25 group-hover:shadow-xl group-hover:shadow-[#FF6B35]/30 transition-all">
+            <div className="w-11 h-11 bg-gradient-to-br from-[#F58634] to-[#d4711e] rounded-xl flex items-center justify-center shadow-lg shadow-[#F58634]/25 group-hover:shadow-xl group-hover:shadow-[#F58634]/30 transition-all">
               <Flame className="w-6 h-6 text-white" />
             </div>
             <span className="text-2xl font-bold text-[#1A1D21]">GasStore</span>
@@ -128,7 +128,7 @@ function LoginPage() {
                     value={form.name}
                     onChange={handleChange}
                     required
-                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#0066FF] focus:bg-white transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] focus:bg-white transition-all"
                     placeholder="Juan Perez"
                   />
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]">
@@ -150,7 +150,7 @@ function LoginPage() {
                     value={form.cc}
                     onChange={handleChange}
                     required
-                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#0066FF] transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-all"
                     placeholder="12345678"
                   />
                   <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
@@ -169,7 +169,7 @@ function LoginPage() {
                   value={form.email}
                   onChange={handleChange}
                   required
-                  className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#0066FF] transition-all"
+                  className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-all"
                   placeholder="tu@email.com"
                 />
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
@@ -187,7 +187,7 @@ function LoginPage() {
                     name="phone"
                     value={form.phone}
                     onChange={handleChange}
-                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#0066FF] transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-all"
                     placeholder="+57 300 123 4567"
                   />
                   <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
@@ -205,7 +205,7 @@ function LoginPage() {
                     <button
                       type="button"
                       onClick={() => setMode('forgot')}
-                      className="text-sm text-[#0066FF] hover:text-[#0052CC] font-medium"
+                      className="text-sm text-[#001575] hover:text-[#00104f] font-medium"
                     >
                       Olvidaste tu contrasena?
                     </button>
@@ -218,7 +218,7 @@ function LoginPage() {
                     value={form.password}
                     onChange={handleChange}
                     required
-                    className="w-full pl-12 pr-12 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#0066FF] transition-all"
+                    className="w-full pl-12 pr-12 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-all"
                     placeholder="********"
                   />
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
@@ -245,7 +245,7 @@ function LoginPage() {
                     value={form.confirmPassword}
                     onChange={handleChange}
                     required
-                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#0066FF] transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-all"
                     placeholder="********"
                   />
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
@@ -256,7 +256,7 @@ function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#0066FF]/25 hover:-translate-y-0.5 active:translate-y-0 transition-all disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#001575]/25 hover:-translate-y-0.5 active:translate-y-0 transition-all disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
             >
               {isLoading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -278,7 +278,7 @@ function LoginPage() {
                 No tienes cuenta?{' '}
                 <button
                   onClick={() => setMode('register')}
-                  className="text-[#0066FF] font-semibold hover:text-[#0052CC]"
+                  className="text-[#001575] font-semibold hover:text-[#00104f]"
                 >
                   Registrate
                 </button>
@@ -289,7 +289,7 @@ function LoginPage() {
                 Ya tienes cuenta?{' '}
                 <button
                   onClick={() => setMode('login')}
-                  className="text-[#0066FF] font-semibold hover:text-[#0052CC]"
+                  className="text-[#001575] font-semibold hover:text-[#00104f]"
                 >
                   Inicia Sesion
                 </button>
@@ -298,7 +298,7 @@ function LoginPage() {
             {mode === 'forgot' && (
               <button
                 onClick={() => setMode('login')}
-                className="text-[#0066FF] font-semibold hover:text-[#0052CC]"
+                className="text-[#001575] font-semibold hover:text-[#00104f]"
               >
                 Volver al inicio de sesion
               </button>
@@ -319,7 +319,7 @@ function LoginPage() {
 
               {/* Social Login */}
               <div className="grid grid-cols-2 gap-4">
-                <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl hover:border-[#0066FF] hover:bg-[#E6F0FF] transition-all">
+                <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl hover:border-[#001575] hover:bg-[#e8ecff] transition-all">
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -328,7 +328,7 @@ function LoginPage() {
                   </svg>
                   <span className="font-medium text-[#4B5563]">Google</span>
                 </button>
-                <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl hover:border-[#0066FF] hover:bg-[#E6F0FF] transition-all">
+                <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-white border-2 border-[#E5E7EB] rounded-xl hover:border-[#001575] hover:bg-[#e8ecff] transition-all">
                   <svg className="w-5 h-5 text-[#1877F2]" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
                   </svg>
@@ -342,7 +342,7 @@ function LoginPage() {
 
       {/* Right Side - Branding */}
       <div className="hidden lg:flex flex-1 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-[#0066FF] via-[#0052CC] to-[#003D99]">
+        <div className="absolute inset-0 bg-gradient-to-br from-[#001575] via-[#00104f] to-[#00104f]">
           <div className="absolute inset-0 opacity-10" style={{
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
           }} />
@@ -354,7 +354,7 @@ function LoginPage() {
             <div className="relative mb-10">
               <div className="absolute -inset-4 bg-white/10 rounded-3xl blur-2xl" />
               <div className="relative bg-white/10 backdrop-blur rounded-3xl p-8 border border-white/10">
-                <div className="w-20 h-20 bg-gradient-to-br from-[#FF6B35] to-[#E55A2B] rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
+                <div className="w-20 h-20 bg-gradient-to-br from-[#F58634] to-[#d4711e] rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
                   <Flame className="w-10 h-10 text-white" />
                 </div>
                 <h2 className="text-3xl font-bold mb-4">Tu tienda de confianza</h2>

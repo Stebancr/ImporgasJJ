@@ -3,6 +3,7 @@ from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
     Review, Order, OrderItem, TrackingEvent,
+    UserAddress, Favorite, Notification,
 )
 
 
@@ -247,4 +248,45 @@ class OrderCreateSerializer(serializers.Serializer):
         if not items:
             raise serializers.ValidationError("Se requiere al menos un producto.")
         return items
+
+
+# ─── User Address ─────────────────────────────────────────────────────────────
+
+class UserAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserAddress
+        fields = [
+            'id', 'label', 'recipient_name', 'phone', 'address',
+            'city', 'department', 'postal_code', 'is_default',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+# ─── Favorite ─────────────────────────────────────────────────────────────────
+
+class FavoriteSerializer(serializers.ModelSerializer):
+    product = ProductListSerializer(read_only=True)
+
+    class Meta:
+        model = Favorite
+        fields = ['id', 'product', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class FavoriteCreateSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+
+
+# ─── Notification ─────────────────────────────────────────────────────────────
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = [
+            'id', 'type', 'title', 'message', 'link',
+            'is_read', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
 

@@ -23,6 +23,7 @@ import {
   FileText,
   ClipboardList,
   MessageSquare,
+  Wrench,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -42,6 +43,7 @@ const navigation: NavItem[] = [
   { name: 'Ubicaciones', href: '/dashboard/locations', icon: MapPin },
   { name: 'Ordenes',     href: '/dashboard/orders',    icon: ShoppingCart },
   { name: 'Usuarios',    href: '/dashboard/users',     icon: Users, roles: ['admin'] },
+  { name: 'Visitas',     href: '/dashboard/visits',    icon: Wrench, roles: ['admin'] },
   { name: 'CRM Chat',    href: '/dashboard/chat',       icon: MessageSquare, roles: ['admin'] },
   {
     name: 'Contabilidad',

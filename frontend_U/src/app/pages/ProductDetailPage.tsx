@@ -6,6 +6,7 @@ import { Product } from '../../types'
 import { productsService } from '../../services/products'
 import { useAuth } from '../../context/AuthContext'
 import { useCart } from '../../context/CartContext'
+import { useFavorites } from '../../context/FavoritesContext'
 import './styles/ProductDetailPage.css'
 
 // Fallback mock product while loading
@@ -29,6 +30,7 @@ function ProductDetailPage() {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const { addToCart } = useCart()
+  const { isFavorite, addToFavorites, removeByProduct } = useFavorites()
   const [selectedImage, setSelectedImage] = useState(0)
   const [quantity, setQuantity] = useState(1)
   const [activeTab, setActiveTab] = useState<'description' | 'specs' | 'reviews'>('description')
@@ -36,6 +38,28 @@ function ProductDetailPage() {
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([])
   const [_isLoading, setIsLoading] = useState(true)
   const [addedToCart, setAddedToCart] = useState(false)
+  const [favLoading, setFavLoading] = useState(false)
+
+  const isWishlisted = product.id !== '1' && isFavorite(parseInt(product.id))
+
+  const handleToggleFavorite = async () => {
+    if (!isAuthenticated) {
+      navigate(`/login?redirect=/producto/${product.id}`)
+      return
+    }
+    setFavLoading(true)
+    try {
+      if (isWishlisted) {
+        await removeByProduct(parseInt(product.id))
+      } else {
+        await addToFavorites(parseInt(product.id))
+      }
+    } catch {
+      // silent
+    } finally {
+      setFavLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!id) return
@@ -148,8 +172,16 @@ function ProductDetailPage() {
                   <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">{product.name}</h1>
                 </div>
                 <div className="flex gap-2">
-                  <button className="p-2 border rounded-lg hover:bg-gray-50 transition-colors">
-                    <Heart className="w-5 h-5 text-gray-600" />
+                  <button
+                    onClick={handleToggleFavorite}
+                    disabled={favLoading}
+                    className={`p-2 border rounded-lg transition-colors ${
+                      isWishlisted
+                        ? 'bg-red-50 border-red-300 text-red-500'
+                        : 'hover:bg-gray-50 text-gray-600'
+                    }`}
+                  >
+                    <Heart className={`w-5 h-5 ${isWishlisted ? 'fill-current text-red-500' : ''}`} />
                   </button>
                   <button className="p-2 border rounded-lg hover:bg-gray-50 transition-colors">
                     <Share2 className="w-5 h-5 text-gray-600" />

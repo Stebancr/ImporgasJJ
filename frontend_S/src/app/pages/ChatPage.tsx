@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { MessageSquare, Send, UserCheck, PhoneOff, RefreshCw, Bot, User, Loader2, Inbox } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,6 +25,65 @@ function fmtTime(iso: string) {
   const diffH = Math.floor(diffMin / 60)
   if (diffH < 24) return `${diffH}h`
   return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
+}
+
+// ─── BotMessageText: renderiza texto con markdown y links ─────────────────────
+
+function BotMessageText({ text }: { text: string }) {
+  const renderLine = (line: string, lineIdx: number) => {
+    const tokens: React.ReactNode[] = []
+    let remaining = line
+    let tokenKey = 0
+
+    while (remaining) {
+      const productMatch = remaining.match(/(\/producto\/\d+)/)
+      const boldMatch = remaining.match(/\*\*([^*]+)\*\*/)
+
+      const productIndex = productMatch ? remaining.indexOf(productMatch[0]) : -1
+      const boldIndex = boldMatch ? remaining.indexOf(boldMatch[0]) : -1
+
+      if (productIndex >= 0 && (boldIndex < 0 || productIndex < boldIndex)) {
+        if (productIndex > 0) {
+          tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining.slice(0, productIndex)}</span>)
+        }
+        tokens.push(
+          <Link
+            key={`${lineIdx}-${tokenKey++}`}
+            to={productMatch![0]}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2 font-medium hover:opacity-80"
+          >
+            Ver producto →
+          </Link>
+        )
+        remaining = remaining.slice(productIndex + productMatch![0].length)
+      } else if (boldIndex >= 0) {
+        if (boldIndex > 0) {
+          tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining.slice(0, boldIndex)}</span>)
+        }
+        tokens.push(
+          <strong key={`${lineIdx}-${tokenKey++}`} className="font-semibold">
+            {boldMatch![1]}
+          </strong>
+        )
+        remaining = remaining.slice(boldIndex + boldMatch![0].length)
+      } else {
+        tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining}</span>)
+        break
+      }
+    }
+    return <>{tokens}</>
+  }
+
+  const lines = text.split('\n')
+  return (
+    <div className="text-sm leading-relaxed">
+      {lines.map((line, i) => (
+        <div key={i}>{renderLine(line, i)}</div>
+      ))}
+    </div>
+  )
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -289,7 +349,11 @@ export default function ChatPage() {
                           <span className="text-[10px] font-medium">Bot</span>
                         </div>
                       )}
-                      <p className="leading-relaxed">{m.text}</p>
+                      {!isUser && !isAgent ? (
+                        <BotMessageText text={m.text} />
+                      ) : (
+                        <p className="leading-relaxed">{m.text}</p>
+                      )}
                       <p className={`text-[10px] mt-1 ${isUser ? 'text-muted-foreground' : isAgent ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
                         {new Date(m.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                       </p>

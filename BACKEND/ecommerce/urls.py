@@ -50,5 +50,19 @@ urlpatterns = [
 
     # ── Wompi webhook ─────────────────────────────────────────────────────────
     path('webhooks/wompi', views.WompiWebhookView.as_view(), name='wompi-webhook'),
+
+    # ── User Addresses ────────────────────────────────────────────────────────
+    path('user/addresses', views.UserAddressListView.as_view(), name='user-address-list'),
+    path('user/addresses/<int:pk>', views.UserAddressDetailView.as_view(), name='user-address-detail'),
+
+    # ── Favorites ─────────────────────────────────────────────────────────────
+    path('user/favorites', views.FavoriteListView.as_view(), name='favorite-list'),
+    path('user/favorites/<int:pk>', views.FavoriteDetailView.as_view(), name='favorite-detail'),
+    path('user/favorites/product/<int:product_id>', views.FavoriteByProductView.as_view(), name='favorite-by-product'),
+
+    # ── Notifications ─────────────────────────────────────────────────────────
+    path('user/notifications', views.NotificationListView.as_view(), name='notification-list'),
+    path('user/notifications/<int:pk>', views.NotificationDetailView.as_view(), name='notification-detail'),
+    path('user/notifications/mark-all-read', views.NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
 ]
 

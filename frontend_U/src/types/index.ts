@@ -50,6 +50,8 @@ export interface Order {
   createdAt: string
   updatedAt: string
   trackingHistory: TrackingEvent[]
+  wompi_signature?: string // Signature de integridad para Wompi
+  tracking_code?: string // Código de seguimiento del pedido
 }
 
 export interface TrackingEvent {
@@ -62,8 +64,11 @@ export interface TrackingEvent {
 export interface FilterOptions {
   category?: string
   brand?: string
+  categoryId?: number
+  brandId?: number
   minPrice?: number
   maxPrice?: number
+  search?: string
   inStock?: boolean
-  sortBy?: 'price-asc' | 'price-desc' | 'rating' | 'newest'
+  sortBy?: 'price-asc' | 'price-desc' | 'rating' | 'newest' | ''
 }

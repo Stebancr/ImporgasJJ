@@ -1,11 +1,13 @@
 from django.db import transaction
 from django.db.models import Q
+from django.conf import settings
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+import hashlib
 
 from usuarios.permissions import IsAdminUser, IsNormalUserOrAdmin, IsAuthenticatedUser
 
@@ -13,6 +15,7 @@ from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
     Review, Order, OrderItem, TrackingEvent,
+    UserAddress, Favorite, Notification,
 )
 from .serializers import (
     BrandSerializer, LocationSerializer, CategorySerializer, SpecAttributeSerializer,
@@ -21,6 +24,8 @@ from .serializers import (
     ProductStockSerializer, ProductSpecSerializer,
     ReviewSerializer,
     OrderSerializer, OrderCreateSerializer, TrackingEventSerializer,
+    UserAddressSerializer, FavoriteSerializer, FavoriteCreateSerializer,
+    NotificationSerializer,
 )
 
 
@@ -396,7 +401,53 @@ class ProductListView(APIView):
                 Q(category__name__icontains=term)
             )
 
-        return paginate(qs, request, ProductListSerializer)
+        # Ordenamiento
+        sort = request.query_params.get('sort', '')
+        if sort == 'price-asc':
+            qs = qs.order_by('price')
+        elif sort == 'price-desc':
+            qs = qs.order_by('-price')
+        elif sort == 'rating':
+            qs = qs.order_by('-rating', '-reviews_count')
+        elif sort == 'newest':
+            qs = qs.order_by('-created_at')
+        else:
+            qs = qs.order_by('-is_featured', '-created_at')
+
+        # Metadata: categorías con conteo
+        from django.db.models import Count
+        categories_data = list(
+            Category.objects.filter(is_active=True)
+            .annotate(product_count=Count('products', filter=Q(products__is_available=True)))
+            .values('id', 'name', 'slug', 'product_count')
+            .order_by('name')
+        )
+
+        # Metadata: marcas con conteo
+        brands_data = list(
+            Brand.objects.filter(is_active=True)
+            .annotate(product_count=Count('products', filter=Q(products__is_available=True)))
+            .values('id', 'name', 'slug', 'product_count')
+            .order_by('name')
+        )
+
+        # Paginación
+        page     = int(request.query_params.get('page', 1))
+        per_page = int(request.query_params.get('per_page', 20))
+        offset   = (page - 1) * per_page
+        total    = qs.count()
+        items    = qs[offset: offset + per_page]
+        data     = ProductListSerializer(items, many=True, context={'request': request}).data
+
+        return Response({
+            'data':        data,
+            'total':       total,
+            'page':        page,
+            'per_page':    per_page,
+            'total_pages': max(1, -(-total // per_page)),
+            'categories':  categories_data,
+            'brands':      brands_data,
+        })
 
     def post(self, request):
         serializer = ProductCreateSerializer(data=request.data)
@@ -808,8 +859,35 @@ class OrderListView(APIView):
             ),
         )
 
+        # ── 6. Generar signature para Wompi (si aplica) ───────────────────────
+        wompi_signature = None
+        if data['payment_method'] == 'wompi':
+            # Obtener INTEGRITY_SECRET de settings o usar el de sandbox
+            integrity_secret = getattr(settings, 'WOMPI_INTEGRITY_SECRET', '') or 'test_integrity_LUyppEoIInrObgtyuuuyQXsdzVOmCTD1'
+            
+            if integrity_secret:
+                # Convertir total a centavos
+                amount_in_cents = int(total * 100)
+                
+                # Generar signature: SHA256(reference + amount_in_cents + currency + integrity_secret)
+                signature_string = f"{order.wompi_reference}{amount_in_cents}COP{integrity_secret}"
+                wompi_signature = hashlib.sha256(signature_string.encode()).hexdigest()
+                
+                # Log para debugging
+                print(f"🔐 Signature generada para pedido {order.order_number}")
+                print(f"   Reference: {order.wompi_reference}")
+                print(f"   Amount: {amount_in_cents}")
+                print(f"   Signature: {wompi_signature}")
+
+        # Construir respuesta
+        response_data = OrderSerializer(order, context={'request': request}).data
+        
+        # Agregar signature a la respuesta si existe
+        if wompi_signature:
+            response_data['wompi_signature'] = wompi_signature
+
         return Response(
-            {'data': OrderSerializer(order, context={'request': request}).data},
+            {'data': response_data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -998,3 +1076,150 @@ class OrderAdminListView(APIView):
             )
         return Response({'data': OrderSerializer(order, context={'request': request}).data})
 
+# --- User Addresses -----------------------------------------------------------
+
+class UserAddressListView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request):
+        addresses = UserAddress.objects.filter(user=request.user)
+        serializer = UserAddressSerializer(addresses, many=True)
+        return Response({'data': serializer.data})
+
+    def post(self, request):
+        serializer = UserAddressSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=request.user)
+            return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserAddressDetailView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def _get(self, user, pk):
+        try:
+            return UserAddress.objects.get(pk=pk, user=user)
+        except UserAddress.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        addr = self._get(request.user, pk)
+        if not addr:
+            return Response({'error': 'Not found'}, status=404)
+        return Response({'data': UserAddressSerializer(addr).data})
+
+    def put(self, request, pk):
+        addr = self._get(request.user, pk)
+        if not addr:
+            return Response({'error': 'Not found'}, status=404)
+        serializer = UserAddressSerializer(addr, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({'data': serializer.data})
+        return Response(serializer.errors, status=400)
+
+    def delete(self, request, pk):
+        addr = self._get(request.user, pk)
+        if not addr:
+            return Response({'error': 'Not found'}, status=404)
+        addr.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- Favorites ----------------------------------------------------------------
+
+class FavoriteListView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request):
+        favorites = Favorite.objects.filter(user=request.user).select_related('product__brand', 'product__category').prefetch_related('product__images')
+        serializer = FavoriteSerializer(favorites, many=True, context={'request': request})
+        return Response({'data': serializer.data})
+
+    def post(self, request):
+        create_ser = FavoriteCreateSerializer(data=request.data)
+        if not create_ser.is_valid():
+            return Response(create_ser.errors, status=400)
+        
+        product_id = create_ser.validated_data['product_id']
+        try:
+            product = Product.objects.get(pk=product_id)
+        except Product.DoesNotExist:
+            return Response({'error': 'Producto no encontrado'}, status=404)
+        
+        fav, created = Favorite.objects.get_or_create(user=request.user, product=product)
+        if not created:
+            return Response({'error': 'Ya existe en favoritos'}, status=400)
+        
+        return Response({'data': FavoriteSerializer(fav, context={'request': request}).data}, status=status.HTTP_201_CREATED)
+
+
+class FavoriteDetailView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def delete(self, request, pk):
+        try:
+            fav = Favorite.objects.get(pk=pk, user=request.user)
+        except Favorite.DoesNotExist:
+            return Response({'error': 'Not found'}, status=404)
+        fav.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class FavoriteByProductView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def delete(self, request, product_id):
+        try:
+            fav = Favorite.objects.get(user=request.user, product_id=product_id)
+        except Favorite.DoesNotExist:
+            return Response({'error': 'Not found'}, status=404)
+        fav.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- Notifications ------------------------------------------------------------
+
+class NotificationListView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request):
+        notifications = Notification.objects.filter(user=request.user)
+        unread_only = request.query_params.get('unread', '').lower() == 'true'
+        if unread_only:
+            notifications = notifications.filter(is_read=False)
+        serializer = NotificationSerializer(notifications, many=True)
+        return Response({'data': serializer.data})
+
+
+class NotificationDetailView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def patch(self, request, pk):
+        try:
+            notif = Notification.objects.get(pk=pk, user=request.user)
+        except Notification.DoesNotExist:
+            return Response({'error': 'Not found'}, status=404)
+        
+        if 'is_read' in request.data:
+            notif.is_read = request.data['is_read']
+            notif.save()
+        
+        return Response({'data': NotificationSerializer(notif).data})
+
+    def delete(self, request, pk):
+        try:
+            notif = Notification.objects.get(pk=pk, user=request.user)
+        except Notification.DoesNotExist:
+            return Response({'error': 'Not found'}, status=404)
+        notif.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NotificationMarkAllReadView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def post(self, request):
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({'message': 'Todas las notificaciones marcadas como leídas'})

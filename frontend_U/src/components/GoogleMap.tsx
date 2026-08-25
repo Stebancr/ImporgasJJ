@@ -22,8 +22,6 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
   const mapSrc = active ? buildMapSrc(active) : FALLBACK_SRC
   const mapsLink = active ? buildMapsLink(active) : 'https://maps.google.com'
 
-  const otherLocations = locations.filter((l) => l.id !== (active?.id ?? -1))
-
   return (
     <div className="grid lg:grid-cols-3 gap-6 lg:gap-8">
       {/* Map */}
@@ -38,19 +36,19 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
             allowFullScreen
             loading="lazy"
             referrerPolicy="no-referrer-when-downgrade"
-            title="Ubicacion GasStore"
+            title="Ubicacion ImporGas JJ"
             className="w-full"
           />
           <div className="p-4 flex items-center justify-between bg-[#F9FAFB]">
             <div className="flex items-center gap-2 text-sm text-[#6B7280]">
-              <MapPin className="w-4 h-4 text-[#0066FF]" />
-              {active ? `${active.name} — ${active.city}, Colombia` : 'Bogotá, Colombia'}
+              <MapPin className="w-4 h-4 text-[#001575]" />
+              {active ? `${active.name} - ${active.city}, Colombia` : 'Colombia'}
             </div>
             <a
               href={mapsLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm font-medium text-[#0066FF] hover:text-[#0052CC] transition-colors"
+              className="flex items-center gap-2 text-sm font-medium text-[#001575] hover:text-[#00104f] transition-colors"
             >
               <Navigation className="w-4 h-4" />
               Abrir en Google Maps
@@ -58,18 +56,21 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
           </div>
         </div>
 
-        {/* Other locations — clicking selects them in the map */}
         {locations.length > 1 && (
           <div className="mt-4 grid sm:grid-cols-2 gap-3">
-            {otherLocations.map((loc) => (
+            {locations.map((loc) => (
               <button
                 key={loc.id}
                 type="button"
                 onClick={() => setSelected(loc)}
-                className="flex items-start gap-3 p-3 bg-white rounded-xl border border-[#E5E7EB] hover:border-[#0066FF]/40 hover:shadow-sm transition-all text-left w-full"
+                className={`flex items-start gap-3 p-3 rounded-xl border transition-all text-left w-full ${
+                  active?.id === loc.id
+                    ? 'bg-[#e8ecff] border-[#001575] shadow-sm'
+                    : 'bg-white border-[#E5E7EB] hover:border-[#001575]/40 hover:shadow-sm'
+                }`}
               >
-                <div className="w-8 h-8 bg-[#E6F0FF] rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <MapPin className="w-4 h-4 text-[#0066FF]" />
+                <div className="w-8 h-8 bg-[#e8ecff] rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <MapPin className="w-4 h-4 text-[#001575]" />
                 </div>
                 <div className="min-w-0">
                   <p className="font-medium text-[#1A1D21] text-sm truncate">{loc.name}</p>
@@ -82,7 +83,7 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
         )}
       </div>
 
-      {/* Store Info — reflects the selected location */}
+      {/* Store Info */}
       <div className="space-y-4 lg:space-y-6">
         {locations.length === 0 ? (
           <div className="bg-white rounded-2xl border border-[#E5E7EB] p-6 shadow-sm text-center text-[#6B7280] text-sm">
@@ -91,7 +92,7 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
         ) : (
           <div className="bg-white rounded-2xl border border-[#E5E7EB] p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-5">
-              <div className="w-12 h-12 bg-gradient-to-br from-[#0066FF] to-[#0052CC] rounded-xl flex items-center justify-center">
+              <div className="w-12 h-12 bg-gradient-to-br from-[#001575] to-[#00104f] rounded-xl flex items-center justify-center">
                 <MapPin className="w-6 h-6 text-white" />
               </div>
               <div>
@@ -102,11 +103,11 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
 
             <div className="space-y-3">
               <div className="flex items-start gap-4 p-3 bg-[#F9FAFB] rounded-xl">
-                <div className="w-10 h-10 bg-[#E6F0FF] rounded-lg flex items-center justify-center flex-shrink-0">
-                  <MapPin className="w-5 h-5 text-[#0066FF]" />
+                <div className="w-10 h-10 bg-[#e8ecff] rounded-lg flex items-center justify-center flex-shrink-0">
+                  <MapPin className="w-5 h-5 text-[#001575]" />
                 </div>
                 <div>
-                  <p className="font-medium text-[#1A1D21] text-sm">Dirección</p>
+                  <p className="font-medium text-[#1A1D21] text-sm">Direccion</p>
                   <p className="text-sm text-[#6B7280]">{active?.address}</p>
                   <p className="text-sm text-[#6B7280]">{active?.city}, Colombia</p>
                 </div>
@@ -122,7 +123,7 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
                     <p className="text-sm text-[#6B7280]">Lun - Vie: {active.hours_weekday}</p>
                   )}
                   {active?.hours_saturday && (
-                    <p className="text-sm text-[#6B7280]">Sáb: {active.hours_saturday}</p>
+                    <p className="text-sm text-[#6B7280]">Sab: {active.hours_saturday}</p>
                   )}
                   {active?.hours_sunday && (
                     <p className="text-sm text-[#6B7280]">Dom: {active.hours_sunday}</p>
@@ -135,11 +136,11 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
 
               {active?.phone && (
                 <div className="flex items-start gap-4 p-3 bg-[#F9FAFB] rounded-xl">
-                  <div className="w-10 h-10 bg-[#FFF0EB] rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Phone className="w-5 h-5 text-[#FF6B35]" />
+                  <div className="w-10 h-10 bg-[#fff3e8] rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Phone className="w-5 h-5 text-[#F58634]" />
                   </div>
                   <div>
-                    <p className="font-medium text-[#1A1D21] text-sm">Teléfono</p>
+                    <p className="font-medium text-[#1A1D21] text-sm">Telefono</p>
                     <p className="text-sm text-[#6B7280]">{active.phone}</p>
                   </div>
                 </div>
@@ -148,7 +149,7 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
           </div>
         )}
 
-        <div className="relative overflow-hidden bg-gradient-to-br from-[#0066FF] to-[#0052CC] rounded-2xl p-6 text-white">
+        <div className="relative overflow-hidden bg-gradient-to-br from-[#001575] to-[#00104f] rounded-2xl p-6 text-white">
           <div className="absolute inset-0 opacity-10" style={{
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='1' fill-rule='evenodd'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E")`,
           }} />
@@ -156,13 +157,13 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
             <div className="w-12 h-12 bg-white/20 backdrop-blur rounded-xl flex items-center justify-center mb-4">
               <Calendar className="w-6 h-6" />
             </div>
-            <h3 className="font-semibold text-xl mb-2">¿Necesitas Ayuda?</h3>
+            <h3 className="font-semibold text-xl mb-2">Necesitas Ayuda?</h3>
             <p className="text-white/80 text-sm mb-5 leading-relaxed">
-              Agenda una cita con nuestros asesores para una atención personalizada.
+              Agenda una cita con nuestros asesores para una atencion personalizada.
             </p>
-            <button className="w-full bg-white text-[#0066FF] py-3 rounded-xl font-semibold hover:bg-white/90 hover:shadow-lg transition-all">
-              Agendar Cita
-            </button>
+            <a href="/contacto" className="block w-full bg-white text-[#001575] py-3 rounded-xl font-semibold hover:bg-white/90 hover:shadow-lg transition-all text-center">
+              Contactar
+            </a>
           </div>
         </div>
       </div>
@@ -171,4 +172,3 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
 }
 
 export default GoogleMap
-

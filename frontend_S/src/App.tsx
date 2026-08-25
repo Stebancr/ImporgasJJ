@@ -15,6 +15,7 @@ import UsersPage from '@/app/pages/UsersPage'
 import ProfilePage from '@/app/pages/ProfilePage'
 import GestionPage from '@/app/pages/GestionPage'
 import ChatPage from '@/app/pages/ChatPage'
+import VisitsPage from '@/app/pages/VisitsPage'
 
 export default function App() {
   return (
@@ -68,6 +69,7 @@ export default function App() {
           </Route>
           <Route path="profile" element={<ProfilePage />} />
           <Route path="chat" element={<ChatPage />} />
+          <Route path="visits" element={<VisitsPage />} />
         </Route>
 
         {/* Redirect root to dashboard or login */}

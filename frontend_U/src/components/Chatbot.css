@@ -1,0 +1,13 @@
+/**
+ * Estilos adicionales para el chatbot (si se necesitan)
+ * El componente existente ya tiene estilos inline con Tailwind
+ */
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

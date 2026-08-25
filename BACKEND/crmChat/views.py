@@ -1,9 +1,13 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 
 from .models import ChatSession, ChatMessage
+from .ollama_service import ollama_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -241,3 +245,179 @@ class MessageListCreateView(APIView):
             )
 
         return Response(_serialize_message(msg), status=201)
+
+
+class BotChatView(APIView):
+    """
+    POST — Endpoint público para chatear con el bot (sin autenticación requerida)
+    Permite a usuarios del ecommerce chatear con el bot Ollama.
+    Si el bot detecta intención de compra/servicio, deriva a un agente humano.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """
+        Procesa un mensaje del usuario y retorna la respuesta del bot.
+        
+        Body:
+        {
+            "message": "texto del mensaje",
+            "session_id": null|int (opcional, para continuar conversación),
+            "user_name": "Nombre" (opcional, para usuarios no autenticados),
+            "user_email": "email@example.com" (opcional)
+        }
+        
+        Response:
+        {
+            "session_id": int,
+            "message": "respuesta del bot",
+            "sender_type": "bot",
+            "status": "bot|waiting|active",
+            "needs_agent": bool
+        }
+        """
+        message_text = (request.data.get('message') or '').strip()
+        if not message_text:
+            return Response(
+                {'error': 'El mensaje no puede estar vacío'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        session_id = request.data.get('session_id')
+        user_name = request.data.get('user_name', 'Usuario')
+        user_email = request.data.get('user_email', '')
+
+        # Si el usuario está autenticado, usar sus datos
+        if request.user and request.user.is_authenticated:
+            user_name, user_cedula = _resolve_name(request.user)
+            user_id_ref = request.user.pk
+        else:
+            user_cedula = user_email
+            user_id_ref = None
+
+        # Obtener o crear sesión
+        session = None
+        if session_id:
+            try:
+                session = ChatSession.objects.get(pk=session_id)
+                # Verificar que la sesión pertenezca al usuario (si está autenticado)
+                if user_id_ref and session.user_id_ref and session.user_id_ref != user_id_ref:
+                    return Response(
+                        {'error': 'Sesión no válida'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except ChatSession.DoesNotExist:
+                session = None
+
+        # Crear nueva sesión si no existe
+        if not session:
+            session = ChatSession.objects.create(
+                user_id_ref=user_id_ref,
+                user_name=user_name,
+                user_cedula=user_cedula,
+                status='bot',  # Inicialmente con bot
+            )
+            logger.info(f"Nueva sesión de chat creada: {session.id} para {user_name}")
+
+        # Guardar mensaje del usuario
+        user_message = ChatMessage.objects.create(
+            session=session,
+            text=message_text,
+            sender_type='user',
+            sender_name=user_name,
+        )
+
+        # Obtener historial de conversación para contexto
+        conversation_history = []
+        previous_messages = session.messages.order_by('created_at')[:20]
+        for msg in previous_messages:
+            if msg.id != user_message.id:  # Excluir el mensaje actual
+                conversation_history.append({
+                    'role': 'bot' if msg.sender_type == 'bot' else 'user',
+                    'content': msg.text
+                })
+
+        # Obtener respuesta del bot
+        bot_result = ollama_service.get_bot_response(
+            message_text,
+            conversation_history=conversation_history
+        )
+
+        bot_response_text = bot_result.get('response', 'Lo siento, no pude procesar tu mensaje.')
+        needs_agent = bot_result.get('needs_agent', False)
+
+        # Guardar respuesta del bot
+        bot_message = ChatMessage.objects.create(
+            session=session,
+            text=bot_response_text,
+            sender_type='bot',
+            sender_name='',
+        )
+
+        # Si necesita agente:
+        # - Usuario autenticado → marcar sesión como 'waiting' (en cola para asesor)
+        # - Usuario anónimo    → NOT marcar como waiting; pedir que inicie sesión
+        needs_login = False
+        if needs_agent:
+            is_authenticated = request.user and request.user.is_authenticated
+            if is_authenticated:
+                if session.status == 'bot':
+                    session.status = 'waiting'
+                    session.unread_by_agent = 1
+                    session.save()
+                    logger.info(f"Sesión {session.id} → 'waiting' (usuario autenticado)")
+            else:
+                # Usuario anónimo: conservar historial pero no poner en cola aún
+                needs_login = True
+                needs_agent = False  # No cambiar status todavía
+                logger.info(f"Sesión {session.id}: necesita login para hablar con asesor")
+
+        return Response({
+            'session_id': session.id,
+            'message': bot_response_text,
+            'sender_type': 'bot',
+            'status': session.status,
+            'needs_agent': needs_agent,
+            'needs_login': needs_login,   # Frontend muestra botón de login
+            'user_message_id': user_message.id,
+            'bot_message_id': bot_message.id,
+        })
+
+
+class BotSessionMessagesView(APIView):
+    """
+    GET — Obtener todos los mensajes de una sesión de bot (público)
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, session_id):
+        """
+        Obtiene todos los mensajes de una sesión.
+        
+        Query params:
+        - after: id del último mensaje recibido (para polling)
+        """
+        try:
+            session = ChatSession.objects.get(pk=session_id)
+        except ChatSession.DoesNotExist:
+            return Response(
+                {'error': 'Sesión no encontrada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        qs = session.messages.all()
+        after = request.query_params.get('after')
+        if after:
+            try:
+                qs = qs.filter(id__gt=int(after))
+            except ValueError:
+                pass
+
+        messages = [_serialize_message(m) for m in qs]
+
+        return Response({
+            'session_id': session.id,
+            'status': session.status,
+            'messages': messages,
+            'agent_name': session.agent_name if session.status in ['active', 'closed'] else None,
+        })

@@ -24,6 +24,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const token = localStorage.getItem('authToken')
     setState({ isAuthenticated: !!token, isLoading: false, token })
+
+    const handleForceLogout = () => {
+      setState({ isAuthenticated: false, isLoading: false, token: null })
+    }
+    window.addEventListener('auth:logout', handleForceLogout)
+    return () => window.removeEventListener('auth:logout', handleForceLogout)
   }, [])
 
   const login = useCallback(async (email: string, password: string) => {

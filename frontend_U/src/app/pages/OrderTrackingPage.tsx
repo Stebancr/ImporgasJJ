@@ -103,7 +103,7 @@ function OrderTrackingPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="bg-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:bg-blue-400 flex items-center justify-center gap-2"
+              className="bg-[#001575] text-white px-8 py-4 rounded-xl font-semibold hover:bg-[#00104f] transition-colors disabled:bg-[#001575]/50 flex items-center justify-center gap-2"
             >
               {isLoading && <Loader2 className="w-5 h-5 animate-spin" />}
               {isLoading ? 'Buscando...' : 'Buscar Pedido'}
@@ -124,7 +124,7 @@ function OrderTrackingPage() {
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Número de pedido</p>
                   <p className="text-xl font-bold text-gray-900">{result.order_number}</p>
                 </div>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-semibold border border-blue-100">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#e8ecff] text-[#001575] rounded-full text-sm font-semibold border border-[#c0caef]">
                   <CheckCircle className="w-4 h-4" />
                   {result.status_label}
                 </span>
@@ -160,7 +160,7 @@ function OrderTrackingPage() {
                     <div key={step.key} className="flex flex-col items-center gap-2 flex-shrink-0 flex-1 min-w-[3.5rem]">
                       <div className={`w-11 h-11 rounded-full border-2 flex items-center justify-center transition-colors ${
                         isCurrent
-                          ? 'border-blue-500 bg-blue-500 shadow-md shadow-blue-200'
+                          ? 'border-[#F58634] bg-[#F58634] shadow-md shadow-[#F58634]/20'
                           : isCompleted
                           ? 'border-green-500 bg-green-500'
                           : 'border-dashed border-gray-200 bg-gray-50'
@@ -168,7 +168,7 @@ function OrderTrackingPage() {
                         <Icon className={`w-5 h-5 ${isCurrent || isCompleted ? 'text-white' : 'text-gray-300'}`} />
                       </div>
                       <p className={`text-xs text-center leading-tight font-medium ${
-                        isCurrent ? 'text-blue-600' : isCompleted ? 'text-green-600' : 'text-gray-400'
+                        isCurrent ? 'text-[#F58634]' : isCompleted ? 'text-green-600' : 'text-gray-400'
                       }`}>{step.label}</p>
                     </div>
                   )
@@ -186,7 +186,7 @@ function OrderTrackingPage() {
             <div className="text-center">
               <button
                 onClick={() => { setResult(null); setOrderNumber('') }}
-                className="text-sm text-blue-600 hover:underline font-medium"
+                className="text-sm text-[#001575] hover:text-[#F58634] hover:underline font-medium transition-colors"
               >
                 ← Buscar otro pedido
               </button>
@@ -217,10 +217,10 @@ function OrderTrackingPage() {
               </p>
             </div>
 
-            <div className="bg-blue-50 rounded-2xl p-5 border border-blue-100">
+            <div className="bg-[#e8ecff] rounded-2xl p-5 border border-[#c0caef]">
               <div className="flex items-start gap-4">
-                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <MapPin className="w-5 h-5 text-blue-600" />
+                <div className="w-10 h-10 bg-[#c8d3f5] rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <MapPin className="w-5 h-5 text-[#001575]" />
                 </div>
                 <div>
                   <p className="font-semibold text-gray-800 mb-1">¿Dónde encuentro mi código?</p>
@@ -228,7 +228,7 @@ function OrderTrackingPage() {
                     Busca el número de pedido en el correo de confirmación (Ej: ORD-00001),
                     o el código de seguimiento que aparece en la pantalla de confirmación de tu compra.
                   </p>
-                  <Link to="/perfil" className="mt-2 inline-block text-sm text-blue-600 font-medium hover:underline">
+                  <Link to="/perfil" className="mt-2 inline-block text-sm text-[#001575] font-medium hover:text-[#F58634] hover:underline transition-colors">
                     Ver mis pedidos →
                   </Link>
                 </div>
@@ -241,7 +241,7 @@ function OrderTrackingPage() {
                 Si tienes problemas para encontrar tu pedido, contáctanos.
               </p>
               <a href="/contacto"
-                className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-blue-700 transition-colors text-sm">
+                className="inline-flex items-center gap-2 bg-[#001575] text-white px-6 py-2.5 rounded-xl font-medium hover:bg-[#00104f] transition-colors text-sm">
                 Contactar Soporte
               </a>
             </div>

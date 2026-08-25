@@ -62,7 +62,7 @@ export default function DashboardPage() {
 
       const [stockRes, facturasRes, prodRes, userRes] = await Promise.allSettled([
         gestionService.getStock(stockParams as never),
-        gestionService.getFacturas({ per_page: 8 }),
+        gestionService.getFacturas({ page: 1 }),
         productsService.getAll({ per_page: 1 } as never),
         usersService.listarColaboradores({ page: 1, page_size: 1 }),
       ])

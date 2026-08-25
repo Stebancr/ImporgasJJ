@@ -31,7 +31,7 @@ function CartPage() {
           <p className="text-[#6B7280] mb-8 text-lg">Agrega productos para comenzar tu compra</p>
           <Link
             to="/productos"
-            className="inline-flex items-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white px-8 py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#0066FF]/25 hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white px-8 py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#001575]/25 hover:-translate-y-0.5 transition-all"
           >
             Ver Productos
             <ArrowRight className="w-5 h-5" />
@@ -56,7 +56,7 @@ function CartPage() {
             {cartItems.map((item) => (
               <div 
                 key={item.product.id} 
-                className="bg-white rounded-2xl border border-[#E5E7EB] p-4 sm:p-6 hover:border-[#0066FF]/20 hover:shadow-lg transition-all"
+                className="bg-white rounded-2xl border border-[#E5E7EB] p-4 sm:p-6 hover:border-[#001575]/20 hover:shadow-lg transition-all"
               >
                 <div className="flex gap-4 sm:gap-6">
                   <Link to={`/producto/${item.product.id}`} className="flex-shrink-0">
@@ -76,12 +76,12 @@ function CartPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between gap-4">
                       <div>
-                        <span className="inline-block text-xs font-medium text-[#0066FF] bg-[#E6F0FF] px-2 py-0.5 rounded-md mb-2">
+                        <span className="inline-block text-xs font-medium text-[#001575] bg-[#e8ecff] px-2 py-0.5 rounded-md mb-2">
                           {item.product.brand}
                         </span>
                         <Link
                           to={`/producto/${item.product.id}`}
-                          className="block font-semibold text-[#1A1D21] hover:text-[#0066FF] transition-colors line-clamp-2 text-lg"
+                          className="block font-semibold text-[#1A1D21] hover:text-[#001575] transition-colors line-clamp-2 text-lg"
                         >
                           {item.product.name}
                         </Link>
@@ -143,8 +143,8 @@ function CartPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-[#E6F0FF] rounded-xl flex items-center justify-center">
-                    <Truck className="w-5 h-5 text-[#0066FF]" />
+                  <div className="w-10 h-10 bg-[#e8ecff] rounded-xl flex items-center justify-center">
+                    <Truck className="w-5 h-5 text-[#001575]" />
                   </div>
                   <div>
                     <p className="font-medium text-[#1A1D21] text-sm">Envio Gratis</p>
@@ -170,7 +170,7 @@ function CartPage() {
                       value={couponCode}
                       onChange={(e) => setCouponCode(e.target.value)}
                       placeholder="Ingresa tu codigo"
-                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:border-[#0066FF] focus:bg-white transition-all text-sm"
+                      className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:border-[#001575] focus:bg-white transition-all text-sm"
                     />
                     <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
                   </div>
@@ -194,9 +194,9 @@ function CartPage() {
                   )}
                 </div>
                 {shipping > 0 && (
-                  <div className="flex items-center gap-2 p-3 bg-[#E6F0FF] rounded-xl">
-                    <Truck className="w-5 h-5 text-[#0066FF]" />
-                    <p className="text-sm text-[#0066FF]">
+                  <div className="flex items-center gap-2 p-3 bg-[#e8ecff] rounded-xl">
+                    <Truck className="w-5 h-5 text-[#001575]" />
+                    <p className="text-sm text-[#001575]">
                       Agrega {formatPrice(500000 - subtotal)} mas para envio gratis
                     </p>
                   </div>
@@ -211,7 +211,7 @@ function CartPage() {
 
               <Link
                 to="/checkout"
-                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#0066FF] to-[#0052CC] text-white py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#0066FF]/25 hover:-translate-y-0.5 active:translate-y-0 transition-all"
+                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-4 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#001575]/25 hover:-translate-y-0.5 active:translate-y-0 transition-all"
               >
                 Proceder al Pago
                 <ArrowRight className="w-5 h-5" />
@@ -219,7 +219,7 @@ function CartPage() {
 
               <Link
                 to="/productos"
-                className="w-full flex items-center justify-center gap-2 mt-4 py-3 text-[#0066FF] font-medium hover:bg-[#E6F0FF] rounded-xl transition-colors"
+                className="w-full flex items-center justify-center gap-2 mt-4 py-3 text-[#001575] font-medium hover:bg-[#e8ecff] rounded-xl transition-colors"
               >
                 Continuar Comprando
               </Link>

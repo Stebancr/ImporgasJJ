@@ -23,14 +23,14 @@ interface UserProfile {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<BackendOrder['status'], { label: string; color: string }> = {
-  pending:   { label: 'Pendiente',    color: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
-  paid:      { label: 'Pagado',       color: 'bg-blue-100 text-blue-700 border-blue-200' },
-  preparing: { label: 'Preparando',   color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-  shipping:  { label: 'En camino',    color: 'bg-purple-100 text-purple-700 border-purple-200' },
-  delivered: { label: 'Entregado',    color: 'bg-green-100 text-green-700 border-green-200' },
-  installed: { label: 'Instalado',    color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  cancelled: { label: 'Cancelado',    color: 'bg-red-100 text-red-700 border-red-200' },
+const STATUS_CONFIG: Record<BackendOrder['status'], { label: string; color: string; dot: string }> = {
+  pending:   { label: 'Pendiente',    color: 'bg-yellow-50 text-yellow-700 border-yellow-200',   dot: 'bg-yellow-500' },
+  paid:      { label: 'Confirmado',   color: 'bg-blue-50 text-blue-700 border-blue-200',         dot: 'bg-blue-500' },
+  preparing: { label: 'Preparando',   color: 'bg-indigo-50 text-indigo-700 border-indigo-200',   dot: 'bg-indigo-500' },
+  shipping:  { label: 'En camino',    color: 'bg-orange-50 text-orange-700 border-orange-200',   dot: 'bg-orange-500' },
+  delivered: { label: 'Entregado',    color: 'bg-green-50 text-green-700 border-green-200',      dot: 'bg-green-500' },
+  installed: { label: 'Instalado',    color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
+  cancelled: { label: 'Cancelado',    color: 'bg-red-50 text-red-600 border-red-200',            dot: 'bg-red-500' },
 }
 
 const fmt = (val: string | number) =>
@@ -99,7 +99,7 @@ export default function ProfilePage() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
               {/* Avatar */}
               <div className="flex flex-col items-center mb-6">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#0066FF] to-[#0052CC] flex items-center justify-center text-white text-2xl font-bold shadow-lg mb-3">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#001575] to-[#0033cc] flex items-center justify-center text-white text-2xl font-bold shadow-lg mb-3">
                   {profile?.nombre_completo?.charAt(0).toUpperCase() ?? '?'}
                 </div>
                 <h2 className="font-semibold text-gray-900 text-lg text-center">
@@ -161,10 +161,10 @@ export default function ProfilePage() {
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-                <Package className="w-5 h-5 text-[#0066FF]" />
+                <Package className="w-5 h-5 text-[#001575]" />
                 Mis Pedidos
                 {orders.length > 0 && (
-                  <span className="ml-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 text-xs font-medium">
+                  <span className="ml-1 px-2 py-0.5 rounded-full bg-[#e8ecff] text-[#001575] text-xs font-medium">
                     {orders.length}
                   </span>
                 )}
@@ -176,7 +176,7 @@ export default function ProfilePage() {
                 <ShoppingBag className="w-12 h-12 text-gray-200 mx-auto mb-3" />
                 <p className="text-gray-500 text-sm">Aún no tienes pedidos.</p>
                 <Link to="/productos"
-                  className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-[#0066FF] text-white rounded-xl text-sm font-medium hover:bg-[#0052CC] transition-colors">
+                  className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-[#001575] text-white rounded-xl text-sm font-medium hover:bg-[#00104f] transition-colors">
                   <ShoppingBag className="w-4 h-4" />
                   Ver productos
                 </Link>
@@ -196,7 +196,8 @@ export default function ProfilePage() {
                         <span className="font-mono font-semibold text-gray-900 text-sm">
                           {order.order_number}
                         </span>
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${cfg.color}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
                           {cfg.label}
                         </span>
                         <span className="text-xs text-gray-400">{fmtDate(order.created_at)}</span>
@@ -209,7 +210,7 @@ export default function ProfilePage() {
                         <div className="flex items-center gap-1.5">
                           <Link
                             to={`/pedido/${order.tracking_code}`}
-                            className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                            className="p-2 rounded-lg bg-[#e8ecff] text-[#001575] hover:bg-[#d0d8ff] transition-colors"
                             title="Ver seguimiento"
                           >
                             <ExternalLink className="w-4 h-4" />
@@ -281,7 +282,7 @@ export default function ProfilePage() {
 
                         <Link
                           to={`/pedido/${order.tracking_code}`}
-                          className="inline-flex items-center gap-2 text-sm text-[#0066FF] font-medium hover:underline"
+                          className="inline-flex items-center gap-2 text-sm text-[#001575] font-medium hover:text-[#F58634] hover:underline transition-colors"
                         >
                           Ver seguimiento completo
                           <ChevronRight className="w-4 h-4" />

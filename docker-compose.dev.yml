@@ -1,8 +1,15 @@
+# ================================================================
+# SERVICIOS DE DESARROLLO — Seguro hacer rebuild
+# Requisito previo: docker compose -f docker-compose.data.yml up -d
+# Levantar con:     docker compose -f docker-compose.dev.yml up -d
+# ================================================================
+
 services:
 
   backend:
     build: ./BACKEND
     container_name: backend
+    restart: on-failure
     command: sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
     volumes:
       - ./BACKEND:/app
@@ -16,22 +23,12 @@ services:
       - DB_PASSWORD=postgres
       - DB_HOST=postgres
       - DB_PORT=5432
+      - WOMPI_PUBLIC_KEY=pub_test_wrhmXXJLZGHgUIqSsdRDhn5XsENolPk6
+      - WOMPI_PRIVATE_KEY=prv_test_xi7ZmMOPdRk6wyGwMfOZnYF9jQlRP1c8
+      - WOMPI_EVENTS_SECRET=test_events_awOMG60UQtg88tAqskRnj1bvzC3eyjjM
+      - WOMPI_INTEGRITY_SECRET=test_integrity_LUyppEoIInrObgtyuuuyQXsdzVOmCTD1
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - shared_net
-
-  media:
-    image: nginx:alpine
-    container_name: media
-    volumes:
-      - media_data:/usr/share/nginx/html/media:ro
-      - ./nginx/media.conf:/etc/nginx/conf.d/default.conf:ro
-    ports:
-      - "8001:80"
     networks:
       - shared_net
 
@@ -67,25 +64,7 @@ services:
     networks:
       - shared_net
 
-  postgres:
-    image: postgres:16
-    container_name: postgres
-    restart: always
-    environment:
-      POSTGRES_DB: imporgas_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - shared_net
+
 
   nginx:
     image: nginx:alpine
@@ -99,14 +78,58 @@ services:
       - backend
       - frontend-software
       - frontend-ecommerce
-      - media
     networks:
       - shared_net
 
+  # ─────────────────────────────────────────────────────────
+  # Mailpit — captura correos en desarrollo (no envía real)
+  # Web UI: http://localhost:8025
+  # SMTP interno en: mailpit:1025
+  # ─────────────────────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"   # Web UI para ver correos
+      - "1025:1025"   # SMTP (usa este en Django: EMAIL_HOST=mailpit, EMAIL_PORT=1025)
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=true
+    networks:
+      - shared_net
+
+  # ─────────────────────────────────────────────────────────
+  # Ollama — Servicio de IA para chatbot
+  # API interna: http://ollama:11434
+  # ─────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - shared_net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Comando para auto-descargar el modelo al iniciar (solo si no existe)
+    command: >
+      sh -c "ollama serve &
+      sleep 5 &&
+      ollama list | grep -q qwen2.5:1.5b || ollama pull qwen2.5:1.5b &&
+      wait"
+
 volumes:
-  postgres_data:
   media_data:
+    external: true
+  ollama_data:
 
 networks:
   shared_net:
-    external: false
+    external: true

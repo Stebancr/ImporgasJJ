@@ -28,6 +28,7 @@ urlpatterns = [
     path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.
     path('gestion/', include('gestion.urls')),
     path('crm-chat/', include('crmChat.urls')),
+    path('visits/', include('AppVisits.urls')),
 ]
 
 # Servir archivos media en desarrollo

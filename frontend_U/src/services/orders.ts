@@ -79,6 +79,14 @@ export const ordersService = {
     const res = await api.get<{ data: BackendOrder[] }>('/orders?per_page=50')
     return (res as unknown as { data: BackendOrder[] }).data ?? []
   },
+
+  getAll: async (params?: { page?: number; page_size?: number }): Promise<{ results: BackendOrder[] }> => {
+    const queryParams = new URLSearchParams()
+    if (params?.page) queryParams.append('page', String(params.page))
+    if (params?.page_size) queryParams.append('page_size', String(params.page_size))
+    const res = await api.get<{ data: BackendOrder[] }>(`/orders?${queryParams.toString()}`)
+    return { results: (res as unknown as { data: BackendOrder[] }).data ?? [] }
+  },
 }
 
 export default ordersService

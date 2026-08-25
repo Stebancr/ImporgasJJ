@@ -1,0 +1,1 @@
+en esta carpeta se debe crear una nueva app de django la cual resicva las los datos de la aplicacion movil y la cual agende las visitas tecnicas a los tecnicos encargados, recuerda qeu para crear todo debe usarse ll comandos docker, ya que el backend esta dentro de un docker

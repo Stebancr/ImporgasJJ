@@ -80,11 +80,13 @@ function toProduct(p: ApiProduct): Product {
 export const productsService = {
   getAll: async (filters?: FilterOptions): Promise<Product[]> => {
     const params = new URLSearchParams()
-    params.append('per_page', '40')
-    if (filters?.category) params.append('category_id', filters.category)
-    if (filters?.brand) params.append('brand', filters.brand)
+    params.append('per_page', '100')
+    if (filters?.categoryId) params.append('category_id', filters.categoryId.toString())
+    if (filters?.brandId) params.append('brand_id', filters.brandId.toString())
     if (filters?.minPrice) params.append('min_price', filters.minPrice.toString())
     if (filters?.maxPrice) params.append('max_price', filters.maxPrice.toString())
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.sortBy) params.append('sort', filters.sortBy)
     if (filters?.inStock !== undefined) params.append('is_available', 'true')
 
     const query = params.toString()

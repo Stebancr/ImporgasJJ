@@ -1,10 +1,11 @@
 import './styles/CheckoutPage.css'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CreditCard, Truck, Shield, ChevronLeft, Check } from 'lucide-react'
+import { CreditCard, Truck, Shield, ChevronLeft, Check, MapPin } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
-import WompiCheckout from '../../components/WompiCheckout'
+import { useAuth } from '../../context/AuthContext'
 import ordersService from '../../services/orders'
+import addressesService, { UserAddress } from '../../services/addresses'
 
 // Replace with your real Wompi public key from https://comercios.wompi.co
 const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? 'pub_test_YOUR_KEY_HERE'
@@ -22,10 +23,13 @@ interface CheckoutForm {
 
 function CheckoutPage() {
   const { items, clearCart } = useCart()
+  const { user, isAuthenticated } = useAuth()
   const navigate = useNavigate()
-  const [step, setStep] = useState<'info' | 'payment' | 'confirm'>('info')
+  const [step, setStep] = useState<'info' | 'payment'>('info')
   const [submitting, setSubmitting] = useState(false)
-  const [orderTrackingCode, setOrderTrackingCode] = useState<string>('')
+  const [isProcessingWompi, setIsProcessingWompi] = useState(false)
+  const [addresses, setAddresses] = useState<UserAddress[]>([])
+  const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
   const [form, setForm] = useState<CheckoutForm>({
     email: '',
     name: '',
@@ -36,6 +40,51 @@ function CheckoutPage() {
     postalCode: '',
     paymentMethod: 'wompi',
   })
+
+  // Load user data and addresses if authenticated
+  useEffect(() => {
+    if (isAuthenticated && user?.usuario_rel) {
+      setForm((prev) => ({
+        ...prev,
+        email: user.usuario_rel?.correo || '',
+        name: user.usuario_rel?.nombre_completo || '',
+        phone: user.usuario_rel?.telefono || '',
+      }))
+      
+      // Load addresses
+      loadAddresses()
+    }
+  }, [isAuthenticated, user])
+
+  const loadAddresses = async () => {
+    try {
+      const data = await addressesService.getAll()
+      setAddresses(data)
+      // Auto-select default address
+      const defaultAddr = data.find((addr) => addr.is_default)
+      if (defaultAddr) {
+        handleSelectAddress(defaultAddr.id)
+      }
+    } catch (error) {
+      console.error('Error loading addresses:', error)
+    }
+  }
+
+  const handleSelectAddress = (addressId: number) => {
+    const addr = addresses.find((a) => a.id === addressId)
+    if (addr) {
+      setSelectedAddressId(addressId)
+      setForm((prev) => ({
+        ...prev,
+        name: addr.recipient_name,
+        phone: addr.phone,
+        address: addr.address,
+        city: addr.city,
+        department: addr.department,
+        postalCode: addr.postal_code || '',
+      }))
+    }
+  }
 
   const subtotal = useMemo(
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
@@ -86,14 +135,108 @@ function CheckoutPage() {
           quantity: i.quantity,
         })),
       })
-      setOrderTrackingCode(String(order.tracking_code ?? order.id))
       clearCart()
-      setStep('confirm')
+      navigate(`/orden-confirmada?tracking=${order.tracking_code}`)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
       alert(message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleWompiConfirm = async () => {
+    setSubmitting(true)
+    try {
+      const order = await ordersService.create({
+        customer_name: form.name,
+        customer_email: form.email,
+        customer_phone: form.phone,
+        shipping_address: form.address,
+        city: form.city,
+        department: form.department,
+        postal_code: form.postalCode,
+        payment_method: 'wompi',
+        wompi_reference: reference,
+        items: items.map((i) => ({
+          product_id: parseInt(i.product.id),
+          quantity: i.quantity,
+        })),
+      })
+      
+      // Store order info for after redirect
+      sessionStorage.setItem('pendingWompiOrder', JSON.stringify({
+        tracking_code: order.tracking_code,
+        reference,
+        clearCartOnReturn: true,
+      }))
+      
+      // Mark that we're processing Wompi payment (don't show empty cart message)
+      setIsProcessingWompi(true)
+
+      // Build Wompi checkout URL using URLSearchParams so all values are properly encoded.
+      // NOTE: Wompi's WAF blocks requests with `localhost` in redirect-url.
+      // Only set redirect-url when running on a real (non-local) domain.
+      const origin = window.location.hostname
+      const isLocalhost = origin === 'localhost' || origin === '127.0.0.1'
+
+      // Validate public key
+      if (!WOMPI_PUBLIC_KEY || WOMPI_PUBLIC_KEY === 'pub_test_YOUR_KEY_HERE') {
+        alert('Error: Llave pública de Wompi no configurada. Verifica el archivo .env')
+        setIsProcessingWompi(false)
+        setSubmitting(false)
+        return null
+      }
+
+      console.log('Wompi Config:', {
+        publicKey: WOMPI_PUBLIC_KEY,
+        amount: amountInCents,
+        reference,
+        email: form.email,
+      })
+
+      const params = new URLSearchParams({
+        'public-key': WOMPI_PUBLIC_KEY,
+        'currency': 'COP',
+        'amount-in-cents': String(amountInCents),
+        'reference': reference,
+      })
+
+      // Customer email is required for Wompi checkout
+      if (form.email) {
+        params.set('customer-email', form.email)
+      }
+
+      // Customer data (optional but recommended)
+      if (form.name) {
+        params.set('customer-data:full-name', form.name)
+      }
+      if (form.phone) {
+        params.set('customer-data:phone-number', form.phone)
+      }
+
+      // ✨ Agregar signature de integridad (requerida por Wompi)
+      if (order.wompi_signature) {
+        params.set('signature:integrity', order.wompi_signature)
+        console.log('✅ Wompi signature agregada:', order.wompi_signature)
+      } else {
+        console.warn('⚠️ No se recibió signature de Wompi. El pago puede fallar.')
+      }
+
+      if (!isLocalhost) {
+        const redirectUrl = `${window.location.origin}/orden-confirmada?tracking=${order.tracking_code}`
+        params.set('redirect-url', redirectUrl)
+      }
+
+      window.location.href = `https://checkout.wompi.co/p/?${params.toString()}`
+
+      return order
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
+      alert(message)
+      setIsProcessingWompi(false)
+      setSubmitting(false)
+      return null
     }
   }
 
@@ -105,7 +248,7 @@ function CheckoutPage() {
     'Sucre', 'Tolima', 'Valle del Cauca', 'Vaupés', 'Vichada',
   ]
 
-  if (items.length === 0 && step !== 'confirm') {
+  if (items.length === 0 && !isProcessingWompi) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -135,19 +278,18 @@ function CheckoutPage() {
               {[
                 { key: 'info', label: 'Información' },
                 { key: 'payment', label: 'Pago' },
-                { key: 'confirm', label: 'Confirmación' },
               ].map((s, index) => (
                 <div key={s.key} className="flex items-center flex-shrink-0">
                   <div
                     className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0 ${
                       step === s.key
                         ? 'bg-blue-600 text-white'
-                        : (step === 'payment' && index === 0) || (step === 'confirm' && index <= 1)
+                        : step === 'payment' && index === 0
                         ? 'bg-green-500 text-white'
                         : 'bg-gray-200 text-gray-600'
                     }`}
                   >
-                    {(step === 'payment' && index === 0) || (step === 'confirm' && index <= 1) ? (
+                    {step === 'payment' && index === 0 ? (
                       <Check className="w-4 h-4" />
                     ) : (
                       index + 1
@@ -156,7 +298,7 @@ function CheckoutPage() {
                   <span className={`ml-2 text-sm ${step === s.key ? 'font-semibold text-gray-900' : 'text-gray-500'} hidden xs:inline sm:inline`}>
                     {s.label}
                   </span>
-                  {index < 2 && <div className="w-6 sm:w-12 h-0.5 bg-gray-200 mx-2 flex-shrink-0" />}
+                  {index < 1 && <div className="w-6 sm:w-12 h-0.5 bg-gray-200 mx-2 flex-shrink-0" />}
                 </div>
               ))}
             </div>
@@ -165,6 +307,50 @@ function CheckoutPage() {
             {step === 'info' && (
               <form onSubmit={handleSubmitInfo} className="bg-white rounded-xl p-6 shadow-sm">
                 <h2 className="text-xl font-semibold text-gray-900 mb-6">Información de Envío</h2>
+
+                {/* Saved Addresses Selector */}
+                {isAuthenticated && addresses.length > 0 && (
+                  <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                    <div className="flex items-center gap-2 mb-3">
+                      <MapPin className="w-5 h-5 text-blue-600" />
+                      <h3 className="font-semibold text-gray-900">Direcciones guardadas</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {addresses.map((addr) => (
+                        <button
+                          key={addr.id}
+                          type="button"
+                          onClick={() => handleSelectAddress(addr.id)}
+                          className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                            selectedAddressId === addr.id
+                              ? 'border-blue-600 bg-blue-50'
+                              : 'border-gray-200 bg-white hover:border-blue-300'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="font-semibold text-gray-900">{addr.label}</p>
+                              <p className="text-sm text-gray-600">{addr.recipient_name}</p>
+                              <p className="text-sm text-gray-600">{addr.address}</p>
+                              <p className="text-sm text-gray-600">
+                                {addr.city}, {addr.department}
+                              </p>
+                            </div>
+                            {selectedAddressId === addr.id && (
+                              <Check className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <Link
+                      to="/perfil/direcciones"
+                      className="mt-3 inline-block text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Administrar direcciones →
+                    </Link>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <div className="grid md:grid-cols-2 gap-4">
@@ -322,22 +508,15 @@ function CheckoutPage() {
                   </label>
                 </div>
 
-                {/* Wompi widget */}
+                {/* Wompi info */}
                 {form.paymentMethod === 'wompi' && (
-                  <div className="mb-4">
-                    <p className="text-sm text-gray-500 mb-3">
-                      Al hacer clic en el botón de Wompi serás redirigido al checkout seguro para completar el pago de{' '}
-                      <strong>{formatPrice(total)}</strong>.
+                  <div className="mb-4 p-4 bg-blue-50 rounded-xl">
+                    <p className="text-sm text-blue-800">
+                      Al hacer clic en <strong>"Pagar con Wompi"</strong> registraremos tu pedido y te redirigiremos al
+                      checkout seguro de Wompi para completar el pago de <strong>{formatPrice(total)}</strong>.
                     </p>
-                    <WompiCheckout
-                      publicKey={WOMPI_PUBLIC_KEY}
-                      amountInCents={amountInCents}
-                      reference={reference}
-                      redirectUrl={`${window.location.origin}/checkout?status=success`}
-                      className="flex justify-center"
-                    />
-                    <p className="text-xs text-gray-400 mt-2 text-center">
-                      Tu pedido se registrará automáticamente al confirmar el pago en Wompi.
+                    <p className="text-xs text-blue-600 mt-2">
+                      Acepta tarjetas crédito/débito, PSE, Nequi, Bancolombia y más.
                     </p>
                   </div>
                 )}
@@ -350,7 +529,7 @@ function CheckoutPage() {
                   >
                     Atrás
                   </button>
-                  {form.paymentMethod === 'cash' && (
+                  {form.paymentMethod === 'cash' ? (
                     <button
                       type="button"
                       onClick={handleCashConfirm as unknown as React.MouseEventHandler}
@@ -359,68 +538,26 @@ function CheckoutPage() {
                     >
                       {submitting ? 'Procesando...' : 'Confirmar Pedido'}
                     </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleWompiConfirm}
+                      disabled={submitting}
+                      className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      {submitting ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                          Procesando...
+                        </>
+                      ) : (
+                        <>
+                          <CreditCard className="w-5 h-5" />
+                          Pagar con Wompi
+                        </>
+                      )}
+                    </button>
                   )}
-                </div>
-              </div>
-            )}
-
-            {/* Confirmation Step */}
-            {step === 'confirm' && (
-              <div className="bg-white rounded-xl p-8 shadow-sm text-center">
-                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Check className="w-10 h-10 text-green-600" />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">¡Pedido Confirmado!</h2>
-                <p className="text-gray-600 mb-6">
-                  Tu pedido ha sido procesado exitosamente.
-                  {orderTrackingCode && (
-                    <span className="block mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                      <span className="block text-xs text-blue-500 font-medium mb-1">Código de seguimiento</span>
-                      <span className="font-mono text-blue-700 font-bold break-all">{orderTrackingCode}</span>
-                    </span>
-                  )}
-                  {form.email && (
-                    <span className="block mt-2 text-sm">
-                      Recibirás un correo de confirmación en <strong>{form.email}</strong>
-                    </span>
-                  )}
-                </p>
-                <div className="bg-gray-50 rounded-xl p-6 mb-6">
-                  <h3 className="font-semibold text-gray-900 mb-4">Próximos Pasos</h3>
-                  <div className="space-y-3 text-left">
-                    {[
-                      'Recibirás un correo con los detalles de tu pedido',
-                      'Te notificaremos cuando tu pedido sea enviado',
-                      'Coordinaremos la instalación contigo',
-                    ].map((text, i) => (
-                      <div key={i} className="flex items-start gap-3">
-                        <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-semibold text-blue-600">{i + 1}</span>
-                        </div>
-                        <p className="text-sm text-gray-600">{text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <Link
-                    to={orderTrackingCode ? `/pedido/${orderTrackingCode}` : '/perfil'}
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center"
-                  >
-                    Ver Estado del Pedido
-                  </Link>
-                  <Link
-                    to="/perfil"
-                    className="flex-1 py-3 border border-blue-300 rounded-lg font-semibold text-blue-600 hover:bg-blue-50 transition-colors text-center"
-                  >
-                    Mis Pedidos
-                  </Link>
-                  <Link
-                    to="/"
-                    className="flex-1 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-colors text-center"
-                  >
-                    Inicio
-                  </Link>
                 </div>
               </div>
             )}

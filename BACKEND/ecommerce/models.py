@@ -477,6 +477,115 @@ class TrackingEvent(models.Model):
 
 
 # ─────────────────────────────────────────────
+#  USER ADDRESS (direcciones del usuario)
+# ─────────────────────────────────────────────
+
+class UserAddress(models.Model):
+    user           = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="addresses",
+        verbose_name="Usuario",
+    )
+    label          = models.CharField(max_length=50, verbose_name="Etiqueta (Casa, Oficina, etc.)")
+    recipient_name = models.CharField(max_length=200, verbose_name="Nombre del destinatario")
+    phone          = models.CharField(max_length=30, verbose_name="Teléfono")
+    address        = models.TextField(verbose_name="Dirección completa")
+    city           = models.CharField(max_length=100, verbose_name="Ciudad")
+    department     = models.CharField(max_length=100, verbose_name="Departamento")
+    postal_code    = models.CharField(max_length=20, blank=True, verbose_name="Código postal")
+    is_default     = models.BooleanField(default=False, verbose_name="Dirección predeterminada")
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'user_addresses'
+        ordering = ['-is_default', '-created_at']
+        verbose_name = 'Dirección de usuario'
+        verbose_name_plural = 'Direcciones de usuarios'
+
+    def save(self, *args, **kwargs):
+        # Si se marca como predeterminada, desmarcar las demás del mismo usuario
+        if self.is_default:
+            UserAddress.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.label} - {self.recipient_name}"
+
+
+# ─────────────────────────────────────────────
+#  FAVORITE (productos favoritos del usuario)
+# ─────────────────────────────────────────────
+
+class Favorite(models.Model):
+    user       = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="favorites",
+        verbose_name="Usuario",
+    )
+    product    = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="favorited_by",
+        verbose_name="Producto",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'favorites'
+        ordering = ['-created_at']
+        verbose_name = 'Favorito'
+        verbose_name_plural = 'Favoritos'
+        constraints = [
+            models.UniqueConstraint(fields=["user", "product"], name="uniq_favorite_user_product"),
+        ]
+
+    def __str__(self):
+        return f"{self.user} → {self.product.name}"
+
+
+# ─────────────────────────────────────────────
+#  NOTIFICATION (notificaciones del usuario)
+# ─────────────────────────────────────────────
+
+class Notification(models.Model):
+    class Type(models.TextChoices):
+        ORDER_UPDATE   = "order_update",   "Actualización de pedido"
+        ORDER_DELIVERED= "order_delivered","Pedido entregado"
+        PROMOTION      = "promotion",      "Promoción"
+        GENERAL        = "general",        "General"
+
+    user       = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        verbose_name="Usuario",
+    )
+    type       = models.CharField(
+        max_length=20,
+        choices=Type.choices,
+        default=Type.GENERAL,
+        verbose_name="Tipo",
+    )
+    title      = models.CharField(max_length=200, verbose_name="Título")
+    message    = models.TextField(verbose_name="Mensaje")
+    link       = models.CharField(max_length=500, blank=True, verbose_name="Enlace (opcional)")
+    is_read    = models.BooleanField(default=False, verbose_name="Leída")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'notifications'
+        ordering = ['-created_at']
+        verbose_name = 'Notificación'
+        verbose_name_plural = 'Notificaciones'
+
+    def __str__(self):
+        return f"{self.title} → {self.user}"
+
+
+# ─────────────────────────────────────────────
 #  SEÑALES — sincronizar rating y stock
 # ─────────────────────────────────────────────
 

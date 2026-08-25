@@ -3,14 +3,14 @@
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   
-  /* Brand Colors */
-  --color-primary: #0066FF;
-  --color-primary-dark: #0052CC;
-  --color-primary-light: #E6F0FF;
+  /* Brand Colors - ImporGas JJ S.A.S */
+  --color-primary: #001575;
+  --color-primary-dark: #00104f;
+  --color-primary-light: #e8ecff;
   
-  --color-accent: #FF6B35;
-  --color-accent-dark: #E55A2B;
-  --color-accent-light: #FFF0EB;
+  --color-accent: #F58634;
+  --color-accent-dark: #d4711e;
+  --color-accent-light: #fff3e8;
   
   /* Neutrals */
   --color-background: #FAFBFC;

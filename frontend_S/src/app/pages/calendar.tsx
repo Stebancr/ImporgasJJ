@@ -1,0 +1,11 @@
+// calendar.tsx — redirects to VisitsPage which has the calendar tab built in
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+
+export default function CalendarPage() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    navigate('/dashboard/visits', { replace: true })
+  }, [navigate])
+  return null
+}

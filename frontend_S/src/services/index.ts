@@ -7,6 +7,7 @@ export { default as categoriesService } from './categories'
 export { default as locationsService } from './locations'
 export { default as ordersService } from './orders'
 export { default as gestionService } from './gestion'
+export { visitsService } from './visits'
 
 export type { ProductFilters, CreateProductData } from './products'
 export type { UserFilters, CreateUserData, UpdateUserData, SelectOption, CargoNivelRegionalData } from './users'
@@ -16,3 +17,7 @@ export type { CategoryFilters, CreateCategoryData } from './categories'
 export type { LocationFilters, CreateLocationData } from './locations'
 export type { OrderFilters, CreateOrderData } from './orders'
 export type { StockEntry, Cotizacion, Factura, DocumentoItem, CotizacionPayload, FacturaPayload } from './gestion'
+export type {
+  ClienteVisita, Tecnico, VisitaItem, VisitaDetalle, CreateVisitaData, UpdateVisitaData,
+  CalendarioData, CalendarioItem, ReporteVisita, EvidenciaFoto,
+} from './visits'
