@@ -224,7 +224,7 @@ function CheckoutPage() {
       }
 
       if (!isLocalhost) {
-        const redirectUrl = `${window.location.origin}/orden-confirmada?tracking=${order.tracking_code}`
+        const redirectUrl = `${window.location.origin}/checkout/resultado?tracking=${order.tracking_code}`
         params.set('redirect-url', redirectUrl)
       }
 

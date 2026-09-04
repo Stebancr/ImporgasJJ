@@ -3,7 +3,7 @@ from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
     Review, Order, OrderItem, TrackingEvent,
-    UserAddress, Favorite, Notification,
+    UserAddress, Favorite, Notification, FCMDeviceToken,
 )
 
 
@@ -63,6 +63,13 @@ class ProductImageUploadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
         fields = ['image', 'alt_text', 'is_primary', 'order']
+
+    def validate_image(self, value):
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError('La imagen no puede superar 5 MB.')
+        if getattr(value, 'content_type', '').lower() not in {'image/jpeg', 'image/png', 'image/webp'}:
+            raise serializers.ValidationError('Formato no permitido. Usa JPEG, PNG o WebP.')
+        return value
 
 
 class ProductStockSerializer(serializers.ModelSerializer):
@@ -158,10 +165,29 @@ class ProductCreateSerializer(serializers.ModelSerializer):
 # ─── Review ───────────────────────────────────────────────────────────────────
 
 class ReviewSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    is_owner = serializers.SerializerMethodField()
+
     class Meta:
         model = Review
-        fields = ['id', 'product_id', 'user_id', 'rating', 'title', 'comment', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'user_id', 'created_at', 'updated_at']
+        fields = ['id', 'product_id', 'user_id', 'user_name', 'is_owner', 'rating', 'title', 'comment', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'product_id', 'user_id', 'user_name', 'is_owner', 'created_at', 'updated_at']
+
+    def get_user_name(self, obj):
+        profile = getattr(obj.user, 'usuario_rel', None)
+        return getattr(profile, 'nombre_completo', None) or getattr(obj.user, 'usuario', 'Usuario')
+
+    def get_is_owner(self, obj):
+        request = self.context.get('request')
+        return bool(request and request.user.is_authenticated and request.user.pk == obj.user_id)
+
+    def validate_comment(self, value):
+        comment = value.strip()
+        if len(comment) < 3:
+            raise serializers.ValidationError('El comentario debe tener al menos 3 caracteres.')
+        if len(comment) > 2000:
+            raise serializers.ValidationError('El comentario no puede superar 2000 caracteres.')
+        return comment
 
 
 # ─── Order ────────────────────────────────────────────────────────────────────
@@ -205,6 +231,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'subtotal', 'shipping_cost', 'total',
             'status', 'payment_method',
             'wompi_transaction_id', 'wompi_reference',
+            'wompi_status',
             'notes',
             'items', 'tracking_history',
             'created_at', 'updated_at',
@@ -288,5 +315,26 @@ class NotificationSerializer(serializers.ModelSerializer):
             'is_read', 'created_at',
         ]
         read_only_fields = ['id', 'created_at']
+
+
+class FCMDeviceTokenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FCMDeviceToken
+        fields = ['id', 'token', 'platform', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'is_active', 'created_at', 'updated_at']
+        extra_kwargs = {'token': {'validators': []}}
+
+    def validate_token(self, value):
+        token = value.strip()
+        if len(token) < 20:
+            raise serializers.ValidationError('El token FCM no es válido.')
+        return token
+
+
+class PushNotificationSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(min_value=1)
+    title = serializers.CharField(max_length=200)
+    body = serializers.CharField(max_length=1000)
+    data = serializers.DictField(child=serializers.CharField(), required=False, default=dict)
 
 

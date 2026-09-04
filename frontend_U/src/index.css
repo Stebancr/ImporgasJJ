@@ -18,6 +18,18 @@
   --color-foreground: #1A1D21;
   --color-muted: #6B7280;
   --color-border: #E5E7EB;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #1A1D21;
+  --color-popover: #FFFFFF;
+  --color-popover-foreground: #1A1D21;
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: #F3F4F6;
+  --color-secondary-foreground: #1A1D21;
+  --color-muted-foreground: #6B7280;
+  --color-accent-foreground: #1A1D21;
+  --color-destructive: #DC2626;
+  --color-input: #D1D5DB;
+  --color-ring: #001575;
   
   /* Status */
   --color-success: #10B981;

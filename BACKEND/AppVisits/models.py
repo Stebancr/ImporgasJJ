@@ -1,9 +1,4 @@
-import random
 from django.db import models
-
-
-def _generar_numero_tarea():
-    return str(random.randint(1000000, 9999999))
 
 
 class ClienteVisita(models.Model):
@@ -46,7 +41,7 @@ class VisitaTecnica(models.Model):
         ('garantia', 'Garantía'),
     ]
 
-    numero_tarea = models.CharField(max_length=20, unique=True, blank=True)
+    numero_tarea = models.CharField(max_length=20, unique=True, blank=True, null=True, editable=False)
     tecnico = models.ForeignKey(
         'usuarios.Credenciales',
         on_delete=models.SET_NULL,
@@ -73,6 +68,8 @@ class VisitaTecnica(models.Model):
     )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    correo_completada_en = models.DateTimeField(null=True, blank=True, editable=False)
+    correo_completada_error = models.TextField(blank=True, editable=False)
 
     class Meta:
         db_table = 'visita_tecnica'
@@ -84,14 +81,13 @@ class VisitaTecnica(models.Model):
         return f"#{self.numero_tarea} — {self.cliente.nombre} ({self.get_estado_display()})"
 
     def save(self, *args, **kwargs):
-        if not self.numero_tarea:
-            # Ensure uniqueness
-            while True:
-                num = _generar_numero_tarea()
-                if not VisitaTecnica.objects.filter(numero_tarea=num).exists():
-                    self.numero_tarea = num
-                    break
+        if self.pk:
+            self.numero_tarea = str(999 + self.pk)
+            return super().save(*args, **kwargs)
+        self.numero_tarea = None
         super().save(*args, **kwargs)
+        self.numero_tarea = str(999 + self.pk)
+        type(self).objects.filter(pk=self.pk).update(numero_tarea=self.numero_tarea)
 
 
 class ReporteVisita(models.Model):

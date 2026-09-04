@@ -336,6 +336,13 @@ class Review(models.Model):
 # ─────────────────────────────────────────────
 
 class Order(models.Model):
+    class WompiStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pendiente'
+        APPROVED = 'APPROVED', 'Aprobado'
+        DECLINED = 'DECLINED', 'Rechazado'
+        VOIDED = 'VOIDED', 'Anulado'
+        ERROR = 'ERROR', 'Error'
+
     class Status(models.TextChoices):
         PENDING   = "pending",   "Pendiente"
         PAID      = "paid",      "Pagado"
@@ -396,6 +403,18 @@ class Order(models.Model):
     wompi_reference      = models.CharField(
         max_length=200, blank=True,
         verbose_name="Referencia Wompi",
+    )
+    wompi_status         = models.CharField(
+        max_length=10, choices=WompiStatus.choices, blank=True,
+        verbose_name='Estado de pago Wompi',
+    )
+    payment_confirmation_email_sent_at = models.DateTimeField(
+        null=True, blank=True, editable=False,
+        verbose_name='Correo de pago confirmado enviado',
+    )
+    payment_confirmation_email_error = models.TextField(
+        blank=True, editable=False,
+        verbose_name='Error de correo de pago confirmado',
     )
 
     # ── Estado ────────────────────────────────────────────────────────────────
@@ -549,6 +568,40 @@ class Favorite(models.Model):
 # ─────────────────────────────────────────────
 #  NOTIFICATION (notificaciones del usuario)
 # ─────────────────────────────────────────────
+
+class FCMDeviceToken(models.Model):
+    class Platform(models.TextChoices):
+        ANDROID = "android", "Android"
+        IOS = "ios", "iOS"
+        WEB = "web", "Web"
+        UNKNOWN = "unknown", "Desconocida"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="fcm_device_tokens",
+        verbose_name="Usuario",
+    )
+    token = models.CharField(max_length=4096, unique=True, verbose_name="Token FCM")
+    platform = models.CharField(
+        max_length=10,
+        choices=Platform.choices,
+        default=Platform.UNKNOWN,
+        verbose_name="Plataforma",
+    )
+    is_active = models.BooleanField(default=True, verbose_name="Activo")
+    last_error = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "fcm_device_tokens"
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["user", "is_active"], name="fcm_user_active_idx")]
+
+    def __str__(self):
+        return f"FCM {self.platform} ({self.user_id})"
+
 
 class Notification(models.Model):
     class Type(models.TextChoices):

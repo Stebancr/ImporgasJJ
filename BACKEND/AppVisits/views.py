@@ -4,8 +4,12 @@ import base64
 from datetime import datetime, date
 
 from django.http import HttpResponse, FileResponse
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from django.conf import settings
+from django.core.mail import EmailMessage
+import logging
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -21,7 +25,10 @@ from .serializers import (
     EvidenciaSerializer, TecnicoSerializer, ClienteVisitaSerializer,
 )
 from .permissions import IsAdminOrReadOwn, IsAdminUser
+from .notifications import notify_technician_visit_assigned
 from usuarios.models import Credenciales
+
+logger = logging.getLogger(__name__)
 
 
 def _filter_visitas_by_user(qs, user):
@@ -30,6 +37,50 @@ def _filter_visitas_by_user(qs, user):
     if tipo == 1:  # Técnico (tipo_usuario = 1)
         qs = qs.filter(tecnico=user)
     return qs
+
+
+def _schedule_visit_assignment_notification(visita_id):
+    """Envía FCM solo después de que la asignación quedó confirmada en BD."""
+    def send_notification():
+        visita = VisitaTecnica.objects.select_related('cliente', 'tecnico').get(pk=visita_id)
+        notify_technician_visit_assigned(visita)
+
+    transaction.on_commit(send_notification)
+
+
+def _enviar_correo_visita_completada(visita):
+    """Envía una sola vez el reporte final usando la configuración SMTP existente."""
+    if visita.correo_completada_en:
+        return False
+    destinatario = (visita.cliente.correo or '').strip()
+    if not destinatario:
+        visita.correo_completada_error = 'El cliente no tiene correo configurado.'
+        visita.save(update_fields=['correo_completada_error', 'fecha_actualizacion'])
+        return False
+    try:
+        pdf = _generar_pdf(visita)
+        message = EmailMessage(
+            subject=f'Visita técnica #{visita.numero_tarea} completada',
+            body=(
+                f'Hola {visita.cliente.nombre},\n\n'
+                f'La visita técnica #{visita.numero_tarea} fue completada. '
+                'Adjuntamos el informe técnico en formato PDF.\n\n'
+                'Atentamente,\nIMPORGAS JJ'
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[destinatario],
+        )
+        message.attach(f'reporte_{visita.numero_tarea}.pdf', pdf, 'application/pdf')
+        message.send(fail_silently=False)
+        visita.correo_completada_en = timezone.now()
+        visita.correo_completada_error = ''
+        visita.save(update_fields=['correo_completada_en', 'correo_completada_error', 'fecha_actualizacion'])
+        return True
+    except Exception as exc:
+        logger.exception('No fue posible enviar el reporte de la visita %s', visita.pk)
+        visita.correo_completada_error = str(exc)[:1000]
+        visita.save(update_fields=['correo_completada_error', 'fecha_actualizacion'])
+        return False
 
 
 # ─── Technicians list ──────────────────────────────────────────────────────────
@@ -98,6 +149,8 @@ class VisitaListCreateView(APIView):
         serializer = VisitaCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             visita = serializer.save()
+            if visita.tecnico_id:
+                _schedule_visit_assignment_notification(visita.pk)
             return Response(VisitaDetailSerializer(visita).data, status=201)
         return Response(serializer.errors, status=400)
 
@@ -133,9 +186,12 @@ class VisitaDetailView(APIView):
         v, err = self._get_visita(pk, request.user)
         if err:
             return err
+        previous_technician_id = v.tecnico_id
         serializer = VisitaUpdateSerializer(v, data=request.data, partial=True)
         if serializer.is_valid():
-            serializer.save()
+            visita = serializer.save()
+            if visita.tecnico_id and visita.tecnico_id != previous_technician_id:
+                _schedule_visit_assignment_notification(visita.pk)
             return Response(VisitaDetailSerializer(v).data)
         return Response(serializer.errors, status=400)
 
@@ -194,9 +250,10 @@ class FinalizarVisitaView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    @transaction.atomic
     def post(self, request, pk):
         try:
-            qs = VisitaTecnica.objects.select_related('cliente')
+            qs = VisitaTecnica.objects.select_for_update().select_related('cliente')
             qs = _filter_visitas_by_user(qs, request.user)
             v = qs.get(pk=pk)
         except VisitaTecnica.DoesNotExist:
@@ -257,9 +314,13 @@ class FinalizarVisitaView(APIView):
         v.estado = VisitaTecnica.ESTADO_FINALIZADA
         v.save(update_fields=['estado', 'fecha_actualizacion'])
 
-        return Response(VisitaDetailSerializer(
+        correo_enviado = _enviar_correo_visita_completada(v)
+
+        response_data = VisitaDetailSerializer(
             VisitaTecnica.objects.select_related('cliente', 'tecnico').prefetch_related('evidencias').get(pk=pk)
-        ).data)
+        ).data
+        response_data['correo_enviado'] = correo_enviado
+        return Response(response_data)
 
 
 # ─── Photos ───────────────────────────────────────────────────────────────────
@@ -591,6 +652,7 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         story.append(Spacer(1, 0.3 * cm))
 
         # ── Signature ──
+        firma_agregada = False
         if r.firma_base64:
             story.append(Paragraph('<b>Firma del cliente:</b>', bold))
             try:
@@ -605,12 +667,14 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
                 img_buffer.seek(0)
                 firma_img = RLImage(img_buffer, width=5 * cm, height=3 * cm)
                 story.append(firma_img)
+                firma_agregada = True
             except Exception as e:
                 if r.firma_cliente:
                     try:
                         firma_path = r.firma_cliente.path
                         firma_img = RLImage(firma_path, width=5 * cm, height=3 * cm)
                         story.append(firma_img)
+                        firma_agregada = True
                     except Exception:
                         pass
         elif r.firma_cliente:
@@ -619,8 +683,13 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
                 firma_path = r.firma_cliente.path
                 firma_img = RLImage(firma_path, width=5 * cm, height=3 * cm)
                 story.append(firma_img)
+                firma_agregada = True
             except Exception:
                 pass
+
+        if firma_agregada:
+            story.append(HRFlowable(width=5 * cm, thickness=0.7, color=colors.black, spaceBefore=1, spaceAfter=2, hAlign='LEFT'))
+            story.append(Paragraph('Firma cliente', small))
 
         # ── Photos ──
         evidencias = list(visita.evidencias.all()[:20])

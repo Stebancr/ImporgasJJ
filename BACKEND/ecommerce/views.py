@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.db.models import Q
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -8,6 +9,9 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 import hashlib
+import hmac
+import logging
+import requests
 
 from usuarios.permissions import IsAdminUser, IsNormalUserOrAdmin, IsAuthenticatedUser
 
@@ -15,7 +19,7 @@ from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
     Review, Order, OrderItem, TrackingEvent,
-    UserAddress, Favorite, Notification,
+    UserAddress, Favorite, Notification, FCMDeviceToken,
 )
 from .serializers import (
     BrandSerializer, LocationSerializer, CategorySerializer, SpecAttributeSerializer,
@@ -25,8 +29,12 @@ from .serializers import (
     ReviewSerializer,
     OrderSerializer, OrderCreateSerializer, TrackingEventSerializer,
     UserAddressSerializer, FavoriteSerializer, FavoriteCreateSerializer,
-    NotificationSerializer,
+    NotificationSerializer, FCMDeviceTokenSerializer, PushNotificationSerializer,
 )
+from .firebase_service import send_push_to_user
+from .email_service import send_order_payment_confirmation
+
+logger = logging.getLogger(__name__)
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -716,13 +724,14 @@ class ProductSpecDetailView(APIView):
 # ─── Reviews ──────────────────────────────────────────────────────────────────
 
 class ProductReviewListView(APIView):
+    throttle_scope = 'reviews'
     def get_permissions(self):
         if self.request.method == 'GET':
             return [AllowAny()]
         return [IsAuthenticatedUser()]
 
     def get(self, request, product_id):
-        reviews = Review.objects.filter(product_id=product_id).order_by('-created_at')
+        reviews = Review.objects.filter(product_id=product_id).select_related('user__usuario_rel').order_by('-created_at')
         return paginate(reviews, request, ReviewSerializer)
 
     def post(self, request, product_id):
@@ -734,11 +743,38 @@ class ProductReviewListView(APIView):
             return Response({'error': 'Producto no encontrado'}, status=404)
         if Review.objects.filter(product=product, user=request.user).exists():
             return Response({'error': 'Ya escribiste una reseña para este producto'}, status=400)
-        serializer = ReviewSerializer(data=request.data)
+        serializer = ReviewSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save(product=product, user=request.user)
             return Response({'data': serializer.data}, status=201)
         return Response(serializer.errors, status=400)
+
+
+class ProductReviewDetailView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+
+    def _get_review(self, request, product_id, review_id):
+        try:
+            return Review.objects.get(pk=review_id, product_id=product_id, user=request.user)
+        except Review.DoesNotExist:
+            return None
+
+    def patch(self, request, product_id, review_id):
+        review = self._get_review(request, product_id, review_id)
+        if not review:
+            return Response({'error': 'Reseña no encontrada'}, status=404)
+        serializer = ReviewSerializer(review, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response({'data': serializer.data})
+        return Response(serializer.errors, status=400)
+
+    def delete(self, request, product_id, review_id):
+        review = self._get_review(request, product_id, review_id)
+        if not review:
+            return Response({'error': 'Reseña no encontrada'}, status=404)
+        review.delete()
+        return Response(status=204)
 
 
 # ─── Orders ───────────────────────────────────────────────────────────────────
@@ -772,6 +808,11 @@ class OrderListView(APIView):
 
         data       = serializer.validated_data
         items_data = data['items']
+        if data['payment_method'] == 'wompi' and not settings.WOMPI_INTEGRITY_SECRET:
+            return Response(
+                {'error': 'La integración de pagos no está configurada.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         # ── 1. Cargar productos y validar stock ───────────────────────────────
         products = {}
@@ -822,6 +863,7 @@ class OrderListView(APIView):
             wompi_reference  = data.get('wompi_reference', ''),
             notes            = data.get('notes', ''),
             status           = Order.Status.PENDING,
+            wompi_status     = Order.WompiStatus.PENDING if data['payment_method'] == 'wompi' else '',
         )
 
         # ── 4. Crear ítems y descontar stock ──────────────────────────────────
@@ -862,22 +904,9 @@ class OrderListView(APIView):
         # ── 6. Generar signature para Wompi (si aplica) ───────────────────────
         wompi_signature = None
         if data['payment_method'] == 'wompi':
-            # Obtener INTEGRITY_SECRET de settings o usar el de sandbox
-            integrity_secret = getattr(settings, 'WOMPI_INTEGRITY_SECRET', '') or 'test_integrity_LUyppEoIInrObgtyuuuyQXsdzVOmCTD1'
-            
-            if integrity_secret:
-                # Convertir total a centavos
-                amount_in_cents = int(total * 100)
-                
-                # Generar signature: SHA256(reference + amount_in_cents + currency + integrity_secret)
-                signature_string = f"{order.wompi_reference}{amount_in_cents}COP{integrity_secret}"
-                wompi_signature = hashlib.sha256(signature_string.encode()).hexdigest()
-                
-                # Log para debugging
-                print(f"🔐 Signature generada para pedido {order.order_number}")
-                print(f"   Reference: {order.wompi_reference}")
-                print(f"   Amount: {amount_in_cents}")
-                print(f"   Signature: {wompi_signature}")
+            amount_in_cents = int(total * 100)
+            signature_string = f"{order.wompi_reference}{amount_in_cents}COP{settings.WOMPI_INTEGRITY_SECRET}"
+            wompi_signature = hashlib.sha256(signature_string.encode()).hexdigest()
 
         # Construir respuesta
         response_data = OrderSerializer(order, context={'request': request}).data
@@ -981,54 +1010,133 @@ class OrderStatusPublicView(APIView):
         })
 
 
+def _wompi_property(data, path):
+    value = data
+    for part in path.split('.'):
+        if not isinstance(value, dict) or part not in value:
+            raise KeyError(path)
+        value = value[part]
+    return value
+
+
+def _valid_wompi_event(payload, header_checksum=''):
+    signature = payload.get('signature') or {}
+    properties = signature.get('properties') or []
+    received = header_checksum or signature.get('checksum', '')
+    timestamp = payload.get('timestamp')
+    if not settings.WOMPI_EVENTS_SECRET or not properties or not received or timestamp is None:
+        return False
+    try:
+        values = ''.join(str(_wompi_property(payload.get('data', {}), item)) for item in properties)
+    except (KeyError, TypeError):
+        return False
+    expected = hashlib.sha256(f"{values}{timestamp}{settings.WOMPI_EVENTS_SECRET}".encode()).hexdigest()
+    return hmac.compare_digest(expected.lower(), str(received).lower())
+
+
+def _validate_wompi_transaction(order, transaction_data):
+    try:
+        amount_matches = int(transaction_data.get('amount_in_cents', -1)) == int(order.total * 100)
+    except (TypeError, ValueError):
+        amount_matches = False
+    return (
+        transaction_data.get('reference') == order.wompi_reference
+        and transaction_data.get('currency') == 'COP'
+        and amount_matches
+        and transaction_data.get('status') in dict(Order.WompiStatus.choices)
+    )
+
+
+def _apply_wompi_status(order, transaction_data):
+    tx_status = transaction_data['status']
+    previous = order.wompi_status
+    should_send_confirmation = (
+        tx_status == Order.WompiStatus.APPROVED
+        and not order.payment_confirmation_email_sent_at
+    )
+    order.wompi_status = tx_status
+    order.wompi_transaction_id = transaction_data.get('id', order.wompi_transaction_id)
+    if tx_status == Order.WompiStatus.APPROVED:
+        order.status = Order.Status.PAID
+    elif tx_status in (Order.WompiStatus.DECLINED, Order.WompiStatus.ERROR, Order.WompiStatus.VOIDED):
+        order.status = Order.Status.CANCELLED
+    order.save(update_fields=['wompi_status', 'wompi_transaction_id', 'status', 'updated_at'])
+    if previous != tx_status:
+        TrackingEvent.objects.create(order=order, status=order.status, description=f"Estado del pago Wompi actualizado a {tx_status}.")
+    if should_send_confirmation:
+        transaction.on_commit(
+            lambda order_id=order.pk: send_order_payment_confirmation(order_id)
+        )
+
+
 class WompiWebhookView(APIView):
-    """
-    Webhook de Wompi — recibe confirmaciones de pago y actualiza el estado
-    de la orden. Verificar firma HMAC si se configura el secreto en .env.
-    """
+    throttle_scope = 'wompi_webhook'
     permission_classes = [AllowAny]
-    authentication_classes = []  # no session/token auth para webhooks
+    authentication_classes = []
 
+    @transaction.atomic
     def post(self, request):
-        event = request.data.get('event')
-        data  = request.data.get('data', {})
-
-        if event != 'transaction.updated':
+        if not _valid_wompi_event(request.data, request.headers.get('X-Event-Checksum', '')):
+            return Response({'error': 'invalid event signature'}, status=401)
+        if request.data.get('event') != 'transaction.updated':
             return Response({'ok': True})
-
-        transaction_data = data.get('transaction', {})
-        reference        = transaction_data.get('reference', '')
-        tx_status        = transaction_data.get('status', '')
-        tx_id            = transaction_data.get('id', '')
-
-        if not reference:
-            return Response({'error': 'reference missing'}, status=400)
-
+        transaction_data = request.data.get('data', {}).get('transaction', {})
         try:
-            order = Order.objects.get(wompi_reference=reference)
+            order = Order.objects.select_for_update().get(wompi_reference=transaction_data.get('reference', ''))
         except Order.DoesNotExist:
-            # Puede ser un pedido que aún no se creó o referencia inválida
+            return Response({'error': 'order not found'}, status=404)
+        if not _validate_wompi_transaction(order, transaction_data):
+            return Response({'error': 'transaction does not match order'}, status=400)
+        _apply_wompi_status(order, transaction_data)
+        return Response({'ok': True})
+
+
+class WompiPaymentStatusView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'payment_status'
+
+    def get(self, request):
+        tracking_code = request.query_params.get('tracking', '').strip()
+        transaction_id = request.query_params.get('transaction_id', '').strip()
+        if not tracking_code:
+            return Response({'error': 'tracking is required'}, status=400)
+        try:
+            order = Order.objects.prefetch_related('items__product').get(tracking_code=tracking_code, payment_method=Order.PaymentMethod.WOMPI)
+        except (Order.DoesNotExist, ValueError):
             return Response({'error': 'order not found'}, status=404)
 
-        if tx_status == 'APPROVED' and order.status == Order.Status.PENDING:
-            order.status             = Order.Status.PAID
-            order.wompi_transaction_id = tx_id
-            order.save()
-            TrackingEvent.objects.create(
-                order       = order,
-                status      = Order.Status.PAID,
-                description = f"Pago confirmado vía Wompi. Transacción: {tx_id}",
-            )
-        elif tx_status in ('DECLINED', 'ERROR', 'VOIDED'):
-            order.status = Order.Status.CANCELLED
-            order.save()
-            TrackingEvent.objects.create(
-                order       = order,
-                status      = Order.Status.CANCELLED,
-                description = f"Pago rechazado vía Wompi (estado: {tx_status}). Transacción: {tx_id}",
-            )
+        if transaction_id:
+            if not settings.WOMPI_PUBLIC_KEY:
+                return Response({'error': 'payment verification is not configured'}, status=503)
+            try:
+                response = requests.get(
+                    f"{settings.WOMPI_API_URL.rstrip('/')}/transactions/{transaction_id}",
+                    headers={'Authorization': f'Bearer {settings.WOMPI_PUBLIC_KEY}'},
+                    timeout=settings.WOMPI_HTTP_TIMEOUT,
+                )
+                response.raise_for_status()
+                transaction_data = response.json().get('data', {})
+            except (requests.RequestException, ValueError):
+                logger.exception('No fue posible consultar la transacción Wompi %s', transaction_id)
+                return Response({'error': 'payment provider unavailable'}, status=502)
+            if not _validate_wompi_transaction(order, transaction_data):
+                return Response({'error': 'transaction does not match order'}, status=400)
+            with transaction.atomic():
+                order = Order.objects.select_for_update().get(pk=order.pk)
+                _apply_wompi_status(order, transaction_data)
 
-        return Response({'ok': True})
+        return Response({
+            'order_number': order.order_number,
+            'tracking_code': str(order.tracking_code),
+            'reference': order.wompi_reference,
+            'transaction_id': order.wompi_transaction_id,
+            'payment_status': order.wompi_status or Order.WompiStatus.PENDING,
+            'amount': str(order.total),
+            'currency': 'COP',
+            'customer_name': order.customer_name,
+            'items': [{'product_name': item.product.name, 'quantity': item.quantity, 'unit_price': str(item.unit_price)} for item in order.items.all()],
+        })
 
 
 class OrderAdminListView(APIView):
@@ -1223,3 +1331,62 @@ class NotificationMarkAllReadView(APIView):
     def post(self, request):
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({'message': 'Todas las notificaciones marcadas como leídas'})
+
+
+class FCMDeviceTokenListView(APIView):
+    permission_classes = [IsAuthenticatedUser]
+    throttle_scope = 'fcm'
+
+    def get(self, request):
+        devices = FCMDeviceToken.objects.filter(user=request.user)
+        return Response({'data': FCMDeviceTokenSerializer(devices, many=True).data})
+
+    def post(self, request):
+        serializer = FCMDeviceTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        device, created = FCMDeviceToken.objects.update_or_create(
+            token=serializer.validated_data['token'],
+            defaults={
+                'user': request.user,
+                'platform': serializer.validated_data.get('platform', FCMDeviceToken.Platform.UNKNOWN),
+                'is_active': True,
+                'last_error': '',
+            },
+        )
+        return Response(
+            {'data': FCMDeviceTokenSerializer(device).data},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    def delete(self, request):
+        token = str(request.data.get('token', '')).strip()
+        if not token:
+            return Response({'token': ['Este campo es obligatorio.']}, status=400)
+        updated = FCMDeviceToken.objects.filter(user=request.user, token=token).update(is_active=False)
+        if not updated:
+            return Response({'error': 'Token no encontrado.'}, status=404)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminPushNotificationView(APIView):
+    permission_classes = [IsAdminUser]
+    throttle_scope = 'fcm'
+
+    def post(self, request):
+        serializer = PushNotificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user_model = get_user_model()
+        try:
+            user = user_model.objects.get(pk=serializer.validated_data['user_id'])
+        except user_model.DoesNotExist:
+            return Response({'error': 'Usuario no encontrado.'}, status=404)
+        try:
+            result = send_push_to_user(
+                user,
+                serializer.validated_data['title'],
+                serializer.validated_data['body'],
+                serializer.validated_data.get('data'),
+            )
+        except RuntimeError as exc:
+            return Response({'error': str(exc)}, status=503)
+        return Response({'data': result})

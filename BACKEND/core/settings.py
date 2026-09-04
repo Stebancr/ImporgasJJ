@@ -44,13 +44,14 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = [
-    'localhost',
-    '.ngrok.io',
-    '127.0.0.1',
-    '0.0.0.0',
-    'testserver',
-]
+def _csv_env(name, default=''):
+    return [value.strip() for value in os.getenv(name, default).split(',') if value.strip()]
+
+
+ALLOWED_HOSTS = _csv_env(
+    'ALLOWED_HOSTS',
+    'localhost,127.0.0.1,0.0.0.0,testserver,.ngrok.io',
+)
 
 APPEND_SLASH = False
 
@@ -84,7 +85,15 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = _csv_env(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost,http://localhost:81,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:81,http://127.0.0.1:3000',
+)
+CSRF_TRUSTED_ORIGINS = _csv_env(
+    'CSRF_TRUSTED_ORIGINS',
+    'http://localhost,http://localhost:81,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:81,http://127.0.0.1:3000',
+)
 
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -111,10 +120,27 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny'
-    ]
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('THROTTLE_ANON_RATE', default='60/min'),
+        'user': config('THROTTLE_USER_RATE', default='300/min'),
+        'login': config('THROTTLE_LOGIN_RATE', default='5/min'),
+        'chat': config('THROTTLE_CHAT_RATE', default='20/min'),
+        'reviews': config('THROTTLE_REVIEW_RATE', default='30/min'),
+        'payment_status': config('THROTTLE_PAYMENT_RATE', default='30/min'),
+        'fcm': config('THROTTLE_FCM_RATE', default='30/min'),
+        'wompi_webhook': config('THROTTLE_WOMPI_WEBHOOK_RATE', default='240/min'),
+    },
 }
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=25 * 1024 * 1024, cast=int)
+FILE_UPLOAD_MAX_MEMORY_SIZE = config('FILE_UPLOAD_MAX_MEMORY_SIZE', default=5 * 1024 * 1024, cast=int)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = config('DATA_UPLOAD_MAX_NUMBER_FIELDS', default=1000, cast=int)
 
 ROOT_URLCONF = 'core.urls'
 
@@ -207,7 +233,16 @@ USE_I18N = True
 
 USE_TZ = True
 
-X_FRAME_OPTIONS = 'ALLOWALL'
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
+CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False, cast=bool)
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Static files (CSS, JavaScript, Images)
@@ -254,6 +289,8 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # En Docker usa 'ollama', en desarrollo local usa 'localhost'
 OLLAMA_API_URL = config('OLLAMA_API_URL', default='http://ollama:11434/api/chat')
 OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen2.5:1.5b')
+OLLAMA_TIMEOUT = config('OLLAMA_TIMEOUT', default=90, cast=int)
+OLLAMA_NUM_CTX = config('OLLAMA_NUM_CTX', default=4096, cast=int)
 
 # Cache Configuration
 # Usa cache en memoria para desarrollo, Redis para producción
@@ -267,8 +304,20 @@ if 'test' in sys.argv:
             'LOCATION': 'unique-snowflake',
         }
     }
+elif os.getenv('REDIS_URL'):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': os.environ['REDIS_URL'],
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'CONNECTION_POOL_KWARGS': {'max_connections': 50},
+                'SOCKET_CONNECT_TIMEOUT': 2,
+                'SOCKET_TIMEOUT': 2,
+            },
+        }
+    }
 elif DEBUG:
-    # Desarrollo: cache en memoria (más rápido para desarrollo)
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
@@ -300,3 +349,15 @@ WOMPI_PUBLIC_KEY = config('WOMPI_PUBLIC_KEY', default='')
 WOMPI_PRIVATE_KEY = config('WOMPI_PRIVATE_KEY', default='')
 WOMPI_EVENTS_SECRET = config('WOMPI_EVENTS_SECRET', default='')
 WOMPI_INTEGRITY_SECRET = config('WOMPI_INTEGRITY_SECRET', default='')
+WOMPI_API_URL = config(
+    'WOMPI_API_URL',
+    default='https://sandbox.wompi.co/v1' if WOMPI_PUBLIC_KEY.startswith('pub_test_') else 'https://production.wompi.co/v1',
+)
+WOMPI_HTTP_TIMEOUT = config('WOMPI_HTTP_TIMEOUT', default=10, cast=int)
+
+# Firebase Admin (solo backend). Se admite un secret montado como archivo o
+# variables individuales de la cuenta de servicio.
+FIREBASE_CREDENTIALS_FILE = config('FIREBASE_CREDENTIALS_FILE', default='')
+FIREBASE_PROJECT_ID = config('FIREBASE_PROJECT_ID', default='')
+FIREBASE_CLIENT_EMAIL = config('FIREBASE_CLIENT_EMAIL', default='')
+FIREBASE_PRIVATE_KEY = config('FIREBASE_PRIVATE_KEY', default='')

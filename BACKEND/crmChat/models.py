@@ -16,6 +16,8 @@ class ChatSession(models.Model):
     agent_id_ref   = models.IntegerField(null=True, blank=True)          # Credenciales.id of agent
     agent_name     = models.CharField(max_length=200, blank=True)
     unread_by_agent = models.IntegerField(default=0)                     # messages not yet seen by agent
+    conversation_state = models.JSONField(default=dict, blank=True)
+    conversation_summary = models.TextField(blank=True, default='')
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 

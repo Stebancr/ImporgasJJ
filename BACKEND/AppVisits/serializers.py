@@ -36,6 +36,13 @@ class EvidenciaSerializer(serializers.ModelSerializer):
         fields = ['id', 'imagen', 'descripcion', 'orden', 'subida_en']
         read_only_fields = ['subida_en']
 
+    def validate_imagen(self, value):
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError('La imagen no puede superar 5 MB.')
+        if getattr(value, 'content_type', '').lower() not in {'image/jpeg', 'image/png', 'image/webp'}:
+            raise serializers.ValidationError('Formato no permitido. Usa JPEG, PNG o WebP.')
+        return value
+
 
 class ReporteSerializer(serializers.ModelSerializer):
     equipo_display = serializers.CharField(source='get_equipo_display', read_only=True)
@@ -151,6 +158,11 @@ class VisitaUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = VisitaTecnica
         fields = ['tipo_tarea', 'fecha', 'hora', 'descripcion', 'observaciones_iniciales', 'estado', 'tecnico']
+
+    def validate_estado(self, value):
+        if value == VisitaTecnica.ESTADO_FINALIZADA:
+            raise serializers.ValidationError('Utiliza el endpoint finalizar para completar la visita y generar su reporte.')
+        return value
 
 
 # ─── report ────────────────────────────────────────────────────────────────────

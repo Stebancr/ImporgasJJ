@@ -17,20 +17,26 @@ services:
     env_file:
       - .env
     environment:
-      - DB_ENGINE=django.db.backends.postgresql
-      - DB_NAME=imporgas_db
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - WOMPI_PUBLIC_KEY=pub_test_wrhmXXJLZGHgUIqSsdRDhn5XsENolPk6
-      - WOMPI_PRIVATE_KEY=prv_test_xi7ZmMOPdRk6wyGwMfOZnYF9jQlRP1c8
-      - WOMPI_EVENTS_SECRET=test_events_awOMG60UQtg88tAqskRnj1bvzC3eyjjM
-      - WOMPI_INTEGRITY_SECRET=test_integrity_LUyppEoIInrObgtyuuuyQXsdzVOmCTD1
+      - REDIS_URL=redis://redis:6379/1
+      - OLLAMA_API_URL=${OLLAMA_API_URL:-http://ollama:11434/api/chat}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+      # Relay definido en emails/docker-compose.yml; se respeta EMAIL_* si
+      # el despliegue aporta credenciales o un proveedor SMTP distinto.
+      - EMAIL_HOST=${EMAIL_HOST:-smtp}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-no-reply@gasstore.com}
+    depends_on:
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     networks:
       - shared_net
+      - email_net
 
   frontend-ecommerce:
     image: node:20
@@ -48,24 +54,6 @@ services:
     networks:
       - shared_net
 
-  frontend-software:
-    image: node:22
-    container_name: frontend-software
-    working_dir: /app
-    volumes:
-      - ./frontend_S:/app
-      - /app/node_modules
-    ports:
-      - "3001:3000"
-    environment:
-      - NODE_ENV=development
-      - VITE_API_URL=/api
-    command: sh -c "corepack enable && pnpm install && pnpm run dev"
-    networks:
-      - shared_net
-
-
-
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -76,10 +64,22 @@ services:
       - "81:81"
     depends_on:
       - backend
-      - frontend-software
       - frontend-ecommerce
     networks:
       - shared_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    networks:
+      - shared_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # ─────────────────────────────────────────────────────────
   # Mailpit — captura correos en desarrollo (no envía real)
@@ -114,10 +114,11 @@ services:
     networks:
       - shared_net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 15s
 
 volumes:
   media_data:
@@ -127,3 +128,7 @@ volumes:
 networks:
   shared_net:
     external: true
+  # Red externa utilizada por emails/docker-compose.yml (smtp_server).
+  email_net:
+    external: true
+    name: frontend_shared_net

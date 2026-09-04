@@ -37,6 +37,21 @@ export interface User {
   role: 'admin' | 'operator' | 'client'
   phone?: string
   address?: string
+  tipo_usuario?: number
+  location_id?: number | null
+  location_name?: string | null
+  is_active?: boolean
+  is_staff?: boolean
+  is_superuser?: boolean
+  last_login?: string | null
+  created_at?: string
+  updated_at?: string
+  usuario_rel?: {
+    nombre_completo?: string
+    correo?: string
+    telefono?: string
+    sede?: string
+  }
 }
 
 export interface Order {

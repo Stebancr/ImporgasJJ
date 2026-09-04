@@ -1,2 +1,11 @@
-!.env
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+node_modules/
+**/node_modules/
+.pnpm-store/
+**/.pnpm-store/
+
 frontend/src/services/axios.js

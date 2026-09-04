@@ -8,3 +8,4 @@ class TokenLMSView(TokenObtainPairView):
     in the token response.
     """
     serializer_class = TokenLMSSerializer
+    throttle_scope = 'login'

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ShoppingCart, Heart, Share2, Truck, Shield, Star, ChevronLeft, ChevronRight, Minus, Plus, Check } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
+import ProductReviews from '../../components/ProductReviews'
 import { Product } from '../../types'
 import { productsService } from '../../services/products'
 import { useAuth } from '../../context/AuthContext'
@@ -39,6 +40,11 @@ function ProductDetailPage() {
   const [_isLoading, setIsLoading] = useState(true)
   const [addedToCart, setAddedToCart] = useState(false)
   const [favLoading, setFavLoading] = useState(false)
+
+  const reloadProduct = useCallback(() => {
+    if (!id) return
+    productsService.getById(id).then(setProduct).catch(() => {})
+  }, [id])
 
   const isWishlisted = product.id !== '1' && isFavorite(parseInt(product.id))
 
@@ -328,9 +334,7 @@ function ProductDetailPage() {
               )}
 
               {activeTab === 'reviews' && (
-                <div className="text-center py-8">
-                  <p className="text-gray-500">Las reseñas estarán disponibles próximamente</p>
-                </div>
+                <ProductReviews productId={Number(product.id)} average={product.rating} count={product.reviewsCount} onChanged={reloadProduct} />
               )}
             </div>
           </div>

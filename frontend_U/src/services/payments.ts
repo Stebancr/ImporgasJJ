@@ -1,36 +1,17 @@
 import api from './api'
 
-interface WompiPaymentData {
-  orderId: string
-  amount: number
-  customerEmail: string
-  customerName: string
-  customerPhone: string
-}
-
-interface WompiResponse {
-  redirectUrl: string
-  transactionId: string
-}
-
-interface PaymentStatus {
-  transactionId: string
-  status: 'APPROVED' | 'DECLINED' | 'PENDING' | 'VOIDED' | 'ERROR'
-  amount: number
-  orderId: string
+export type WompiStatus = 'APPROVED' | 'DECLINED' | 'PENDING' | 'VOIDED' | 'ERROR'
+export interface PaymentResult {
+  order_number: string; tracking_code: string; reference: string; transaction_id: string
+  payment_status: WompiStatus; amount: string; currency: 'COP'; customer_name: string
+  items: { product_name: string; quantity: number; unit_price: string }[]
 }
 
 export const paymentsService = {
-  createWompiPayment: async (data: WompiPaymentData): Promise<WompiResponse> => {
-    return api.post<WompiResponse>('/payments/wompi/create', data)
-  },
-
-  getPaymentStatus: async (transactionId: string): Promise<PaymentStatus> => {
-    return api.get<PaymentStatus>(`/payments/status/${transactionId}`)
-  },
-
-  verifyWebhook: async (payload: unknown): Promise<{ valid: boolean }> => {
-    return api.post('/payments/wompi/webhook', payload)
+  getPaymentStatus: (trackingCode: string, transactionId?: string): Promise<PaymentResult> => {
+    const params = new URLSearchParams({ tracking: trackingCode })
+    if (transactionId) params.set('transaction_id', transactionId)
+    return api.get<PaymentResult>(`/payments/wompi/status?${params.toString()}`)
   },
 }
 

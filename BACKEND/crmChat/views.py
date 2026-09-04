@@ -35,6 +35,8 @@ def _serialize_session(s, last_msg=None):
         'status':          s.status,
         'agent_name':      s.agent_name,
         'unread_by_agent': s.unread_by_agent,
+        'conversation_state': s.conversation_state,
+        'conversation_summary': s.conversation_summary,
         'created_at':      s.created_at,
         'updated_at':      s.updated_at,
         'last_message':    last_msg,
@@ -254,6 +256,7 @@ class BotChatView(APIView):
     Si el bot detecta intención de compra/servicio, deriva a un agente humano.
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'chat'
 
     def post(self, request):
         """
@@ -281,6 +284,11 @@ class BotChatView(APIView):
             return Response(
                 {'error': 'El mensaje no puede estar vacío'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+        if len(message_text) > 2000:
+            return Response(
+                {'error': 'El mensaje no puede superar 2000 caracteres'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         session_id = request.data.get('session_id')
@@ -329,22 +337,28 @@ class BotChatView(APIView):
 
         # Obtener historial de conversación para contexto
         conversation_history = []
-        previous_messages = session.messages.order_by('created_at')[:20]
-        for msg in previous_messages:
-            if msg.id != user_message.id:  # Excluir el mensaje actual
-                conversation_history.append({
-                    'role': 'bot' if msg.sender_type == 'bot' else 'user',
-                    'content': msg.text
-                })
+        previous_messages = list(
+            session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8]
+        )
+        for msg in reversed(previous_messages):
+            conversation_history.append({
+                'role': 'assistant' if msg.sender_type in ('bot', 'agent') else 'user',
+                'content': msg.text,
+            })
 
         # Obtener respuesta del bot
         bot_result = ollama_service.get_bot_response(
             message_text,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            conversation_state=session.conversation_state,
+            summary=session.conversation_summary,
         )
 
         bot_response_text = bot_result.get('response', 'Lo siento, no pude procesar tu mensaje.')
         needs_agent = bot_result.get('needs_agent', False)
+        session.conversation_state = bot_result.get('state', session.conversation_state)
+        session.conversation_summary = bot_result.get('summary', session.conversation_summary)
+        session.save(update_fields=['conversation_state', 'conversation_summary', 'updated_at'])
 
         # Guardar respuesta del bot
         bot_message = ChatMessage.objects.create(
@@ -381,6 +395,7 @@ class BotChatView(APIView):
             'needs_login': needs_login,   # Frontend muestra botón de login
             'user_message_id': user_message.id,
             'bot_message_id': bot_message.id,
+            'conversation_state': session.conversation_state,
         })
 
 

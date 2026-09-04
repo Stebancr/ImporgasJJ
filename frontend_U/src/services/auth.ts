@@ -1,45 +1,60 @@
-import { User } from '../types'
+import type { User } from '../types'
 import api from './api'
 
-interface LoginCredentials {
-  email: string
-  password: string
-}
-
-interface RegisterData {
-  name: string
-  email: string
-  password: string
-  cc: string
-  phone?: string
-}
-
+interface LoginCredentials { email: string; password: string }
+interface RegisterData { name: string; email: string; password: string; cc: string; phone?: string }
 interface TokenResponse {
   access: string
   refresh: string
   is_admin: number
+  location_id: number | null
+  location_name: string | null
 }
+interface ProfileResponse {
+  id: number
+  nombre_completo: string
+  correo: string | null
+  telefono: string | null
+  estado: number
+}
+interface AuthResponse { user: User; token: string }
 
-interface AuthResponse {
-  user: User
-  token: string
+function mapUser(profile: ProfileResponse, username: string, token: TokenResponse): User {
+  return {
+    id: String(profile.id),
+    email: profile.correo || username,
+    name: profile.nombre_completo,
+    role: token.is_admin > 0 ? 'admin' : 'client',
+    phone: profile.telefono || '',
+    tipo_usuario: token.is_admin,
+    location_id: token.location_id,
+    location_name: token.location_name,
+    is_active: profile.estado === 1,
+    is_staff: token.is_admin > 0,
+    is_superuser: token.is_admin === 4,
+    usuario_rel: {
+      nombre_completo: profile.nombre_completo,
+      correo: profile.correo || username,
+      telefono: profile.telefono || '',
+    },
+  }
 }
 
 export const authService = {
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    // Backend USERNAME_FIELD='usuario' — map email → usuario
-    const response = await api.post<TokenResponse>('/auth/token/', {
+    const token = await api.post<TokenResponse>('/auth/token/', {
       usuario: credentials.email,
       password: credentials.password,
     })
-    localStorage.setItem('authToken', response.access)
-    localStorage.setItem('refreshToken', response.refresh)
-    return { user: {} as User, token: response.access }
+    localStorage.setItem('authToken', token.access)
+    localStorage.setItem('refreshToken', token.refresh)
+    const profile = await api.get<ProfileResponse>('/user/perfil')
+    const user = mapUser(profile, credentials.email, token)
+    localStorage.setItem('user', JSON.stringify(user))
+    return { user, token: token.access }
   },
-
   register: async (data: RegisterData): Promise<AuthResponse> => {
-    // Use full email as 'usuario' so the user can log in with their email
-    await api.post<{ mensaje: string; usuario_id: number }>('/user/registerUsers', {
+    await api.post('/user/registerUsers', {
       usuario: data.email,
       password: data.password,
       cedula: data.cc,
@@ -47,22 +62,24 @@ export const authService = {
       correo: data.email,
       telefono: data.phone || '',
     })
-    return { user: {} as User, token: '' }
+    return authService.login({ email: data.email, password: data.password })
   },
-
   logout: () => {
     localStorage.removeItem('authToken')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('user')
   },
-
+  getStoredUser: (): User | null => {
+    const raw = localStorage.getItem('user')
+    if (!raw) return null
+    try { return JSON.parse(raw) as User } catch { localStorage.removeItem('user'); return null }
+  },
   getCurrentUser: async (): Promise<User> => {
-    return api.get<User>('/user/perfil/')
+    const stored = authService.getStoredUser()
+    if (stored) return stored
+    throw new Error('No hay una sesión autenticada')
   },
-
-  updateProfile: async (data: Partial<User>): Promise<User> => {
-    return api.put<User>('/user/perfil/', data)
-  },
+  updateProfile: async (data: Partial<User>): Promise<User> => api.put<User>('/user/perfil/', data),
 }
 
 export default authService

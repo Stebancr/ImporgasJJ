@@ -37,6 +37,7 @@ urlpatterns = [
     path('products/<int:product_id>/specs/<int:spec_id>', views.ProductSpecDetailView.as_view(), name='product-spec-detail'),
 
     path('products/<int:product_id>/reviews', views.ProductReviewListView.as_view(), name='product-review-list'),
+    path('products/<int:product_id>/reviews/<int:review_id>', views.ProductReviewDetailView.as_view(), name='product-review-detail'),
 
     # ── Orders (usuario) ──────────────────────────────────────────────────────
     path('orders', views.OrderListView.as_view(), name='order-list'),
@@ -50,6 +51,7 @@ urlpatterns = [
 
     # ── Wompi webhook ─────────────────────────────────────────────────────────
     path('webhooks/wompi', views.WompiWebhookView.as_view(), name='wompi-webhook'),
+    path('payments/wompi/status', views.WompiPaymentStatusView.as_view(), name='wompi-payment-status'),
 
     # ── User Addresses ────────────────────────────────────────────────────────
     path('user/addresses', views.UserAddressListView.as_view(), name='user-address-list'),
@@ -64,5 +66,7 @@ urlpatterns = [
     path('user/notifications', views.NotificationListView.as_view(), name='notification-list'),
     path('user/notifications/<int:pk>', views.NotificationDetailView.as_view(), name='notification-detail'),
     path('user/notifications/mark-all-read', views.NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
+    path('user/fcm-tokens', views.FCMDeviceTokenListView.as_view(), name='fcm-device-token-list'),
+    path('push-notifications/send', views.AdminPushNotificationView.as_view(), name='admin-push-notification'),
 ]
 

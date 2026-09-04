@@ -38,6 +38,9 @@ export interface BackendOrder {
   shipping_cost: string
   total: string
   payment_method: 'wompi' | 'cash'
+  wompi_reference: string
+  wompi_transaction_id: string
+  wompi_signature?: string
   notes: string
   items: BackendOrderItem[]
   tracking_history: BackendTrackingEvent[]
