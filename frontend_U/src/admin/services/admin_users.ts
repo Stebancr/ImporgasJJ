@@ -63,7 +63,7 @@ export interface ColaboradorListResponse {
 }
 
 export const usersService = {
-  // â”€â”€ Legacy generic methods (kept for compatibility) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Legacy generic methods (kept for compatibility) ──────────────────────
   async getAll(filters?: UserFilters): Promise<PaginatedResponse<User>> {
     const response = await api.get<PaginatedResponse<User>>('/users', { params: filters })
     return response.data
@@ -102,43 +102,43 @@ export const usersService = {
     await api.patch(`/users/${id}/reset-password`, { password: newPassword })
   },
 
-  // â”€â”€ Real backend endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Real backend endpoints ────────────────────────────────────────────────
 
-  /** GET /user/lista-usuarios â€” list colaboradores (admin only) */
+  /** GET /user/lista-usuarios — list colaboradores (admin only) */
   async listarColaboradores(params?: { search?: string; page?: number; page_size?: number; tipo?: 'normal' | 'trabajador' }): Promise<ColaboradorListResponse> {
     const response = await api.get('/user/lista-usuarios', { params })
     return response.data
   },
 
-  /** POST /user/register â€” create new user (authenticated, admin only) */
+  /** POST /user/register — create new user (authenticated, admin only) */
   async crearColaborador(data: CreateUserData): Promise<{ mensaje: string; usuario_id: number; usuario_rel_id: number }> {
     const response = await api.post('/user/register', data)
     return response.data
   },
 
-  /** GET /user/register/<id> â€” get colaborador detail */
+  /** GET /user/register/<id> — get colaborador detail */
   async getColaborador(usuarioRelId: number): Promise<ColaboradorData> {
     const response = await api.get(`/user/register/${usuarioRelId}`)
     return response.data
   },
 
-  /** PUT /user/register/<id> â€” update colaborador profile data */
+  /** PUT /user/register/<id> — update colaborador profile data */
   async actualizarColaborador(usuarioRelId: number, data: UpdateUserData): Promise<ColaboradorData> {
     const response = await api.put(`/user/register/${usuarioRelId}`, data)
     return response.data
   },
 
-  /** PATCH /user/cambiar-estado-usuario/<id> â€” toggle active/inactive */
+  /** PATCH /user/cambiar-estado-usuario/<id> — toggle active/inactive */
   async cambiarEstado(usuarioRelId: number, estado: 0 | 1): Promise<void> {
     await api.patch(`/user/cambiar-estado-usuario/${usuarioRelId}`, { estado })
   },
 
-  /** PATCH /user/actualizar-rol-usuario/<id> â€” change tipo_usuario */
+  /** PATCH /user/actualizar-rol-usuario/<id> — change tipo_usuario */
   async actualizarRol(usuarioRelId: number, tipo_usuario: number): Promise<void> {
     await api.patch(`/user/actualizar-rol-usuario/${usuarioRelId}`, { tipo_usuario })
   },
 
-  /** GET/POST /user/cargos â€” list and create cargos */
+  /** GET/POST /user/cargos — list and create cargos */
   async getCargos(): Promise<{ idcargo: number; nombrecargo: string }[]> {
     const res = await api.get('/user/cargos')
     return res.data

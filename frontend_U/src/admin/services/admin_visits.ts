@@ -29,6 +29,7 @@ export interface VisitaItem {
   tipo_tarea_display: string
   fecha: string
   hora: string
+  valor_visita: number | null
   estado: 'pendiente' | 'en_proceso' | 'finalizada' | 'cancelada'
   estado_display: string
   tecnico_id: number | null
@@ -87,6 +88,7 @@ export interface CreateVisitaData {
   hora: string
   descripcion?: string
   observaciones_iniciales?: string
+  valor_visita?: number | null
   tecnico_id?: number | null
 }
 
@@ -96,6 +98,7 @@ export interface UpdateVisitaData {
   hora?: string
   descripcion?: string
   observaciones_iniciales?: string
+  valor_visita?: number | null
   estado?: string
   tecnico?: number | null
 }
@@ -107,6 +110,7 @@ export interface CalendarioItem {
   numero_tarea: string
   cliente_nombre: string
   hora: string
+  valor_visita: number | null
   estado: string
   tipo_tarea: string
   tecnico_nombre: string | null

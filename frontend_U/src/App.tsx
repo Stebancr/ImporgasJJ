@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './app/pages/HomePage'
@@ -30,8 +31,16 @@ import AdminOrdersPage from './admin/pages/OrdersPage'
 import AdminUsersPage from './admin/pages/UsersPage'
 import AdminProfilePage from './admin/pages/ProfilePage'
 import AdminGestionPage from './admin/pages/GestionPage'
-import AdminChatPage from './admin/pages/ChatPage'
 import AdminVisitsPage from './admin/pages/VisitsPage'
+
+// Material UI y React Query solo se descargan al entrar al módulo CRM; el
+// ecommerce conserva un bundle inicial más pequeño y sus rutas no cambian.
+const AdminChatPage = lazy(() => import('./admin/pages/ChatPage'))
+const MetaIntegrationsPage = lazy(() => import('./admin/pages/MetaIntegrationsPage'))
+
+function CRMPageFallback() {
+  return <div className="p-6 text-sm text-muted-foreground">Cargando CRM…</div>
+}
 
 function StoreRoutes() {
   return (
@@ -75,7 +84,8 @@ function AdminRoutes() {
         <Route path="ordenes" element={<AdminOrdersPage />} />
         <Route path="usuarios" element={<AdminUsersPage />} />
         <Route path="perfil" element={<AdminProfilePage />} />
-        <Route path="chat" element={<AdminChatPage />} />
+        <Route path="chat" element={<Suspense fallback={<CRMPageFallback />}><AdminChatPage /></Suspense>} />
+        <Route path="chat/integraciones" element={<Suspense fallback={<CRMPageFallback />}><MetaIntegrationsPage /></Suspense>} />
         <Route path="visitas" element={<AdminVisitsPage />} />
         <Route path="gestion" element={<Navigate to="cotizaciones" replace />} />
         <Route path="gestion/cotizaciones" element={<AdminGestionPage />} />

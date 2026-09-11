@@ -2,9 +2,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
+from django.db.models import F, Q
 
-from .models import ChatSession, ChatMessage
+from .models import AssignmentQueue, ChatAuditEvent, ChatSession, ChatMessage, QueueMember
 from .ollama_service import ollama_service
+from .apps.meta.services import MetaAPIError, dispatch_outbound_message
+from .realtime import publish_crm_event
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,11 @@ def _serialize_session(s, last_msg=None):
         'user_name':       s.user_name,
         'user_cedula':     s.user_cedula,
         'status':          s.status,
+        'channel':         s.channel,
+        'priority':        s.priority,
+        'queue_id':        s.queue_id,
+        'contact_id':      s.contact_id,
+        'external_thread_id': s.external_thread_id,
         'agent_name':      s.agent_name,
         'unread_by_agent': s.unread_by_agent,
         'conversation_state': s.conversation_state,
@@ -49,6 +57,20 @@ def _serialize_message(m):
         'text':        m.text,
         'sender_type': m.sender_type,
         'sender_name': m.sender_name,
+        'direction':   m.direction,
+        'message_type': m.message_type,
+        'status':      m.status,
+        'external_message_id': m.external_message_id,
+        'attachments': [
+            {
+                'id': attachment.id,
+                'url': attachment.file.url if attachment.file else '',
+                'name': attachment.original_name,
+                'mime_type': attachment.mime_type,
+                'size': attachment.size,
+            }
+            for attachment in m.attachments.all()
+        ],
         'created_at':  m.created_at,
     }
 
@@ -70,6 +92,19 @@ class SessionListCreateView(APIView):
         status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
+        channel_filter = request.query_params.get('channel')
+        if channel_filter:
+            qs = qs.filter(channel=channel_filter)
+        priority_filter = request.query_params.get('priority')
+        if priority_filter:
+            qs = qs.filter(priority=priority_filter)
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            qs = qs.filter(Q(user_name__icontains=search) | Q(user_cedula__icontains=search))
+        if request.query_params.get('unanswered') == 'true':
+            qs = qs.filter(last_customer_message_at__isnull=False).filter(
+                Q(last_agent_message_at__isnull=True) | Q(last_agent_message_at__lt=F('last_customer_message_at'))
+            )
 
         result = []
         for s in qs.order_by('-updated_at')[:100]:
@@ -150,10 +185,33 @@ class SessionDetailView(APIView):
         if take and _is_agent(request.user):
             agent_name, _ = _resolve_name(request.user)
             session.agent_id_ref = request.user.pk
+            session.assigned_to = request.user
             session.agent_name = agent_name
             session.status = 'active'
             session.unread_by_agent = 0
             session.save()
+
+        assign_to_id = request.data.get('assign_to_id')
+        if assign_to_id is not None and _is_agent(request.user):
+            from django.contrib.auth import get_user_model
+            try:
+                advisor = get_user_model().objects.get(pk=assign_to_id, tipo_usuario__in=(1, 4), estado=1)
+            except get_user_model().DoesNotExist:
+                return Response({'error': 'Asesor no válido'}, status=400)
+            session.assigned_to = advisor
+            session.agent_id_ref = advisor.pk
+            session.agent_name = _resolve_name(advisor)[0]
+            session.status = 'active'
+            session.save()
+            ChatAuditEvent.objects.create(actor=request.user, session=session, action='conversation.assigned', details={'advisor_id': advisor.pk})
+
+        queue_id = request.data.get('queue_id')
+        if queue_id is not None and _is_agent(request.user):
+            try:
+                session.queue = AssignmentQueue.objects.get(pk=queue_id, active=True)
+            except AssignmentQueue.DoesNotExist:
+                return Response({'error': 'Cola no válida'}, status=400)
+            session.save(update_fields=['queue', 'updated_at'])
 
         elif new_status:
             allowed = ['active', 'closed'] if _is_agent(request.user) else ['closed']
@@ -163,9 +221,17 @@ class SessionDetailView(APIView):
             if new_status == 'active' and _is_agent(request.user):
                 agent_name, _ = _resolve_name(request.user)
                 session.agent_id_ref = request.user.pk
+                session.assigned_to = request.user
                 session.agent_name = agent_name
                 session.unread_by_agent = 0
             session.save()
+
+        priority = request.data.get('priority')
+        if priority is not None and _is_agent(request.user):
+            if priority not in {'low', 'normal', 'high', 'urgent'}:
+                return Response({'error': 'Prioridad no permitida'}, status=400)
+            session.priority = priority
+            session.save(update_fields=['priority', 'updated_at'])
 
         return Response(_serialize_session(session))
 
@@ -219,8 +285,19 @@ class MessageListCreateView(APIView):
             return Response({'error': 'La sesión está cerrada'}, status=400)
 
         text = (request.data.get('text') or '').strip()
-        if not text:
+        message_type = request.data.get('message_type', 'text')
+        payload = request.data.get('payload') or {}
+        allowed_types = {'text', 'image', 'audio', 'video', 'document', 'sticker', 'template', 'interactive'}
+        if message_type not in allowed_types:
+            return Response({'error': 'Tipo de mensaje no permitido'}, status=400)
+        if not text and message_type == 'text':
             return Response({'error': 'El texto no puede estar vacío'}, status=400)
+        if not isinstance(payload, dict):
+            return Response({'error': 'El payload debe ser un objeto'}, status=400)
+        if message_type == 'template' and not payload.get('name'):
+            return Response({'error': 'La plantilla requiere name'}, status=400)
+        if message_type in {'image', 'audio', 'video', 'document', 'sticker'} and not (payload.get('id') or payload.get('url')):
+            return Response({'error': 'El archivo requiere id o url'}, status=400)
 
         is_agent = _is_agent(request.user)
         sender_type = 'agent' if is_agent else 'user'
@@ -229,6 +306,7 @@ class MessageListCreateView(APIView):
         # Auto-take session when agent sends first message
         if is_agent and session.status == 'waiting':
             session.agent_id_ref = request.user.pk
+            session.assigned_to = request.user
             session.agent_name = sender_name
             session.status = 'active'
             session.save()
@@ -238,7 +316,22 @@ class MessageListCreateView(APIView):
             text=text,
             sender_type=sender_type,
             sender_name=sender_name if sender_type != 'bot' else '',
+            direction='outbound' if is_agent else 'inbound',
+            status='queued' if is_agent else 'received',
+            message_type=message_type,
+            metadata={'outbound_payload': payload} if payload else {},
         )
+
+        if is_agent:
+            try:
+                dispatch_outbound_message(msg)
+            except MetaAPIError as exc:
+                return Response(
+                    {'error': str(exc), 'message': _serialize_message(msg)},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            session.last_agent_message_at = msg.created_at
+            session.save(update_fields=['last_agent_message_at', 'updated_at'])
 
         # Increment unread counter for agent when user sends
         if not is_agent:
@@ -246,7 +339,90 @@ class MessageListCreateView(APIView):
                 unread_by_agent=session.unread_by_agent + 1
             )
 
+        publish_crm_event('message.created', session_id=session.id, message_id=msg.id)
+
         return Response(_serialize_message(msg), status=201)
+
+
+class AssignmentQueueListCreateView(APIView):
+    """Lista colas y permite a administradores crear su distribución."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _is_agent(request.user):
+            return Response({'error': 'No autorizado'}, status=403)
+        return Response([self._serialize(queue) for queue in AssignmentQueue.objects.prefetch_related('memberships')])
+
+    def post(self, request):
+        if not _is_agent(request.user):
+            return Response({'error': 'No autorizado'}, status=403)
+        name = (request.data.get('name') or '').strip()
+        channels = request.data.get('channels') or []
+        if not name or not isinstance(channels, list):
+            return Response({'error': 'Nombre y channels son obligatorios'}, status=400)
+        valid_channels = {'ecommerce', 'whatsapp', 'facebook', 'instagram'}
+        if any(channel not in valid_channels for channel in channels):
+            return Response({'error': 'Canal no permitido'}, status=400)
+        queue = AssignmentQueue.objects.create(
+            name=name,
+            channels=channels,
+            auto_assign=bool(request.data.get('auto_assign', False)),
+        )
+        self._replace_members(queue, request.data.get('members', []))
+        return Response(self._serialize(queue), status=201)
+
+    @staticmethod
+    def _replace_members(queue, members):
+        from django.contrib.auth import get_user_model
+        for item in members if isinstance(members, list) else []:
+            user_id = item.get('user_id') if isinstance(item, dict) else item
+            user = get_user_model().objects.filter(pk=user_id, tipo_usuario__in=(1, 4), estado=1).first()
+            if user:
+                QueueMember.objects.update_or_create(
+                    queue=queue,
+                    user=user,
+                    defaults={'capacity': max(1, int(item.get('capacity', 10))) if isinstance(item, dict) else 10, 'active': True},
+                )
+
+    @staticmethod
+    def _serialize(queue):
+        return {
+            'id': queue.id, 'name': queue.name, 'active': queue.active,
+            'auto_assign': queue.auto_assign, 'channels': queue.channels,
+            'members': [
+                {'user_id': member.user_id, 'capacity': member.capacity, 'active': member.active}
+                for member in queue.memberships.all()
+            ],
+        }
+
+
+class AssignmentQueueDetailView(AssignmentQueueListCreateView):
+    """Actualiza o desactiva una cola sin borrar conversaciones asociadas."""
+
+    def patch(self, request, pk):
+        if not _is_agent(request.user):
+            return Response({'error': 'No autorizado'}, status=403)
+        try:
+            queue = AssignmentQueue.objects.get(pk=pk)
+        except AssignmentQueue.DoesNotExist:
+            return Response({'error': 'Cola no encontrada'}, status=404)
+        valid_channels = {'ecommerce', 'whatsapp', 'facebook', 'instagram'}
+        if 'name' in request.data and not str(request.data['name']).strip():
+            return Response({'error': 'El nombre no puede estar vacío'}, status=400)
+        if 'channels' in request.data:
+            channels = request.data['channels']
+            if not isinstance(channels, list) or any(channel not in valid_channels for channel in channels):
+                return Response({'error': 'Lista de canales no válida'}, status=400)
+        for field in ('name', 'channels', 'auto_assign', 'active'):
+            if field in request.data:
+                value = str(request.data[field]).strip() if field == 'name' else request.data[field]
+                setattr(queue, field, value)
+        queue.save()
+        if 'members' in request.data:
+            queue.memberships.update(active=False)
+            self._replace_members(queue, request.data['members'])
+        return Response(self._serialize(queue))
 
 
 class BotChatView(APIView):
@@ -333,6 +509,8 @@ class BotChatView(APIView):
             text=message_text,
             sender_type='user',
             sender_name=user_name,
+            direction='inbound',
+            status='received',
         )
 
         # Obtener historial de conversación para contexto
@@ -366,6 +544,8 @@ class BotChatView(APIView):
             text=bot_response_text,
             sender_type='bot',
             sender_name='',
+            direction='outbound',
+            status='sent',
         )
 
         # Si necesita agente:

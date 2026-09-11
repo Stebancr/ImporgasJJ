@@ -1,9 +1,25 @@
+from decimal import Decimal
+import re
+
+from django.utils import timezone
 from rest_framework import serializers
 from .models import ClienteVisita, VisitaTecnica, ReporteVisita, EvidenciaFotografica
 from usuarios.models import Credenciales
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
+
+class MonetaryNumberField(serializers.DecimalField):
+    """Conserva Decimal al validar y representa dinero como número JSON."""
+
+    def to_representation(self, value):
+        if value is None:
+            return None
+        decimal_value = self.quantize(Decimal(str(value)))
+        if decimal_value == decimal_value.to_integral_value():
+            return int(decimal_value)
+        return float(decimal_value)
+
 
 class TecnicoSerializer(serializers.ModelSerializer):
     nombre_completo = serializers.SerializerMethodField()
@@ -62,6 +78,7 @@ class ReporteSerializer(serializers.ModelSerializer):
 # ─── list ──────────────────────────────────────────────────────────────────────
 
 class VisitaListSerializer(serializers.ModelSerializer):
+    valor_visita = MonetaryNumberField(max_digits=12, decimal_places=2, read_only=True)
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     cliente_direccion = serializers.CharField(source='cliente.direccion', read_only=True)
     cliente_telefono = serializers.CharField(source='cliente.telefono', read_only=True)
@@ -77,7 +94,7 @@ class VisitaListSerializer(serializers.ModelSerializer):
             'id', 'numero_tarea',
             'cliente_nombre', 'cliente_direccion', 'cliente_telefono',
             'tipo_tarea', 'tipo_tarea_display',
-            'fecha', 'hora',
+            'fecha', 'hora', 'valor_visita',
             'estado', 'estado_display',
             'tecnico_id', 'tecnico_nombre',
             'tiene_reporte', 'evidencias_count',
@@ -101,6 +118,16 @@ class VisitaListSerializer(serializers.ModelSerializer):
 # ─── detail ────────────────────────────────────────────────────────────────────
 
 class VisitaDetailSerializer(serializers.ModelSerializer):
+    valor_visita = MonetaryNumberField(max_digits=12, decimal_places=2, read_only=True)
+    offline_sync_supported = serializers.SerializerMethodField()
+    sync_version = serializers.SerializerMethodField()
+
+    def get_offline_sync_supported(self, obj):
+        return True
+
+    def get_sync_version(self, obj):
+        from .sync_version import visit_sync_version
+        return visit_sync_version(obj)
     cliente = ClienteVisitaSerializer(read_only=True)
     tecnico = TecnicoSerializer(read_only=True)
     reporte = ReporteSerializer(read_only=True)
@@ -117,18 +144,87 @@ class VisitaDetailSerializer(serializers.ModelSerializer):
 
 class VisitaCreateSerializer(serializers.Serializer):
     # Cliente
-    cliente_nombre = serializers.CharField(max_length=200)
-    cliente_identificacion = serializers.CharField(max_length=30, required=False, allow_blank=True, default='')
-    cliente_telefono = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
-    cliente_correo = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
-    cliente_direccion = serializers.CharField()
+    cliente_nombre = serializers.CharField(
+        max_length=200,
+        error_messages={'required': 'Este campo es obligatorio.', 'blank': 'Este campo es obligatorio.'},
+    )
+    cliente_identificacion = serializers.CharField(
+        max_length=15,
+        error_messages={'required': 'Este campo es obligatorio.', 'blank': 'Este campo es obligatorio.'},
+    )
+    cliente_telefono = serializers.CharField(
+        max_length=15,
+        error_messages={'required': 'Este campo es obligatorio.', 'blank': 'Este campo es obligatorio.'},
+    )
+    cliente_correo = serializers.EmailField(
+        max_length=100,
+        error_messages={
+            'required': 'Este campo es obligatorio.',
+            'blank': 'Este campo es obligatorio.',
+            'invalid': 'Ingrese un correo electrónico válido.',
+        },
+    )
+    cliente_direccion = serializers.CharField(
+        error_messages={'required': 'Este campo es obligatorio.', 'blank': 'Este campo es obligatorio.'},
+    )
     # Visita
-    tipo_tarea = serializers.ChoiceField(choices=VisitaTecnica.TIPO_TAREA_CHOICES)
-    fecha = serializers.DateField()
-    hora = serializers.TimeField()
+    tipo_tarea = serializers.ChoiceField(
+        choices=VisitaTecnica.TIPO_TAREA_CHOICES,
+        error_messages={'required': 'Este campo es obligatorio.', 'blank': 'Este campo es obligatorio.'},
+    )
+    fecha = serializers.DateField(error_messages={'required': 'Este campo es obligatorio.'})
+    hora = serializers.TimeField(error_messages={'required': 'Este campo es obligatorio.'})
     descripcion = serializers.CharField(required=False, allow_blank=True, default='')
     observaciones_iniciales = serializers.CharField(required=False, allow_blank=True, default='')
-    tecnico_id = serializers.IntegerField(required=False, allow_null=True, default=None)
+    valor_visita = MonetaryNumberField(
+        max_digits=12,
+        decimal_places=2,
+        required=True,
+        allow_null=False,
+        min_value=Decimal('0'),
+        error_messages={'required': 'Este campo es obligatorio.', 'null': 'Este campo es obligatorio.'},
+    )
+    tecnico_id = serializers.IntegerField(
+        required=True,
+        allow_null=False,
+        error_messages={
+            'required': 'Debe seleccionar un técnico.',
+            'null': 'Debe seleccionar un técnico.',
+            'invalid': 'Debe seleccionar un técnico válido.',
+        },
+    )
+
+    def validate_cliente_identificacion(self, value):
+        value = value.strip()
+        if not re.fullmatch(r'[0-9]+', value):
+            raise serializers.ValidationError('La cédula solo puede contener números.')
+        if not 6 <= len(value) <= 15:
+            raise serializers.ValidationError('La cédula debe contener entre 6 y 15 números.')
+        return value
+
+    def validate_cliente_telefono(self, value):
+        value = value.strip()
+        if not re.fullmatch(r'[0-9]+', value):
+            raise serializers.ValidationError('El número de celular solo puede contener números.')
+        if not 7 <= len(value) <= 15:
+            raise serializers.ValidationError('El número de celular debe contener entre 7 y 15 números.')
+        return value
+
+    def validate_cliente_correo(self, value):
+        value = value.strip().lower()
+        if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value):
+            raise serializers.ValidationError('Ingrese un correo electrónico válido.')
+        return value
+
+    def validate_fecha(self, value):
+        if value < timezone.localdate():
+            raise serializers.ValidationError('La fecha de la visita no puede ser anterior al día actual.')
+        return value
+
+    def validate_tecnico_id(self, value):
+        if not Credenciales.objects.filter(pk=value, tipo_usuario=1, estado=1).exists():
+            raise serializers.ValidationError('Debe seleccionar un técnico válido y activo.')
+        return value
 
     def create(self, validated_data):
         cliente = ClienteVisita.objects.create(
@@ -139,7 +235,7 @@ class VisitaCreateSerializer(serializers.Serializer):
             direccion=validated_data['cliente_direccion'],
         )
         tecnico_id = validated_data.get('tecnico_id')
-        tecnico = Credenciales.objects.filter(id=tecnico_id).first() if tecnico_id else None
+        tecnico = Credenciales.objects.get(id=tecnico_id, tipo_usuario=1, estado=1)
         creado_por = self.context.get('request').user if self.context.get('request') else None
         visita = VisitaTecnica.objects.create(
             cliente=cliente,
@@ -149,15 +245,35 @@ class VisitaCreateSerializer(serializers.Serializer):
             hora=validated_data['hora'],
             descripcion=validated_data.get('descripcion', ''),
             observaciones_iniciales=validated_data.get('observaciones_iniciales', ''),
+            valor_visita=validated_data.get('valor_visita'),
             creado_por=creado_por,
         )
         return visita
 
 
 class VisitaUpdateSerializer(serializers.ModelSerializer):
+    valor_visita = MonetaryNumberField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True, min_value=Decimal('0')
+    )
+
     class Meta:
         model = VisitaTecnica
-        fields = ['tipo_tarea', 'fecha', 'hora', 'descripcion', 'observaciones_iniciales', 'estado', 'tecnico']
+        fields = ['tipo_tarea', 'fecha', 'hora', 'descripcion', 'observaciones_iniciales', 'valor_visita', 'estado', 'tecnico']
+
+    def validate_fecha(self, value):
+        if value < timezone.localdate():
+            raise serializers.ValidationError('La fecha de la visita no puede ser anterior al día actual.')
+        return value
+
+    def validate_tecnico(self, value):
+        if value is None or value.tipo_usuario != 1 or value.estado != 1:
+            raise serializers.ValidationError('Debe seleccionar un técnico válido y activo.')
+        return value
+
+    def validate(self, attrs):
+        if self.instance and self.instance.estado == VisitaTecnica.ESTADO_FINALIZADA:
+            raise serializers.ValidationError('No se puede modificar una visita que ya está finalizada.')
+        return attrs
 
     def validate_estado(self, value):
         if value == VisitaTecnica.ESTADO_FINALIZADA:

@@ -22,6 +22,9 @@ def notify_technician_visit_assigned(visita):
         'type': 'visit_assigned',
         'visit_id': visita.pk,
         'task_number': visita.numero_tarea,
+        # FCM exige cadenas en el mapa data. El endpoint de la visita conserva
+        # valor_visita como número JSON para que la aplicación lo presente.
+        'valor_visita': str(visita.valor_visita) if visita.valor_visita is not None else '',
     }
     Notification.objects.create(
         user=visita.tecnico,

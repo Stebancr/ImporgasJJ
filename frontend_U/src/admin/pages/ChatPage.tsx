@@ -1,399 +1,296 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Link } from 'react-router-dom'
-import { MessageSquare, Send, UserCheck, PhoneOff, RefreshCw, Bot, User, Loader2, Inbox } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { adminChatService } from '@/admin/services/admin_chat'
-import type { ChatSession, ChatMessage } from '@/admin/services/admin_chat'
+/** Bandeja omnicanal del CRM con React Query y actualización WebSocket. */
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  Alert, Avatar, Box, Button, Chip, CircularProgress, FormControlLabel,
+  IconButton, MenuItem, Paper, Stack, Switch, TextField,
+  ThemeProvider, Tooltip, Typography,
+} from '@mui/material'
+import {
+  Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
+  UserCheck, XCircle,
+} from 'lucide-react'
 
-// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+import { ChannelBadge } from '../components/ChannelBadge'
+import { useCRMWebSocket } from '../hooks/useCRMWebSocket'
+import { crmTheme } from '../theme/crmTheme'
+import {
+  adminChatService,
+  type ChatMessage,
+  type ChatSession,
+  type SessionFilters,
+} from '../services/admin_chat'
 
-const STATUS_CONFIG = {
-  bot:     { label: 'Bot',             color: 'bg-gray-100 text-gray-600' },
-  waiting: { label: 'Esperando',       color: 'bg-yellow-100 text-yellow-700' },
-  active:  { label: 'Activo',          color: 'bg-green-100 text-green-700' },
-  closed:  { label: 'Cerrado',         color: 'bg-red-100 text-red-600' },
-} as const
-
-function fmtTime(iso: string) {
-  const d = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return 'Ahora'
-  if (diffMin < 60) return `${diffMin}m`
-  const diffH = Math.floor(diffMin / 60)
-  if (diffH < 24) return `${diffH}h`
-  return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
+const statusLabel: Record<ChatSession['status'], string> = {
+  bot: 'Con bot', waiting: 'Pendiente', active: 'Abierto', closed: 'Cerrado',
 }
 
-// â”€â”€â”€ BotMessageText: renderiza texto con markdown y links â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const statusColor: Record<ChatSession['status'], 'default' | 'warning' | 'success' | 'info'> = {
+  bot: 'info', waiting: 'warning', active: 'success', closed: 'default',
+}
 
-function BotMessageText({ text }: { text: string }) {
-  const renderLine = (line: string, lineIdx: number) => {
-    const tokens: React.ReactNode[] = []
-    let remaining = line
-    let tokenKey = 0
-
-    while (remaining) {
-      const productMatch = remaining.match(/(\/producto\/\d+)/)
-      const boldMatch = remaining.match(/\*\*([^*]+)\*\*/)
-
-      const productIndex = productMatch ? remaining.indexOf(productMatch[0]) : -1
-      const boldIndex = boldMatch ? remaining.indexOf(boldMatch[0]) : -1
-
-      if (productIndex >= 0 && (boldIndex < 0 || productIndex < boldIndex)) {
-        if (productIndex > 0) {
-          tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining.slice(0, productIndex)}</span>)
-        }
-        tokens.push(
-          <Link
-            key={`${lineIdx}-${tokenKey++}`}
-            to={productMatch![0]}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline underline-offset-2 font-medium hover:opacity-80"
-          >
-            Ver producto â†’
-          </Link>
-        )
-        remaining = remaining.slice(productIndex + productMatch![0].length)
-      } else if (boldIndex >= 0) {
-        if (boldIndex > 0) {
-          tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining.slice(0, boldIndex)}</span>)
-        }
-        tokens.push(
-          <strong key={`${lineIdx}-${tokenKey++}`} className="font-semibold">
-            {boldMatch![1]}
-          </strong>
-        )
-        remaining = remaining.slice(boldIndex + boldMatch![0].length)
-      } else {
-        tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining}</span>)
-        break
-      }
-    }
-    return <>{tokens}</>
+/** Renderiza inline: **negrita** y texto plano */
+function renderInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = []
+  const regex = /\*\*(.+?)\*\*/g
+  let last = 0
+  let match
+  let key = 0
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) parts.push(<span key={key++}>{text.slice(last, match.index)}</span>)
+    parts.push(<strong key={key++}>{match[1]}</strong>)
+    last = match.index + match[0].length
   }
+  if (last < text.length) parts.push(<span key={key++}>{text.slice(last)}</span>)
+  return <>{parts}</>
+}
 
+/** Renderiza texto del bot respetando saltos de línea, viñetas y links de producto */
+function BotMarkdown({ text }: { text: string }) {
   const lines = text.split('\n')
   return (
-    <div className="text-sm leading-relaxed">
-      {lines.map((line, i) => (
-        <div key={i}>{renderLine(line, i)}</div>
-      ))}
-    </div>
+    <Box>
+      {lines.map((line, i) => {
+        // Link de producto: /producto/123
+        const productMatch = line.trim().match(/^\/producto\/(\d+)$/)
+        if (productMatch) {
+          return (
+            <Box key={i} sx={{ mt: 0.75 }}>
+              <Button
+                component="a"
+                href={line.trim()}
+                target="_blank"
+                size="small"
+                variant="outlined"
+                startIcon={<ExternalLink size={13} />}
+                sx={{
+                  fontSize: '0.72rem',
+                  textTransform: 'none',
+                  borderColor: '#b45309',
+                  color: '#b45309',
+                  '&:hover': { borderColor: '#92400e', bgcolor: '#fff7ed' },
+                }}
+              >
+                Ver producto
+              </Button>
+            </Box>
+          )
+        }
+
+        // Línea vacía → espaciado
+        if (!line.trim()) {
+          return <Box key={i} sx={{ height: '0.35em' }} />
+        }
+
+        // Viñeta: empieza con "- "
+        if (line.startsWith('- ')) {
+          return (
+            <Stack key={i} direction="row" spacing={0.75} sx={{ alignItems: 'flex-start' }}>
+              <Typography variant="body2" sx={{ mt: '2px', lineHeight: 1 }}>•</Typography>
+              <Typography variant="body2" sx={{ flex: 1 }}>{renderInline(line.slice(2))}</Typography>
+            </Stack>
+          )
+        }
+
+        return (
+          <Typography key={i} variant="body2" sx={{ lineHeight: 1.5 }}>
+            {renderInline(line)}
+          </Typography>
+        )
+      })}
+    </Box>
   )
 }
 
-// â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function messageState(message: ChatMessage) {
+  if (message.status === 'failed') return <XCircle size={13} color="#dc2626" />
+  if (message.status === 'read') return <CheckCheck size={13} color="#2563eb" />
+  if (message.status === 'delivered') return <CheckCheck size={13} />
+  if (['sent', 'received'].includes(message.status)) return <Check size={13} />
+  return null
+}
+
+function ConversationMessage({ message }: { message: ChatMessage }) {
+  const incoming = message.direction === 'inbound' || message.sender_type === 'user'
+  const bot = message.sender_type === 'bot'
+  return (
+    <Stack direction="row" spacing={1} sx={{ justifyContent: incoming ? 'flex-start' : 'flex-end' }}>
+      {incoming && <Avatar sx={{ width: 28, height: 28, bgcolor: '#ffedd5', color: '#b45309', fontSize: 13 }}>C</Avatar>}
+      <Paper
+        variant="outlined"
+        sx={{
+          maxWidth: '72%', px: 1.5, py: 1,
+          bgcolor: incoming ? '#fff' : bot ? '#f1f5f9' : '#b45309',
+          color: incoming || bot ? '#0f172a' : '#fff',
+          borderRadius: incoming ? '4px 14px 14px 14px' : '14px 4px 14px 14px',
+        }}
+      >
+        {bot && <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', mb: 0.75 }}><Bot size={13} /><Typography variant="caption" sx={{ fontWeight: 700 }}>Ollama</Typography></Stack>}
+        {message.text && (bot
+          ? <BotMarkdown text={message.text} />
+          : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
+        )}
+        {message.attachments.map((attachment) => (
+          attachment.url ? (
+            <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} href={attachment.url} target="_blank">
+              {attachment.name || attachment.mime_type || 'Adjunto'}
+            </Button>
+          ) : (
+            <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
+          )
+        ))}
+        <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end', alignItems: 'center', mt: 0.5, opacity: 0.75 }}>
+          <Typography variant="caption">{new Date(message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
+          {!incoming && messageState(message)}
+        </Stack>
+      </Paper>
+    </Stack>
+  )
+}
 
 export default function ChatPage() {
-  const [sessions, setSessions]           = useState<ChatSession[]>([])
-  const [statusFilter, setStatusFilter]   = useState<string>('waiting')
-  const [selected, setSelected]           = useState<ChatSession | null>(null)
-  const [messages, setMessages]           = useState<ChatMessage[]>([])
-  const [inputText, setInputText]         = useState('')
-  const [loadingSessions, setLoadingSessions] = useState(false)
-  const [sendingMsg, setSendingMsg]       = useState(false)
+  const queryClient = useQueryClient()
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [status, setStatus] = useState('all')
+  const [channel, setChannel] = useState('all')
+  const [search, setSearch] = useState('')
+  const [unanswered, setUnanswered] = useState(false)
+  const [text, setText] = useState('')
 
-  const lastMsgIdRef    = useRef<number | null>(null)
-  const pollMsgsRef     = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollSessionsRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const messagesEndRef  = useRef<HTMLDivElement>(null)
+  const filters: SessionFilters = useMemo(
+    () => ({ status, channel, search: search.trim(), unanswered }),
+    [status, channel, search, unanswered],
+  )
+  const sessions = useQuery({
+    queryKey: ['crm-sessions', filters],
+    queryFn: () => adminChatService.getSessions(filters),
+    refetchInterval: 30_000,
+  })
+  const queues = useQuery({ queryKey: ['crm-queues'], queryFn: adminChatService.getQueues })
+  const selected = sessions.data?.find((item) => item.id === selectedId) ?? null
+  const messages = useQuery({
+    queryKey: ['crm-messages', selectedId],
+    queryFn: () => adminChatService.getMessages(selectedId!),
+    enabled: selectedId !== null,
+    refetchInterval: 30_000,
+  })
 
-  // â”€â”€ load sessions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const loadSessions = useCallback(async () => {
-    setLoadingSessions(true)
-    try {
-      const data = await adminChatService.getSessions(statusFilter === 'all' ? undefined : statusFilter)
-      setSessions(data)
-    } catch { /* silent */ } finally {
-      setLoadingSessions(false)
-    }
-  }, [statusFilter])
-
-  // Poll session list every 5 s
-  useEffect(() => {
-    loadSessions()
-    pollSessionsRef.current = setInterval(loadSessions, 5000)
-    return () => { if (pollSessionsRef.current) clearInterval(pollSessionsRef.current) }
-  }, [loadSessions])
-
-  // Auto-scroll messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  // â”€â”€ open session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const openSession = async (session: ChatSession) => {
-    setSelected(session)
-    setMessages([])
-    lastMsgIdRef.current = null
-    if (pollMsgsRef.current) clearInterval(pollMsgsRef.current)
-
-    try {
-      const result = await adminChatService.getMessages(session.id)
-      setMessages(result.messages)
-      if (result.messages.length > 0)
-        lastMsgIdRef.current = result.messages[result.messages.length - 1].id
-    } catch { /* silent */ }
-
-    // Poll messages every 3 s for the open session
-    if (session.status !== 'closed') {
-      pollMsgsRef.current = setInterval(async () => {
-        try {
-          const result = await adminChatService.getMessages(session.id, lastMsgIdRef.current ?? undefined)
-          if (result.messages.length > 0) {
-            setMessages((prev) => [...prev, ...result.messages])
-            lastMsgIdRef.current = result.messages[result.messages.length - 1].id
-          }
-          if (result.status === 'closed') {
-            setSelected((prev) => prev ? { ...prev, status: 'closed' } : prev)
-            clearInterval(pollMsgsRef.current!)
-          }
-        } catch { /* silent */ }
-      }, 3000)
-    }
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
+    if (selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', selectedId] })
   }
+  const connected = useCRMWebSocket((event) => {
+    queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
+    if (event.session_id === selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', selectedId] })
+  })
 
-  useEffect(() => {
-    return () => { if (pollMsgsRef.current) clearInterval(pollMsgsRef.current) }
-  }, [])
-
-  // â”€â”€ take session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleTake = async () => {
-    if (!selected) return
-    try {
-      const updated = await adminChatService.takeSession(selected.id)
-      setSelected(updated)
-      setSessions((prev) => prev.map((s) => s.id === updated.id ? updated : s))
-    } catch { /* silent */ }
-  }
-
-  // â”€â”€ close session â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleClose = async () => {
-    if (!selected || !confirm('Â¿Cerrar esta conversacion?')) return
-    try {
-      const updated = await adminChatService.closeSession(selected.id)
-      setSelected(updated)
-      setSessions((prev) => prev.map((s) => s.id === updated.id ? updated : s))
-      if (pollMsgsRef.current) clearInterval(pollMsgsRef.current)
-    } catch { /* silent */ }
-  }
-
-  // â”€â”€ send message â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleSend = async () => {
-    if (!selected || !inputText.trim() || sendingMsg) return
-    setSendingMsg(true)
-    const text = inputText.trim()
-    setInputText('')
-    try {
-      const msg = await adminChatService.sendMessage(selected.id, text)
-      setMessages((prev) => [...prev, msg])
-      lastMsgIdRef.current = msg.id
-      // Auto-take if still waiting
-      if (selected.status === 'waiting') handleTake()
-    } catch { /* silent */ } finally {
-      setSendingMsg(false)
-    }
-  }
-
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const send = useMutation({
+    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim()),
+    onSuccess: () => { setText(''); invalidate() },
+  })
+  const take = useMutation({ mutationFn: () => adminChatService.takeSession(selectedId!), onSuccess: invalidate })
+  const close = useMutation({ mutationFn: () => adminChatService.closeSession(selectedId!), onSuccess: invalidate })
+  const priority = useMutation({
+    mutationFn: (value: ChatSession['priority']) => adminChatService.setPriority(selectedId!, value),
+    onSuccess: invalidate,
+  })
+  const assignQueue = useMutation({
+    mutationFn: (queueId: number) => adminChatService.assignQueue(selectedId!, queueId),
+    onSuccess: invalidate,
+  })
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col gap-4">
+    <ThemeProvider theme={crmTheme}>
+      <Stack spacing={2} sx={{ height: 'calc(100vh - 8rem)', color: '#0f172a' }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, gap: 1 }}>
+          <Box>
+            <Typography variant="h5" sx={{ fontWeight: 800 }}>Bandeja omnicanal</Typography>
+            <Typography variant="body2" color="text.secondary">Ecommerce, WhatsApp, Facebook e Instagram en una sola conversación.</Typography>
+          </Box>
+          <Chip size="small" color={connected ? 'success' : 'warning'} label={connected ? 'Tiempo real conectado' : 'Reconectando tiempo real'} />
+        </Stack>
 
-      {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <MessageSquare className="h-6 w-6" />
-          CRM Chat
-        </h1>
-        <p className="text-muted-foreground text-sm">Conversaciones de clientes en tiempo real</p>
-      </div>
-
-      <div className="flex-1 flex gap-4 min-h-0">
-
-        {/* â”€â”€ Sessions panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className="w-72 flex-shrink-0 flex flex-col border rounded-xl bg-card overflow-hidden">
-
-          {/* Filter + refresh */}
-          <div className="p-3 border-b flex items-center gap-2">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="flex-1 h-8 text-sm rounded-md border bg-background px-2 focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="all">Todos</option>
-              <option value="waiting">Esperando</option>
-              <option value="active">Activos</option>
-              <option value="closed">Cerrados</option>
-            </select>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadSessions}>
-              <RefreshCw className={`h-4 w-4 ${loadingSessions ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
-
-          {/* List */}
-          <div className="flex-1 overflow-y-auto">
-            {sessions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-2 p-6">
-                <Inbox className="h-8 w-8 opacity-40" />
-                <span>Sin conversaciones</span>
-              </div>
-            ) : sessions.map((s) => {
-              const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.bot
-              const isSelected = selected?.id === s.id
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => openSession(s)}
-                  className={`w-full text-left px-3 py-3 border-b last:border-b-0 hover:bg-accent/50 transition-colors ${isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : ''}`}
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flex: 1, minHeight: 0 }}>
+          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 360 }, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <Stack spacing={1} sx={{ p: 1.5, borderBottom: '1px solid #e2e8f0' }}>
+              <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <Stack direction="row" spacing={1}>
+                <TextField select size="small" label="Canal" value={channel} onChange={(event) => setChannel(event.target.value)} fullWidth>
+                  <MenuItem value="all">Todos</MenuItem><MenuItem value="whatsapp">WhatsApp</MenuItem><MenuItem value="facebook">Facebook</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
+                </TextField>
+                <TextField select size="small" label="Estado" value={status} onChange={(event) => setStatus(event.target.value)} fullWidth>
+                  <MenuItem value="all">Todos</MenuItem><MenuItem value="waiting">Pendientes</MenuItem><MenuItem value="active">Abiertos</MenuItem><MenuItem value="closed">Cerrados</MenuItem><MenuItem value="bot">Con bot</MenuItem>
+                </TextField>
+                <Tooltip title="Actualizar"><IconButton onClick={() => sessions.refetch()}><RefreshCw size={17} /></IconButton></Tooltip>
+              </Stack>
+              <FormControlLabel control={<Switch size="small" checked={unanswered} onChange={(event) => setUnanswered(event.target.checked)} />} label="Sin responder" />
+            </Stack>
+            <Box sx={{ flex: 1, overflowY: 'auto' }}>
+              {sessions.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
+              {!sessions.isLoading && !sessions.data?.length && <Stack sx={{ alignItems: 'center', p: 4, color: 'text.secondary' }}><Inbox size={32} /><Typography variant="body2">Sin conversaciones</Typography></Stack>}
+              {sessions.data?.map((session) => (
+                <Box
+                  component="button"
+                  key={session.id}
+                  onClick={() => setSelectedId(session.id)}
+                  sx={{
+                    width: '100%', border: 0, borderBottom: '1px solid #e2e8f0', p: 1.5,
+                    textAlign: 'left', cursor: 'pointer', bgcolor: selectedId === session.id ? '#fff7ed' : '#fff',
+                    borderLeft: selectedId === session.id ? '3px solid #b45309' : '3px solid transparent',
+                    '&:hover': { bgcolor: '#f8fafc' },
+                  }}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-medium text-sm truncate">{s.user_name}</p>
-                        {s.unread_by_agent > 0 && (
-                          <span className="flex-shrink-0 w-4 h-4 bg-primary text-primary-foreground rounded-full text-[10px] flex items-center justify-center font-bold">
-                            {s.unread_by_agent > 9 ? '9+' : s.unread_by_agent}
-                          </span>
-                        )}
-                      </div>
-                      {s.user_cedula && <p className="text-xs text-muted-foreground">CC {s.user_cedula}</p>}
-                      {s.last_message && (
-                        <p className="text-xs text-muted-foreground truncate mt-0.5">{s.last_message}</p>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${cfg.color}`}>
-                        {cfg.label}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">{fmtTime(s.updated_at)}</span>
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </div>
+                  <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between' }}>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>{session.user_name}</Typography>{session.unread_by_agent > 0 && <Chip size="small" color="primary" label={session.unread_by_agent} />}</Stack>
+                      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{session.last_message || 'Sin mensajes'}</Typography>
+                    </Box>
+                    <Stack spacing={0.5} sx={{ alignItems: 'flex-end' }}><ChannelBadge channel={session.channel} compact /><Chip size="small" label={statusLabel[session.status]} color={statusColor[session.status]} /></Stack>
+                  </Stack>
+                </Box>
+              ))}
+            </Box>
+          </Paper>
 
-        {/* â”€â”€ Conversation panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        {!selected ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground border rounded-xl bg-card gap-3">
-            <MessageSquare className="h-12 w-12 opacity-20" />
-            <p>Selecciona una conversacion para responder</p>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col border rounded-xl bg-card overflow-hidden min-w-0">
-
-            {/* Session header */}
-            <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">
-                  {selected.user_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-sm truncate">{selected.user_name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {selected.user_cedula ? `CC ${selected.user_cedula}` : ''}
-                    {selected.agent_name ? ` Â· Asesor: ${selected.agent_name}` : ''}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {(selected.status === 'waiting' || selected.status === 'bot') && (
-                  <Button size="sm" variant="outline" onClick={handleTake} className="h-8 text-xs gap-1">
-                    <UserCheck className="h-3.5 w-3.5" />
-                    Tomar
-                  </Button>
-                )}
-                {selected.status !== 'closed' && (
-                  <Button size="sm" variant="outline" onClick={handleClose} className="h-8 text-xs gap-1 text-destructive border-destructive/30 hover:bg-destructive/10">
-                    <PhoneOff className="h-3.5 w-3.5" />
-                    Cerrar
-                  </Button>
-                )}
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_CONFIG[selected.status]?.color ?? ''}`}>
-                  {STATUS_CONFIG[selected.status]?.label ?? selected.status}
-                </span>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-muted/20">
-              {messages.map((m) => {
-                const isAgent = m.sender_type === 'agent'
-                const isUser  = m.sender_type === 'user'
-                return (
-                  <div key={m.id} className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}>
-                    {isUser && (
-                      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center mr-2 flex-shrink-0">
-                        <User className="h-3.5 w-3.5 text-primary" />
-                      </div>
-                    )}
-                    <div className={`max-w-[70%] px-3 py-2 rounded-2xl text-sm ${
-                      isUser
-                        ? 'bg-white border rounded-tl-none shadow-sm'
-                        : isAgent
-                        ? 'bg-primary text-primary-foreground rounded-tr-none'
-                        : 'bg-muted text-muted-foreground rounded-tr-none text-xs italic'
-                    }`}>
-                      {isAgent && m.sender_name && (
-                        <p className="text-[10px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>
-                      )}
-                      {!isUser && !isAgent && (
-                        <div className="flex items-center gap-1 mb-0.5">
-                          <Bot className="h-3 w-3" />
-                          <span className="text-[10px] font-medium">Bot</span>
-                        </div>
-                      )}
-                      {!isUser && !isAgent ? (
-                        <BotMessageText text={m.text} />
-                      ) : (
-                        <p className="leading-relaxed">{m.text}</p>
-                      )}
-                      <p className={`text-[10px] mt-1 ${isUser ? 'text-muted-foreground' : isAgent ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
-                        {new Date(m.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    </div>
-                    {isAgent && (
-                      <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center ml-2 flex-shrink-0">
-                        <UserCheck className="h-3.5 w-3.5 text-primary-foreground" />
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              {messages.length === 0 && (
-                <p className="text-center text-muted-foreground text-sm py-8">Sin mensajes aun</p>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="p-3 border-t">
-              {selected.status === 'closed' ? (
-                <p className="text-center text-xs text-muted-foreground py-1">Conversacion cerrada</p>
-              ) : (
-                <div className="flex gap-2">
-                  <Input
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                    placeholder="Escribe tu respuesta..."
-                    className="flex-1 h-10"
-                  />
-                  <Button onClick={handleSend} disabled={!inputText.trim() || sendingMsg} size="icon" className="h-10 w-10">
-                    {sendingMsg ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+          {!selected ? (
+            <Paper variant="outlined" sx={{ flex: 1, display: 'grid', placeItems: 'center', color: '#64748b' }}><Stack sx={{ alignItems: 'center' }}><Inbox size={48} /><Typography>Selecciona una conversación</Typography></Stack></Paper>
+          ) : (
+            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box><Typography sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <TextField
+                    select
+                    size="small"
+                    label="Cola"
+                    value={selected.queue_id ?? ''}
+                    onChange={(event) => assignQueue.mutate(Number(event.target.value))}
+                    sx={{ minWidth: 130 }}
+                  >
+                    {queues.data?.filter((queue) => queue.active).map((queue) => (
+                      <MenuItem key={queue.id} value={queue.id}>{queue.name}</MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField select size="small" label="Prioridad" value={selected.priority} onChange={(event) => priority.mutate(event.target.value as ChatSession['priority'])}><MenuItem value="low">Baja</MenuItem><MenuItem value="normal">Normal</MenuItem><MenuItem value="high">Alta</MenuItem><MenuItem value="urgent">Urgente</MenuItem></TextField>
+                  {(selected.status === 'waiting' || selected.status === 'bot') && <Button size="small" variant="outlined" startIcon={<UserCheck size={16} />} onClick={() => take.mutate()}>Tomar</Button>}
+                  {selected.status !== 'closed' && <Button size="small" color="error" variant="outlined" onClick={() => close.mutate()}>Cerrar</Button>}
+                </Stack>
+              </Stack>
+              <Stack spacing={1.5} sx={{ flex: 1, overflowY: 'auto', p: 2, bgcolor: '#f8fafc' }}>
+                {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
+                {messages.data?.messages.map((message) => <ConversationMessage key={message.id} message={message} />)}
+              </Stack>
+              <Box sx={{ p: 1.5, borderTop: '1px solid #e2e8f0' }}>
+                {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
+                <Stack direction="row" spacing={1}>
+                  <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim()) send.mutate() } }} />
+                  <IconButton color="primary" disabled={!text.trim() || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
+                </Stack>
+              </Box>
+            </Paper>
+          )}
+        </Stack>
+      </Stack>
+    </ThemeProvider>
   )
 }

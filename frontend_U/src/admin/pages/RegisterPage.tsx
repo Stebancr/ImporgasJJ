@@ -56,7 +56,7 @@ export default function RegisterPage() {
       setNiveles(data.niveles)
       setRegionales(data.regionales)
     }).catch(() => {
-      // Options not critical â€” form still works without them
+      // Options not critical — form still works without them
     })
   }, [])
 
@@ -202,11 +202,11 @@ export default function RegisterPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="password">Contrasena *</Label>
-                  <Input id="password" name="password" type="password" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" value={formData.password} onChange={handleChange} required disabled={isLoading} />
+                  <Input id="password" name="password" type="password" placeholder="••••••••" value={formData.password} onChange={handleChange} required disabled={isLoading} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirmPassword">Confirmar contrasena *</Label>
-                  <Input id="confirmPassword" name="confirmPassword" type="password" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" value={formData.confirmPassword} onChange={handleChange} required disabled={isLoading} />
+                  <Input id="confirmPassword" name="confirmPassword" type="password" placeholder="••••••••" value={formData.confirmPassword} onChange={handleChange} required disabled={isLoading} />
                 </div>
               </div>
             </CardContent>

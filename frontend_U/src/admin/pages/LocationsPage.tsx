@@ -88,7 +88,7 @@ export default function LocationsPage() {
 
   const handleSave = async () => {
     if (!formData.name || !formData.address || !formData.city) {
-      setError('Nombre, direcciÃ³n y ciudad son obligatorios')
+      setError('Nombre, dirección y ciudad son obligatorios')
       return
     }
     setIsSaving(true)
@@ -102,19 +102,19 @@ export default function LocationsPage() {
       setIsDialogOpen(false)
       await fetchLocations()
     } catch {
-      setError('Error al guardar la ubicaciÃ³n')
+      setError('Error al guardar la ubicación')
     } finally {
       setIsSaving(false)
     }
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Â¿EstÃ¡ seguro de eliminar esta ubicaciÃ³n?')) return
+    if (!confirm('¿Está seguro de eliminar esta ubicación?')) return
     try {
       await locationsService.delete(id)
       await fetchLocations()
     } catch {
-      setError('Error al eliminar la ubicaciÃ³n')
+      setError('Error al eliminar la ubicación')
     }
   }
 
@@ -132,11 +132,11 @@ export default function LocationsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Ubicaciones</h1>
-          <p className="text-muted-foreground">Administra los puntos fÃ­sicos y bodegas</p>
+          <p className="text-muted-foreground">Administra los puntos físicos y bodegas</p>
         </div>
         <Button onClick={() => handleOpenDialog()}>
           <Plus className="h-4 w-4 mr-2" />
-          Agregar UbicaciÃ³n
+          Agregar Ubicación
         </Button>
       </div>
 
@@ -174,9 +174,9 @@ export default function LocationsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Nombre</TableHead>
-                    <TableHead>DirecciÃ³n</TableHead>
+                    <TableHead>Dirección</TableHead>
                     <TableHead>Ciudad</TableHead>
-                    <TableHead>TelÃ©fono</TableHead>
+                    <TableHead>Teléfono</TableHead>
                     <TableHead className="text-center">Estado</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
@@ -201,7 +201,7 @@ export default function LocationsPage() {
                         </TableCell>
                         <TableCell className="text-muted-foreground">{location.address}</TableCell>
                         <TableCell>{location.city}</TableCell>
-                        <TableCell className="text-muted-foreground">{location.phone || 'â€”'}</TableCell>
+                        <TableCell className="text-muted-foreground">{location.phone || '—'}</TableCell>
                         <TableCell className="text-center">
                           <button onClick={() => handleToggleActive(location.id)}>
                             <Badge variant={location.is_active ? 'success' : 'secondary'} className="cursor-pointer">
@@ -239,7 +239,7 @@ export default function LocationsPage() {
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>
-              {editingLocation ? 'Editar UbicaciÃ³n' : 'Agregar UbicaciÃ³n'}
+              {editingLocation ? 'Editar Ubicación' : 'Agregar Ubicación'}
             </DialogTitle>
           </DialogHeader>
           {error && (
@@ -258,7 +258,7 @@ export default function LocationsPage() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="address">DirecciÃ³n *</Label>
+              <Label htmlFor="address">Dirección *</Label>
               <Input
                 id="address"
                 value={formData.address}
@@ -273,11 +273,11 @@ export default function LocationsPage() {
                   id="city"
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  placeholder="Ej: BogotÃ¡"
+                  placeholder="Ej: Bogotá"
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="phone">TelÃ©fono</Label>
+                <Label htmlFor="phone">Teléfono</Label>
                 <Input
                   id="phone"
                   value={formData.phone}
@@ -286,7 +286,7 @@ export default function LocationsPage() {
                 />
               </div>
             </div>            <div className="grid gap-2">
-              <Label>Horarios de atenciÃ³n</Label>
+              <Label>Horarios de atención</Label>
               <div className="grid grid-cols-1 gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground w-20 shrink-0">Lun - Vie</span>
@@ -297,7 +297,7 @@ export default function LocationsPage() {
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-20 shrink-0">SÃ¡bado</span>
+                  <span className="text-xs text-muted-foreground w-20 shrink-0">Sábado</span>
                   <Input
                     value={formData.hours_saturday}
                     onChange={(e) => setFormData({ ...formData, hours_saturday: e.target.value })}
@@ -322,7 +322,7 @@ export default function LocationsPage() {
                 className="h-4 w-4 rounded border-input"
               />
               <Label htmlFor="is_active" className="cursor-pointer">
-                UbicaciÃ³n activa
+                Ubicación activa
               </Label>
             </div>
           </div>
@@ -331,7 +331,7 @@ export default function LocationsPage() {
               Cancelar
             </Button>
             <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving ? 'Guardando...' : editingLocation ? 'Guardar cambios' : 'Crear ubicaciÃ³n'}
+              {isSaving ? 'Guardando...' : editingLocation ? 'Guardar cambios' : 'Crear ubicación'}
             </Button>
           </DialogFooter>
         </DialogContent>

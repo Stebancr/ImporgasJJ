@@ -135,7 +135,7 @@ export default function CategoriesPage() {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Â¿EstÃ¡ seguro de eliminar esta categorÃ­a?')) return
+    if (!confirm('¿Está seguro de eliminar esta categoría?')) return
     try {
       await categoriesService.delete(id)
       setCategories((prev) => prev.filter((c) => c.id !== id))

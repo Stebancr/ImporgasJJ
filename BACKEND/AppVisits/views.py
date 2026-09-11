@@ -1,3 +1,4 @@
+from .sync_version import serialize_visit_mutation
 import io
 import os
 import base64
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 def _filter_visitas_by_user(qs, user):
     """Filtra visitas: técnicos solo ven sus propias visitas, admins ven todas."""
     tipo = getattr(user, 'tipo_usuario', 0)
+    if tipo < 1 or not user.is_active:
+        return qs.none()
     if tipo == 1:  # Técnico (tipo_usuario = 1)
         qs = qs.filter(tecnico=user)
     return qs
@@ -178,6 +181,7 @@ class VisitaDetailView(APIView):
             return err
         return Response(VisitaDetailSerializer(v).data)
 
+    @serialize_visit_mutation
     def patch(self, request, pk):
         self._request = request
         tipo = getattr(request.user, 'tipo_usuario', 0)
@@ -186,6 +190,11 @@ class VisitaDetailView(APIView):
         v, err = self._get_visita(pk, request.user)
         if err:
             return err
+        if v.estado == VisitaTecnica.ESTADO_FINALIZADA:
+            return Response(
+                {'detail': 'No se puede modificar una visita que ya está finalizada.'},
+                status=400,
+            )
         previous_technician_id = v.tecnico_id
         serializer = VisitaUpdateSerializer(v, data=request.data, partial=True)
         if serializer.is_valid():
@@ -195,6 +204,7 @@ class VisitaDetailView(APIView):
             return Response(VisitaDetailSerializer(v).data)
         return Response(serializer.errors, status=400)
 
+    @serialize_visit_mutation
     def delete(self, request, pk):
         self._request = request
         tipo = getattr(request.user, 'tipo_usuario', 0)
@@ -212,6 +222,7 @@ class VisitaDetailView(APIView):
 class IniciarVisitaView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @serialize_visit_mutation
     def post(self, request, pk):
         try:
             qs = VisitaTecnica.objects.all()
@@ -251,6 +262,7 @@ class FinalizarVisitaView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     @transaction.atomic
+    @serialize_visit_mutation
     def post(self, request, pk):
         try:
             qs = VisitaTecnica.objects.select_for_update().select_related('cliente')
@@ -329,6 +341,7 @@ class FotosView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
+    @serialize_visit_mutation
     def post(self, request, pk):
         try:
             qs = VisitaTecnica.objects.all()
@@ -345,6 +358,10 @@ class FotosView(APIView):
         if current_count + len(fotos) > 20:
             return Response({'error': f'Máximo 20 fotografías por visita (ya tiene {current_count}).'}, status=400)
 
+        for foto in fotos:
+            validator = EvidenciaSerializer(data={'imagen': foto})
+            validator.is_valid(raise_exception=True)
+            foto.seek(0)
         evidencias = []
         for i, foto in enumerate(fotos):
             e = EvidenciaFotografica.objects.create(
@@ -356,6 +373,7 @@ class FotosView(APIView):
 
         return Response(EvidenciaSerializer(evidencias, many=True).data, status=201)
 
+    @serialize_visit_mutation
     def delete(self, request, pk, foto_id):
         try:
             qs = VisitaTecnica.objects.all()
@@ -399,6 +417,11 @@ class CalendarioView(APIView):
                 'numero_tarea': v.numero_tarea,
                 'cliente_nombre': v.cliente.nombre,
                 'hora': str(v.hora),
+                'valor_visita': (
+                    int(v.valor_visita)
+                    if v.valor_visita is not None and v.valor_visita == v.valor_visita.to_integral_value()
+                    else (float(v.valor_visita) if v.valor_visita is not None else None)
+                ),
                 'estado': v.estado,
                 'tipo_tarea': v.get_tipo_tarea_display(),
                 'tecnico_nombre': (

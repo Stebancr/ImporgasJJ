@@ -26,7 +26,7 @@ import type {
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 
-// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
   pendiente:   { label: 'Pendiente',  color: 'bg-yellow-100 text-yellow-800' },
@@ -37,14 +37,14 @@ const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
 
 const TIPO_TAREA_OPTS = [
   { value: 'mantenimiento', label: 'Mantenimiento Preventivo' },
-  { value: 'instalacion',   label: 'InstalaciÃ³n' },
-  { value: 'reparacion',    label: 'ReparaciÃ³n' },
-  { value: 'revision',      label: 'RevisiÃ³n TÃ©cnica' },
-  { value: 'visita_tecnica',label: 'Visita TÃ©cnica PerÃ­metro Urbano' },
-  { value: 'garantia',      label: 'GarantÃ­a' },
+  { value: 'instalacion',   label: 'Instalación' },
+  { value: 'reparacion',    label: 'Reparación' },
+  { value: 'revision',      label: 'Revisión Técnica' },
+  { value: 'visita_tecnica',label: 'Visita Técnica Perímetro Urbano' },
+  { value: 'garantia',      label: 'Garantía' },
 ]
 
-const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'MiÃ©', 'Jue', 'Vie', 'SÃ¡b']
+const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 
 const blankForm = (): CreateVisitaData => ({
   cliente_nombre: '',
@@ -57,10 +57,62 @@ const blankForm = (): CreateVisitaData => ({
   hora: '08:00',
   descripcion: '',
   observaciones_iniciales: '',
+  valor_visita: null,
   tecnico_id: null,
 })
 
-// â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+type VisitFormErrors = Record<string, string>
+
+const validateVisitForm = (data: CreateVisitaData, editing: boolean): VisitFormErrors => {
+  const errors: VisitFormErrors = {}
+  const required = (key: keyof CreateVisitaData, value: unknown) => {
+    if (value == null || (typeof value === 'string' && !value.trim())) errors[key] = 'Este campo es obligatorio.'
+  }
+
+  if (!editing) {
+    required('cliente_nombre', data.cliente_nombre)
+    required('cliente_identificacion', data.cliente_identificacion)
+    required('cliente_telefono', data.cliente_telefono)
+    required('cliente_correo', data.cliente_correo)
+    required('cliente_direccion', data.cliente_direccion)
+
+    const document = data.cliente_identificacion?.trim() ?? ''
+    if (document && !/^\d+$/.test(document)) errors.cliente_identificacion = 'La cédula solo puede contener números.'
+    else if (document && (document.length < 6 || document.length > 15)) errors.cliente_identificacion = 'La cédula debe contener entre 6 y 15 números.'
+
+    const phone = data.cliente_telefono?.trim() ?? ''
+    if (phone && !/^\d+$/.test(phone)) errors.cliente_telefono = 'El número de celular solo puede contener números.'
+    else if (phone && (phone.length < 7 || phone.length > 15)) errors.cliente_telefono = 'El número de celular debe contener entre 7 y 15 números.'
+
+    const email = data.cliente_correo?.trim() ?? ''
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errors.cliente_correo = 'Ingrese un correo electrónico válido.'
+  }
+
+  required('tipo_tarea', data.tipo_tarea)
+  required('fecha', data.fecha)
+  required('hora', data.hora)
+  if (!data.tecnico_id) errors.tecnico_id = 'Debe seleccionar un técnico.'
+  if (data.valor_visita == null || !Number.isFinite(data.valor_visita)) errors.valor_visita = 'Este campo es obligatorio.'
+  else if (data.valor_visita < 0) errors.valor_visita = 'El valor de la visita no puede ser negativo.'
+  if (data.fecha && data.fecha < format(new Date(), 'yyyy-MM-dd')) {
+    errors.fecha = 'La fecha de la visita no puede ser anterior al día actual.'
+  }
+  return errors
+}
+
+const apiValidationErrors = (error: unknown): VisitFormErrors => {
+  const data = (error as { response?: { data?: unknown } })?.response?.data
+  if (!data || typeof data !== 'object') return { form: 'No fue posible guardar la visita.' }
+  const errors: VisitFormErrors = {}
+  Object.entries(data as Record<string, unknown>).forEach(([key, value]) => {
+    errors[key === 'detail' || key === 'non_field_errors' ? 'form' : key] = Array.isArray(value)
+      ? value.map(String).join(' ')
+      : String(value)
+  })
+  return errors
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function VisitsPage() {
   const [tab, setTab] = useState<'lista' | 'calendario'>('lista')
@@ -83,6 +135,7 @@ export default function VisitsPage() {
   const [selectedVisit, setSelectedVisit] = useState<VisitaDetalle | null>(null)
   const [editVisit, setEditVisit] = useState<VisitaItem | null>(null)
   const [saving, setSaving] = useState(false)
+  const [formErrors, setFormErrors] = useState<VisitFormErrors>({})
   const [detailLoading, setDetailLoading] = useState(false)
   const [downloading, setDownloading] = useState(false)
 
@@ -131,24 +184,29 @@ export default function VisitsPage() {
   useEffect(() => { loadVisits() }, [loadVisits])
   useEffect(() => { if (tab === 'calendario') loadCalendar() }, [tab, loadCalendar])
 
-  // â”€â”€ Create â”€â”€
+  // ── Create ──
   const handleCreate = async () => {
-    if (!form.cliente_nombre || !form.cliente_direccion || !form.fecha || !form.hora) return
+    const errors = validateVisitForm(form, false)
+    if (Object.keys(errors).length) {
+      setFormErrors(errors)
+      return
+    }
     setSaving(true)
     try {
       await visitsService.create(form)
       setCreateOpen(false)
       setForm(blankForm())
+      setFormErrors({})
       loadVisits()
       if (tab === 'calendario') loadCalendar()
-    } catch {
-      // ignore
+    } catch (error) {
+      setFormErrors(apiValidationErrors(error))
     } finally {
       setSaving(false)
     }
   }
 
-  // â”€â”€ Detail â”€â”€
+  // ── Detail ──
   const openDetail = async (id: number) => {
     setDetailLoading(true)
     setDetailOpen(true)
@@ -160,8 +218,9 @@ export default function VisitsPage() {
     }
   }
 
-  // â”€â”€ Edit â”€â”€
+  // ── Edit ──
   const openEdit = (visit: VisitaItem) => {
+    if (visit.estado === 'finalizada') return
     setEditVisit(visit)
     setForm({
       cliente_nombre: visit.cliente_nombre,
@@ -174,13 +233,24 @@ export default function VisitsPage() {
       hora: visit.hora,
       descripcion: '',
       observaciones_iniciales: '',
+      valor_visita: visit.valor_visita,
       tecnico_id: visit.tecnico_id,
     })
+    setFormErrors({})
     setEditOpen(true)
   }
 
   const handleEdit = async () => {
     if (!editVisit) return
+    if (editVisit.estado === 'finalizada') {
+      setFormErrors({ form: 'No se puede modificar una visita que ya está finalizada.' })
+      return
+    }
+    const errors = validateVisitForm(form, true)
+    if (Object.keys(errors).length) {
+      setFormErrors(errors)
+      return
+    }
     setSaving(true)
     try {
       await visitsService.update(editVisit.id, {
@@ -189,19 +259,21 @@ export default function VisitsPage() {
         hora: form.hora,
         descripcion: form.descripcion,
         observaciones_iniciales: form.observaciones_iniciales,
+        valor_visita: form.valor_visita,
         tecnico: form.tecnico_id ?? null,
       })
       setEditOpen(false)
+      setFormErrors({})
       loadVisits()
       if (tab === 'calendario') loadCalendar()
-    } catch {
-      // ignore
+    } catch (error) {
+      setFormErrors(apiValidationErrors(error))
     } finally {
       setSaving(false)
     }
   }
 
-  // â”€â”€ Delete â”€â”€
+  // ── Delete ──
   const handleDelete = async () => {
     if (!editVisit) return
     setSaving(true)
@@ -217,7 +289,7 @@ export default function VisitsPage() {
     }
   }
 
-  // â”€â”€ Calendar helpers â”€â”€
+  // ── Calendar helpers ──
   const calendarDays = eachDayOfInterval({
     start: startOfMonth(currentMonth),
     end: endOfMonth(currentMonth),
@@ -228,19 +300,43 @@ export default function VisitsPage() {
     return calendarioData[key] || []
   }
 
-  // â”€â”€ Form field helper â”€â”€
-  const setField = (key: keyof CreateVisitaData, value: string | number | null) =>
+  // ── Form field helper ──
+  const setField = (key: keyof CreateVisitaData, value: string | number | null) => {
     setForm((prev) => ({ ...prev, [key]: value }))
+    setFormErrors((previous) => {
+      if (!previous[key] && !previous.form) return previous
+      const next = { ...previous }
+      delete next[key]
+      delete next.form
+      return next
+    })
+  }
+
+  const setDigitsOnly = (
+    key: 'cliente_identificacion' | 'cliente_telefono',
+    value: string,
+    message: string,
+  ) => {
+    if (/^\d*$/.test(value)) {
+      setField(key, value)
+      return
+    }
+    setFormErrors((previous) => ({ ...previous, [key]: message }))
+  }
+
+  const fieldError = (key: keyof CreateVisitaData) => formErrors[key]
+    ? <p className="mt-1 text-xs text-destructive">{formErrors[key]}</p>
+    : null
 
   return (
     <div className="space-y-4">
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Visitas TÃ©cnicas</h1>
-          <p className="text-muted-foreground text-sm">Agenda y gestiona las visitas de los tÃ©cnicos</p>
+          <h1 className="text-2xl font-bold">Visitas Técnicas</h1>
+          <p className="text-muted-foreground text-sm">Agenda y gestiona las visitas de los técnicos</p>
         </div>
-        <Button onClick={() => { setForm(blankForm()); setCreateOpen(true) }}>
+        <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreateOpen(true) }}>
           <Plus className="h-4 w-4 mr-2" /> Nueva Visita
         </Button>
       </div>
@@ -257,12 +353,12 @@ export default function VisitsPage() {
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
-            {t === 'lista' ? 'ðŸ“‹ Lista' : 'ðŸ“… Calendario'}
+            {t === 'lista' ? '📋 Lista' : '📅 Calendario'}
           </button>
         ))}
       </div>
 
-      {/* â”€â”€ LIST TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── LIST TAB ──────────────────────────────────────────────────────── */}
       {tab === 'lista' && (
         <div className="space-y-4">
           {/* Filters */}
@@ -270,7 +366,7 @@ export default function VisitsPage() {
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por cliente, tarea o direcciÃ³n..."
+                placeholder="Buscar por cliente, tarea o dirección..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"
@@ -290,10 +386,10 @@ export default function VisitsPage() {
             </Select>
             <Select value={tecnicoFilter} onValueChange={setTecnicoFilter}>
               <SelectTrigger className="w-44">
-                <SelectValue placeholder="TÃ©cnico" />
+                <SelectValue placeholder="Técnico" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos los tÃ©cnicos</SelectItem>
+                <SelectItem value="all">Todos los técnicos</SelectItem>
                 {tecnicos.map((t) => (
                   <SelectItem key={t.id} value={String(t.id)}>{t.nombre_completo || t.usuario}</SelectItem>
                 ))}
@@ -312,10 +408,11 @@ export default function VisitsPage() {
                   <TableRow>
                     <TableHead>Tarea</TableHead>
                     <TableHead>Cliente</TableHead>
-                    <TableHead>DirecciÃ³n</TableHead>
+                    <TableHead>Dirección</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead>Fecha / Hora</TableHead>
-                    <TableHead>TÃ©cnico</TableHead>
+                    <TableHead>Valor</TableHead>
+                    <TableHead>Técnico</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>Reporte</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
@@ -324,13 +421,13 @@ export default function VisitsPage() {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-8">
+                      <TableCell colSpan={10} className="text-center py-8">
                         <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                       </TableCell>
                     </TableRow>
                   ) : visits.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                         No hay visitas que mostrar
                       </TableCell>
                     </TableRow>
@@ -348,6 +445,9 @@ export default function VisitsPage() {
                           {v.fecha}<br />
                           <Clock className="inline h-3 w-3 mr-1" />{v.hora?.slice(0, 5)}
                         </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {v.valor_visita == null ? '—' : `$${v.valor_visita.toLocaleString('es-CO')}`}
+                        </TableCell>
                         <TableCell className="text-xs">
                           {v.tecnico_nombre ?? <span className="text-muted-foreground italic">Sin asignar</span>}
                         </TableCell>
@@ -360,10 +460,10 @@ export default function VisitsPage() {
                           {v.tiene_reporte ? (
                             <ClipboardCheck className="h-4 w-4 text-green-600" />
                           ) : (
-                            <span className="text-xs text-muted-foreground">â€”</span>
+                            <span className="text-xs text-muted-foreground">—</span>
                           )}
                           {v.evidencias_count > 0 && (
-                            <span className="ml-1 text-xs text-muted-foreground">{v.evidencias_count}ðŸ“·</span>
+                            <span className="ml-1 text-xs text-muted-foreground">{v.evidencias_count}📷</span>
                           )}
                         </TableCell>
                         <TableCell className="text-right">
@@ -371,9 +471,11 @@ export default function VisitsPage() {
                             <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openDetail(v.id)}>
                               <Eye className="h-3 w-3" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(v)}>
-                              <Pencil className="h-3 w-3" />
-                            </Button>
+                            {v.estado !== 'finalizada' && (
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(v)} aria-label="Editar visita">
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                            )}
                             {v.tiene_reporte && (
                               <Button
                                 size="icon"
@@ -412,7 +514,7 @@ export default function VisitsPage() {
         </div>
       )}
 
-      {/* â”€â”€ CALENDAR TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── CALENDAR TAB ─────────────────────────────────────────────────── */}
       {tab === 'calendario' && (
         <div className="space-y-4">
           {/* Month nav */}
@@ -481,7 +583,7 @@ export default function VisitsPage() {
                         </div>
                       ))}
                       {visits.length > 3 && (
-                        <div className="text-[10px] text-muted-foreground pl-1">+{visits.length - 3} mÃ¡s</div>
+                        <div className="text-[10px] text-muted-foreground pl-1">+{visits.length - 3} más</div>
                       )}
                     </div>
                   </div>
@@ -500,7 +602,7 @@ export default function VisitsPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {dayVisits(selectedDay).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No hay visitas este dÃ­a.</p>
+                  <p className="text-sm text-muted-foreground">No hay visitas este día.</p>
                 ) : (
                   dayVisits(selectedDay).map((v) => (
                     <div
@@ -512,7 +614,7 @@ export default function VisitsPage() {
                         <p className="font-medium text-sm">{v.cliente_nombre}</p>
                         <p className="text-xs text-muted-foreground">
                           <Clock className="inline h-3 w-3 mr-1" />{v.hora.slice(0, 5)}
-                          {' Â· '}{v.tipo_tarea}
+                          {' · '}{v.tipo_tarea}
                           {v.tecnico_nombre && <><User className="inline h-3 w-3 ml-2 mr-1" />{v.tecnico_nombre}</>}
                         </p>
                       </div>
@@ -528,15 +630,20 @@ export default function VisitsPage() {
         </div>
       )}
 
-      {/* â”€â”€ CREATE / EDIT FORM MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-      <Dialog open={createOpen || editOpen} onOpenChange={(o) => { if (!o) { setCreateOpen(false); setEditOpen(false) } }}>
+      {/* ── CREATE / EDIT FORM MODAL ──────────────────────────────────────── */}
+      <Dialog open={createOpen || editOpen} onOpenChange={(o) => { if (!o) { setCreateOpen(false); setEditOpen(false); setFormErrors({}) } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editOpen ? 'Editar Visita' : 'Nueva Visita TÃ©cnica'}</DialogTitle>
+            <DialogTitle>{editOpen ? 'Editar Visita' : 'Nueva Visita Técnica'}</DialogTitle>
           </DialogHeader>
+          {formErrors.form && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {formErrors.form}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4 py-2">
 
-            {/* â”€â”€ Client section (create only) â”€â”€ */}
+            {/* ── Client section (create only) ── */}
             {!editOpen && (
               <>
                 <div className="col-span-2">
@@ -545,27 +652,42 @@ export default function VisitsPage() {
                 <div>
                   <Label>Nombre completo *</Label>
                   <Input value={form.cliente_nombre} onChange={(e) => setField('cliente_nombre', e.target.value)} />
+                  {fieldError('cliente_nombre')}
                 </div>
                 <div>
-                  <Label>IdentificaciÃ³n</Label>
-                  <Input value={form.cliente_identificacion || ''} onChange={(e) => setField('cliente_identificacion', e.target.value)} />
+                  <Label>Identificación *</Label>
+                  <Input
+                    inputMode="numeric"
+                    maxLength={15}
+                    value={form.cliente_identificacion || ''}
+                    onChange={(e) => setDigitsOnly('cliente_identificacion', e.target.value, 'La cédula solo puede contener números.')}
+                  />
+                  {fieldError('cliente_identificacion')}
                 </div>
                 <div>
-                  <Label>TelÃ©fono</Label>
-                  <Input value={form.cliente_telefono || ''} onChange={(e) => setField('cliente_telefono', e.target.value)} />
+                  <Label>Teléfono *</Label>
+                  <Input
+                    inputMode="numeric"
+                    maxLength={15}
+                    value={form.cliente_telefono || ''}
+                    onChange={(e) => setDigitsOnly('cliente_telefono', e.target.value, 'El número de celular solo puede contener números.')}
+                  />
+                  {fieldError('cliente_telefono')}
                 </div>
                 <div>
-                  <Label>Correo</Label>
+                  <Label>Correo *</Label>
                   <Input type="email" value={form.cliente_correo || ''} onChange={(e) => setField('cliente_correo', e.target.value)} />
+                  {fieldError('cliente_correo')}
                 </div>
                 <div className="col-span-2">
-                  <Label>DirecciÃ³n *</Label>
+                  <Label>Dirección *</Label>
                   <Textarea rows={2} value={form.cliente_direccion} onChange={(e) => setField('cliente_direccion', e.target.value)} />
+                  {fieldError('cliente_direccion')}
                 </div>
               </>
             )}
 
-            {/* â”€â”€ Visit section â”€â”€ */}
+            {/* ── Visit section ── */}
             <div className="col-span-2">
               <p className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Datos de la Visita</p>
             </div>
@@ -579,32 +701,48 @@ export default function VisitsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {fieldError('tipo_tarea')}
             </div>
             <div>
-              <Label>TÃ©cnico asignado</Label>
+              <Label>Técnico asignado *</Label>
               <Select
-                value={form.tecnico_id != null ? String(form.tecnico_id) : '__none__'}
-                onValueChange={(v) => setField('tecnico_id', v === '__none__' ? null : Number(v))}
+                value={form.tecnico_id != null ? String(form.tecnico_id) : undefined}
+                onValueChange={(v) => setField('tecnico_id', Number(v))}
               >
-                <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Seleccione un técnico" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">Sin asignar</SelectItem>
                   {tecnicos.map((t) => (
                     <SelectItem key={t.id} value={String(t.id)}>{t.nombre_completo || t.usuario}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {fieldError('tecnico_id')}
             </div>
             <div>
               <Label>Fecha *</Label>
-              <Input type="date" value={form.fecha} onChange={(e) => setField('fecha', e.target.value)} />
+              <Input type="date" min={format(new Date(), 'yyyy-MM-dd')} value={form.fecha} onChange={(e) => setField('fecha', e.target.value)} />
+              {fieldError('fecha')}
             </div>
             <div>
               <Label>Hora *</Label>
               <Input type="time" value={form.hora} onChange={(e) => setField('hora', e.target.value)} />
+              {fieldError('hora')}
+            </div>
+            <div>
+              <Label>Valor de la visita *</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={form.valor_visita ?? ''}
+                onChange={(e) => setField('valor_visita', e.target.value === '' ? null : Number(e.target.value))}
+                placeholder="Ej: 150000"
+              />
+              {fieldError('valor_visita')}
             </div>
             <div className="col-span-2">
-              <Label>DescripciÃ³n de la tarea</Label>
+              <Label>Descripción de la tarea</Label>
               <Textarea rows={2} value={form.descripcion || ''} onChange={(e) => setField('descripcion', e.target.value)} />
             </div>
             <div className="col-span-2">
@@ -622,7 +760,7 @@ export default function VisitsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* â”€â”€ DETAIL MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── DETAIL MODAL ─────────────────────────────────────────────────── */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -656,10 +794,13 @@ export default function VisitsPage() {
                 <Card><CardContent className="pt-3 pb-3 space-y-1">
                   <p className="text-xs text-muted-foreground font-semibold">VISITA</p>
                   <p className="text-sm"><CalendarDays className="inline h-3 w-3 mr-1" />{selectedVisit.fecha} a las {selectedVisit.hora?.slice(0, 5)}</p>
+                  <p className="text-sm">
+                    Valor: {selectedVisit.valor_visita == null ? 'No informado' : `$${selectedVisit.valor_visita.toLocaleString('es-CO')}`}
+                  </p>
                   {selectedVisit.tecnico ? (
                     <p className="text-sm"><User className="inline h-3 w-3 mr-1" />{selectedVisit.tecnico.nombre_completo}</p>
                   ) : (
-                    <p className="text-sm text-muted-foreground">Sin tÃ©cnico asignado</p>
+                    <p className="text-sm text-muted-foreground">Sin técnico asignado</p>
                   )}
                   {selectedVisit.descripcion && <p className="text-sm text-muted-foreground">{selectedVisit.descripcion}</p>}
                 </CardContent></Card>
@@ -668,19 +809,19 @@ export default function VisitsPage() {
               {/* Report */}
               {selectedVisit.reporte && (
                 <Card>
-                  <CardHeader className="py-3"><CardTitle className="text-sm">Reporte TÃ©cnico</CardTitle></CardHeader>
+                  <CardHeader className="py-3"><CardTitle className="text-sm">Reporte Técnico</CardTitle></CardHeader>
                   <CardContent className="pt-0 space-y-2 text-sm">
                     <div className="grid grid-cols-2 gap-2">
-                      <div><span className="text-muted-foreground">Persona que atendiÃ³:</span> {selectedVisit.reporte.persona_atiende}</div>
+                      <div><span className="text-muted-foreground">Persona que atendió:</span> {selectedVisit.reporte.persona_atiende}</div>
                       <div><span className="text-muted-foreground">Equipo:</span> {selectedVisit.reporte.equipo_display}</div>
-                      <div><span className="text-muted-foreground">UbicaciÃ³n:</span> {selectedVisit.reporte.ubicacion_display}</div>
-                      <div><span className="text-muted-foreground">MÃ©todo de pago:</span> {selectedVisit.reporte.metodo_pago_display}</div>
+                      <div><span className="text-muted-foreground">Ubicación:</span> {selectedVisit.reporte.ubicacion_display}</div>
+                      <div><span className="text-muted-foreground">Método de pago:</span> {selectedVisit.reporte.metodo_pago_display}</div>
                       {selectedVisit.reporte.valor_servicio && (
                         <div><span className="text-muted-foreground">Valor:</span> ${Number(selectedVisit.reporte.valor_servicio).toLocaleString('es-CO')}</div>
                       )}
                     </div>
                     <div><span className="text-muted-foreground font-medium">Motivo:</span> {selectedVisit.reporte.motivo_servicio}</div>
-                    <div><span className="text-muted-foreground font-medium">SoluciÃ³n:</span> {selectedVisit.reporte.solucion_realizada}</div>
+                    <div><span className="text-muted-foreground font-medium">Solución:</span> {selectedVisit.reporte.solucion_realizada}</div>
                     {selectedVisit.reporte.observaciones && <div><span className="text-muted-foreground font-medium">Observaciones:</span> {selectedVisit.reporte.observaciones}</div>}
                     {selectedVisit.reporte.recomendaciones && <div><span className="text-muted-foreground font-medium">Recomendaciones:</span> {selectedVisit.reporte.recomendaciones}</div>}
                     {selectedVisit.reporte.firma_cliente && (
@@ -744,13 +885,13 @@ export default function VisitsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* â”€â”€ DELETE CONFIRM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── DELETE CONFIRM ───────────────────────────────────────────────── */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Eliminar Visita</DialogTitle>
           </DialogHeader>
-          <p className="text-sm">Â¿EstÃ¡ seguro de eliminar la visita <b>#{editVisit?.numero_tarea}</b> de <b>{editVisit?.cliente_nombre}</b>?</p>
+          <p className="text-sm">¿Está seguro de eliminar la visita <b>#{editVisit?.numero_tarea}</b> de <b>{editVisit?.cliente_nombre}</b>?</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancelar</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={saving}>

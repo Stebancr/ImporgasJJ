@@ -176,7 +176,7 @@ export default function ProductsPage() {
 
   const handleSave = async () => {
     if (!formData.name || !formData.price || !formData.category || !formData.brand) {
-      setError('Completa los campos obligatorios: nombre, precio, categorÃ­a y marca')
+      setError('Completa los campos obligatorios: nombre, precio, categoría y marca')
       return
     }
     setIsSaving(true)
@@ -241,7 +241,7 @@ export default function ProductsPage() {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Â¿EstÃ¡ seguro de eliminar este producto?')) return
+    if (!confirm('¿Está seguro de eliminar este producto?')) return
     try {
       await productsService.delete(id)
       await fetchProducts()
@@ -268,7 +268,7 @@ export default function ProductsPage() {
       await productsService.deleteSpec(editingProduct.id, specId)
       setExistingSpecs(prev => prev.filter(s => s.id !== specId))
     } catch {
-      setError('Error al eliminar la especificaciÃ³n')
+      setError('Error al eliminar la especificación')
     }
   }
 
@@ -283,7 +283,7 @@ export default function ProductsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Productos</h1>
-          <p className="text-muted-foreground">Administra el catÃ¡logo de productos</p>
+          <p className="text-muted-foreground">Administra el catálogo de productos</p>
         </div>
         <Button onClick={() => handleOpenDialog()}>
           <Plus className="h-4 w-4 mr-2" />
@@ -325,7 +325,7 @@ export default function ProductsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Producto</TableHead>
-                    <TableHead>categorÃ­a</TableHead>
+                    <TableHead>categoría</TableHead>
                     <TableHead>Marca</TableHead>
                     <TableHead className="text-right">Precio</TableHead>
                     <TableHead className="text-center">Stock</TableHead>
@@ -349,8 +349,8 @@ export default function ProductsPage() {
                             <Badge variant="secondary" className="mt-1">Destacado</Badge>
                           )}
                         </TableCell>
-                        <TableCell>{product.category_name || product.category?.name || 'â€”'}</TableCell>
-                        <TableCell>{product.brand_name || product.brand?.name || 'â€”'}</TableCell>
+                        <TableCell>{product.category_name || product.category?.name || '—'}</TableCell>
+                        <TableCell>{product.brand_name || product.brand?.name || '—'}</TableCell>
                         <TableCell className="text-right">
                           <div>
                             <p className="font-medium">{formatPrice(product.price)}</p>
@@ -400,7 +400,7 @@ export default function ProductsPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-4 pt-4 border-t">
               <p className="text-sm text-muted-foreground">
-                PÃ¡gina {page} de {totalPages} ({total} productos)
+                Página {page} de {totalPages} ({total} productos)
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setPage(p => p - 1)} disabled={page === 1}>
@@ -438,12 +438,12 @@ export default function ProductsPage() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="description">DescripciÃ³n</Label>
+              <Label htmlFor="description">Descripción</Label>
               <Textarea
                 id="description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="DescripciÃ³n del producto..."
+                placeholder="Descripción del producto..."
                 rows={3}
               />
             </div>
@@ -471,13 +471,13 @@ export default function ProductsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label>CategorÃ­a *</Label>
+                <Label>Categoría *</Label>
                 <Select
                   value={formData.category}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar categorÃ­a" />
+                    <SelectValue placeholder="Seleccionar categoría" />
                   </SelectTrigger>
                   <SelectContent>
                     {categories.map((cat) => (
@@ -527,7 +527,7 @@ export default function ProductsPage() {
                   <table className="w-full">
                     <thead className="bg-muted">
                       <tr>
-                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">CaracterÃ­stica</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Característica</th>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Valor</th>
                         <th className="w-8" />
                       </tr>
@@ -557,7 +557,7 @@ export default function ProductsPage() {
               {newSpecRows.map((row, i) => (
                 <div key={i} className="flex gap-2 items-center">
                   <Input
-                    placeholder="CaracterÃ­stica (ej: Capacidad)"
+                    placeholder="Característica (ej: Capacidad)"
                     value={row.name}
                     onChange={e => setNewSpecRows(prev => prev.map((r, j) => j === i ? { ...r, name: e.target.value } : r))}
                     className="flex-1"
@@ -579,7 +579,7 @@ export default function ProductsPage() {
               ))}
               {newSpecRows.length === 0 && existingSpecs.length === 0 && (
                 <p className="text-xs text-muted-foreground">
-                  Agrega las caracterÃ­sticas del producto (marca, modelo, capacidad, etc.)
+                  Agrega las características del producto (marca, modelo, capacidad, etc.)
                 </p>
               )}
             </div>
@@ -622,14 +622,14 @@ export default function ProductsPage() {
 
             {/* Image upload */}
             <div className="grid gap-2">
-              <Label>ImÃ¡genes del producto</Label>              <div
+              <Label>Imágenes del producto</Label>              <div
                 className="border-2 border-dashed rounded-lg p-4 cursor-pointer hover:bg-muted/30 transition-colors"
                 onClick={() => fileInputRef.current?.click()}
               >
                 <div className="flex flex-col items-center gap-2 text-muted-foreground">
                   <Upload className="h-8 w-8" />
-                  <p className="text-sm">Haz clic para seleccionar ImÃ¡genes</p>
-                  <p className="text-xs">PNG, JPG, WEBP (mÃºltiples)</p>
+                  <p className="text-sm">Haz clic para seleccionar Imágenes</p>
+                  <p className="text-xs">PNG, JPG, WEBP (múltiples)</p>
                 </div>
               </div>
               <input
@@ -667,7 +667,7 @@ export default function ProductsPage() {
               )}
               {editingProduct && editingProduct.images && editingProduct.images.length > 0 && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">ImÃ¡genes actuales:</p>
+                  <p className="text-xs text-muted-foreground mb-1">Imágenes actuales:</p>
                   <div className="flex flex-wrap gap-2">
                     {editingProduct.images.map((img) => (
                       <div key={img.id} className="relative">

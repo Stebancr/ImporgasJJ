@@ -1,7 +1,9 @@
 from django.urls import path
 from . import views
+from .offline import SincronizarVisitaView
 
 urlpatterns = [
+    path('<int:pk>/sincronizar/', SincronizarVisitaView.as_view(), name='visitas-sincronizar'),
     # Technician helpers
     path('tecnicos/', views.TecnicosView.as_view(), name='visitas-tecnicos'),
 

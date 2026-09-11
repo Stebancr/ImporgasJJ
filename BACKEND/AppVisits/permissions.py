@@ -12,7 +12,7 @@ class IsAdminOrReadOwn(BasePermission):
     message = 'No tiene permiso para acceder a este recurso.'
 
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated)
+        return bool(request.user and request.user.is_authenticated and request.user.is_active and getattr(request.user, 'tipo_usuario', 0) >= 1)
 
     def has_object_permission(self, request, view, obj):
         tipo = getattr(request.user, 'tipo_usuario', 0)

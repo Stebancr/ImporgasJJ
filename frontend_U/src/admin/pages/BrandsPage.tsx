@@ -112,7 +112,7 @@ export default function BrandsPage() {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Â¿EstÃ¡ seguro de eliminar esta marca?')) return
+    if (!confirm('¿Está seguro de eliminar esta marca?')) return
     try {
       await brandsService.delete(id)
       setBrands((prev) => prev.filter((b) => b.id !== id))

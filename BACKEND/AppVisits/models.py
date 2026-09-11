@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 
 
 class ClienteVisita(models.Model):
@@ -59,6 +60,13 @@ class VisitaTecnica(models.Model):
     hora = models.TimeField()
     descripcion = models.TextField(blank=True)
     observaciones_iniciales = models.TextField(blank=True)
+    valor_visita = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Valor monetario acordado para la visita técnica.',
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
     creado_por = models.ForeignKey(
         'usuarios.Credenciales',
@@ -76,6 +84,12 @@ class VisitaTecnica(models.Model):
         verbose_name = 'Visita Técnica'
         verbose_name_plural = 'Visitas Técnicas'
         ordering = ['fecha', 'hora']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(valor_visita__gte=0) | Q(valor_visita__isnull=True),
+                name='visita_valor_no_negativo',
+            ),
+        ]
 
     def __str__(self):
         return f"#{self.numero_tarea} — {self.cliente.nombre} ({self.get_estado_display()})"
@@ -167,3 +181,17 @@ class EvidenciaFotografica(models.Model):
 
     def __str__(self):
         return f"Evidencia #{self.pk} — Visita #{self.visita.numero_tarea}"
+
+
+class VisitSyncReceipt(models.Model):
+    """Durable receipt for replaying a completed offline operation safely."""
+    visita = models.ForeignKey(VisitaTecnica, on_delete=models.CASCADE, related_name='sync_receipts')
+    usuario = models.ForeignKey('usuarios.Credenciales', on_delete=models.PROTECT)
+    operation_key = models.CharField(max_length=100)
+    request_hash = models.CharField(max_length=64)
+    response_data = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'visita_sync_receipt'
+        constraints = [models.UniqueConstraint(fields=('visita', 'usuario', 'operation_key'), name='unique_visit_sync_operation')]

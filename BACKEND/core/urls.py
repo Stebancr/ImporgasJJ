@@ -28,6 +28,17 @@ urlpatterns = [
     path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.
     path('gestion/', include('gestion.urls')),
     path('crm-chat/', include('crmChat.urls')),
+    # Meta usa un callback público independiente de la autenticación del CRM.
+    path('meta/', include('crmChat.apps.meta.urls')),
+    path('meta/whatsapp/', include('crmChat.apps.whatsapp.urls')),
+    path('meta/facebook/', include('crmChat.apps.facebook.urls')),
+    path('meta/instagram/', include('crmChat.apps.instagram.urls')),
+    # Compatibilidad con proxies externos que entregan el prefijo /api/ a
+    # Django sin pasar por Nginx. Evita 404 sin duplicar la lógica Meta.
+    path('api/meta/', include('crmChat.apps.meta.urls')),
+    path('api/meta/whatsapp/', include('crmChat.apps.whatsapp.urls')),
+    path('api/meta/facebook/', include('crmChat.apps.facebook.urls')),
+    path('api/meta/instagram/', include('crmChat.apps.instagram.urls')),
     path('visits/', include('AppVisits.urls')),
 ]
 

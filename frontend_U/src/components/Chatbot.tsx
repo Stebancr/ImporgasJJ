@@ -107,11 +107,11 @@ function BotMessageText({ text }: { text: string }) {
   }
 
   // Dividir por líneas para preservar saltos
-  const lines = text.split('\n')
+  const lines = text.replace(/\[([^\]]+)\]\((\/producto\/\d+)\)/g, '$2').split(/\r?\n/)
   return (
-    <div className="text-sm leading-relaxed">
+    <div className="text-sm leading-relaxed break-words whitespace-pre-wrap">
       {lines.map((line, i) => (
-        <div key={i}>{renderLine(line, i)}</div>
+        <div key={i} className={line.trim() ? 'min-w-0' : 'h-3'}>{renderLine(line, i)}</div>
       ))}
     </div>
   )
@@ -234,7 +234,7 @@ function Chatbot() {
   // ── send ──────────────────────────────────────────────────────────────────
   const handleSend = async (text?: string) => {
     const messageText = (text ?? inputValue).trim()
-    if (!messageText) return
+    if (!messageText || isTyping || chatMode === 'creating') return
     setMessages((prev) => [...prev, { id: Date.now(), text: messageText, isBot: false, timestamp: new Date() }])
     setInputValue('')
 
@@ -291,7 +291,10 @@ Fecha: ${result.created_at}
 
       // Si necesita agente y está autenticado, escalar automáticamente
       if (response.needs_agent && isAuthenticated) {
-        handleRequestAgent()
+        setSessionId(response.session_id)
+        sessionStorage.setItem('chatSessionId', String(response.session_id))
+        lastMsgIdRef.current = response.bot_message_id
+        setChatMode(response.status === 'active' ? 'active' : 'waiting')
       }
     } catch (error) {
       console.error('Error al comunicarse con Ollama:', error)
@@ -426,7 +429,7 @@ Fecha: ${result.created_at}
                       {message.isAgent ? <UserCheck className="w-4 h-4 text-white" /> : <Sparkles className="w-4 h-4 text-white" />}
                     </div>
                   )}
-                  <div className={`max-w-[75%] px-4 py-3 rounded-2xl ${
+                  <div className={`min-w-0 max-w-[85%] px-4 py-3 rounded-2xl ${
                     message.isBot
                       ? 'bg-white text-[#1A1D21] shadow-sm border border-[#E5E7EB] rounded-tl-none'
                       : 'bg-gradient-to-r from-[#001575] to-[#00104f] text-white rounded-tr-none'
@@ -533,7 +536,7 @@ Fecha: ${result.created_at}
                 />
                 <button
                   onClick={() => handleSend()}
-                  disabled={!inputValue.trim()}
+                  disabled={!inputValue.trim() || isTyping || chatMode === 'creating'}
                   className="w-12 h-12 bg-gradient-to-r from-[#001575] to-[#00104f] text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-[#001575]/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   <Send className="w-5 h-5" />

@@ -25,6 +25,7 @@ import {
   ClipboardList,
   MessageSquare,
   Wrench,
+  Settings,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -46,6 +47,7 @@ const navigation: NavItem[] = [
   { name: 'Usuarios',    href: '/admin/usuarios',     icon: Users, roles: ['admin'] },
   { name: 'Visitas',     href: '/admin/visitas',    icon: Wrench, roles: ['admin'] },
   { name: 'CRM Chat',    href: '/admin/chat',       icon: MessageSquare, roles: ['admin'] },
+  { name: 'Canales Meta', href: '/admin/chat/integraciones', icon: Settings, roles: ['admin'] },
   {
     name: 'Contabilidad',
     href: '/admin/gestion',

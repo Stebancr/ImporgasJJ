@@ -156,7 +156,7 @@ export default function OrdersPage() {
         <CardContent>
           <div className="overflow-x-auto">
             {loading ? (
-              <p className="text-center py-8 text-muted-foreground">Cargando Ã³rdenes...</p>
+              <p className="text-center py-8 text-muted-foreground">Cargando órdenes...</p>
             ) : (
             <Table>
               <TableHeader>
@@ -175,8 +175,8 @@ export default function OrdersPage() {
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
                       {searchTerm || statusFilter !== 'all'
-                        ? 'No se encontraron Ã³rdenes con ese filtro.'
-                        : 'No hay Ã³rdenes registradas aÃºn.'}
+                        ? 'No se encontraron órdenes con ese filtro.'
+                        : 'No hay órdenes registradas aún.'}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -276,7 +276,7 @@ export default function OrdersPage() {
                 </div>
                 {selectedOrder.tracking_code && (
                   <div className="col-span-2">
-                    <p className="text-sm text-muted-foreground">CÃ³digo de seguimiento</p>
+                    <p className="text-sm text-muted-foreground">Código de seguimiento</p>
                     <p className="font-mono text-xs text-blue-700">{String(selectedOrder.tracking_code)}</p>
                   </div>
                 )}
@@ -311,7 +311,7 @@ export default function OrdersPage() {
                       </TableRow>
                       {selectedOrder.shipping_cost != null && Number(selectedOrder.shipping_cost) > 0 && (
                         <TableRow>
-                          <TableCell colSpan={3} className="text-right text-muted-foreground">EnvÃ­o</TableCell>
+                          <TableCell colSpan={3} className="text-right text-muted-foreground">Envío</TableCell>
                           <TableCell className="text-right">{formatPrice(Number(selectedOrder.shipping_cost))}</TableCell>
                         </TableRow>
                       )}

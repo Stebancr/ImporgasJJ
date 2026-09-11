@@ -11,4 +11,6 @@ urlpatterns = [
     # Endpoints públicos para el bot (ecommerce)
     path('bot/chat/',               views.BotChatView.as_view(),           name='bot-chat'),
     path('bot/sessions/<int:session_id>/messages/', views.BotSessionMessagesView.as_view(), name='bot-session-messages'),
+    path('queues/', views.AssignmentQueueListCreateView.as_view(), name='crm-queue-list'),
+    path('queues/<int:pk>/', views.AssignmentQueueDetailView.as_view(), name='crm-queue-detail'),
 ]

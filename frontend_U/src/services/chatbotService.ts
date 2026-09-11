@@ -3,6 +3,7 @@
  * Permite chatear con el bot y deriva a agentes humanos cuando es necesario
  */
 
+import api from './api';
 const API_URL = '/api/crm-chat/bot';
 
 export interface ChatMessage {
@@ -41,25 +42,12 @@ export const sendMessage = async (
   userEmail?: string
 ): Promise<ChatResponse> => {
   try {
-    const response = await fetch(`${API_URL}/chat/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify({
+    return await api.post<ChatResponse>('/crm-chat/bot/chat/', {
         message,
         session_id: sessionId,
         user_name: userName,
         user_email: userEmail,
-      }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      throw new Error(errorData?.error || 'Error al enviar mensaje');
-    }
-
-    return await response.json();
   } catch (error) {
     console.error('Error en sendMessage:', error);
     throw error;

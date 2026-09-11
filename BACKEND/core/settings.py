@@ -58,6 +58,8 @@ APPEND_SLASH = False
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -106,6 +108,8 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
     'ngrok-skip-browser-warning',
+    'idempotency-key',
+    'if-match',
 ]
 
 SIMPLE_JWT = {
@@ -135,6 +139,8 @@ REST_FRAMEWORK = {
         'payment_status': config('THROTTLE_PAYMENT_RATE', default='30/min'),
         'fcm': config('THROTTLE_FCM_RATE', default='30/min'),
         'wompi_webhook': config('THROTTLE_WOMPI_WEBHOOK_RATE', default='240/min'),
+        'meta_webhook': config('THROTTLE_META_WEBHOOK_RATE', default='600/min'),
+        'meta_admin': config('THROTTLE_META_ADMIN_RATE', default='20/min'),
     },
 }
 
@@ -160,6 +166,34 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'core.wsgi.application'
+ASGI_APPLICATION = 'core.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [config('CHANNEL_REDIS_URL', default='redis://redis:6379/2')],
+            'capacity': 1500,
+            'expiry': 60,
+        },
+    },
+}
+
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://redis:6379/0')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://redis:6379/0')
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = config('CELERY_TASK_TIME_LIMIT', default=120, cast=int)
+CELERY_TASK_SOFT_TIME_LIMIT = config('CELERY_TASK_SOFT_TIME_LIMIT', default=110, cast=int)
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TIMEZONE = 'America/Bogota'
+CELERY_BEAT_SCHEDULE = {
+    # Meta no tiene un mecanismo único de refresh para los tres productos. Se
+    # auditan vencimientos y la rotación se realiza de forma segura en el panel.
+    'audit-meta-token-expiration-daily': {
+        'task': 'crmChat.tasks.audit_meta_tokens',
+        'schedule': timedelta(hours=24),
+    },
+}
 
 
 # Database
@@ -361,3 +395,34 @@ FIREBASE_CREDENTIALS_FILE = config('FIREBASE_CREDENTIALS_FILE', default='')
 FIREBASE_PROJECT_ID = config('FIREBASE_PROJECT_ID', default='')
 FIREBASE_CLIENT_EMAIL = config('FIREBASE_CLIENT_EMAIL', default='')
 FIREBASE_PRIVATE_KEY = config('FIREBASE_PRIVATE_KEY', default='')
+
+# Meta Graph API. Los secretos solo pertenecen al backend. La versión no tiene
+# valor predeterminado para impedir que una versión obsoleta se use sin revisión.
+META_GRAPH_API_URL = config('META_GRAPH_API_URL', default='https://graph.facebook.com')
+META_GRAPH_API_VERSION = config('META_GRAPH_API_VERSION', default='')
+META_HTTP_TIMEOUT = config('META_HTTP_TIMEOUT', default=15, cast=int)
+META_WEBHOOK_MAX_BYTES = config('META_WEBHOOK_MAX_BYTES', default=2 * 1024 * 1024, cast=int)
+CRM_ATTACHMENT_MAX_BYTES = config('CRM_ATTACHMENT_MAX_BYTES', default=25 * 1024 * 1024, cast=int)
+CRM_ATTACHMENT_MAX_REDIRECTS = config('CRM_ATTACHMENT_MAX_REDIRECTS', default=3, cast=int)
+META_WEBHOOK_VERIFY_TOKEN = config('META_WEBHOOK_VERIFY_TOKEN', default='')
+META_APP_SECRET = config('META_APP_SECRET', default='')
+META_CREDENTIALS_ENCRYPTION_KEY = config('META_CREDENTIALS_ENCRYPTION_KEY', default='')
+META_TOKEN_WARNING_DAYS = config('META_TOKEN_WARNING_DAYS', default=7, cast=int)
+
+# Instagram Business Login. La URI debe coincidir literalmente con la
+# registrada en Meta for Developers y apuntar al callback HTTPS de Django.
+INSTAGRAM_OAUTH_REDIRECT_URI = config('INSTAGRAM_OAUTH_REDIRECT_URI', default='')
+INSTAGRAM_OAUTH_AUTHORIZE_URL = config(
+    'INSTAGRAM_OAUTH_AUTHORIZE_URL',
+    default='https://www.instagram.com/oauth/authorize',
+)
+INSTAGRAM_OAUTH_TOKEN_URL = config(
+    'INSTAGRAM_OAUTH_TOKEN_URL',
+    default='https://api.instagram.com/oauth/access_token',
+)
+INSTAGRAM_GRAPH_API_URL = config('INSTAGRAM_GRAPH_API_URL', default='https://graph.instagram.com')
+INSTAGRAM_OAUTH_SCOPES = config(
+    'INSTAGRAM_OAUTH_SCOPES',
+    default='instagram_business_basic,instagram_business_manage_messages',
+)
+INSTAGRAM_OAUTH_STATE_MAX_AGE = config('INSTAGRAM_OAUTH_STATE_MAX_AGE', default=600, cast=int)

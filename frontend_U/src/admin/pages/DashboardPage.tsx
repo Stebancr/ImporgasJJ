@@ -13,7 +13,7 @@ import {
   AlertTriangle, Receipt, Loader2, TrendingDown,
 } from 'lucide-react'
 
-// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (val: number) =>
   val.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })
@@ -23,7 +23,7 @@ const ESTADO_COLORS: Record<string, string> = {
   anulada: 'bg-red-100 text-red-700',
 }
 
-// â”€â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -101,7 +101,7 @@ export default function DashboardPage() {
     { title: 'Total Productos', value: totalProductos, icon: Package, color: 'text-blue-500' },
     { title: 'Usuarios Registrados', value: totalUsuarios, icon: Users, color: 'text-violet-500' },
     { title: 'Facturas Totales', value: totalFacturas, icon: FileText, color: 'text-orange-500' },
-    { title: 'Ingresos (Ãºltimas 8)', value: fmt(ingresosMes), icon: DollarSign, color: 'text-emerald-500', isCurrency: true },
+    { title: 'Ingresos (últimas 8)', value: fmt(ingresosMes), icon: DollarSign, color: 'text-emerald-500', isCurrency: true },
   ]
 
   return (
@@ -122,7 +122,7 @@ export default function DashboardPage() {
               <SelectContent>
                 <SelectItem value="__all__">Todas las sedes</SelectItem>
                 {locations.map((l) => (
-                  <SelectItem key={l.id} value={String(l.id)}>{l.name} â€” {l.city}</SelectItem>
+                  <SelectItem key={l.id} value={String(l.id)}>{l.name} — {l.city}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -163,10 +163,10 @@ export default function DashboardPage() {
               <AlertTriangle className="h-5 w-5 text-amber-500" />
               Stock bajo o negativo
               {!isSuperAdmin && locationId && (
-                <span className="text-xs font-normal text-muted-foreground ml-1">â€” su sede</span>
+                <span className="text-xs font-normal text-muted-foreground ml-1">— su sede</span>
               )}
               {isSuperAdmin && selectedLocation === '__all__' && (
-                <span className="text-xs font-normal text-muted-foreground ml-1">â€” todas las sedes (agregado)</span>
+                <span className="text-xs font-normal text-muted-foreground ml-1">— todas las sedes (agregado)</span>
               )}
             </CardTitle>
           </CardHeader>
@@ -175,7 +175,7 @@ export default function DashboardPage() {
               <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : lowStock.length === 0 ? (
               <div className="text-center py-6 text-muted-foreground text-sm">
-                âœ“ Sin productos con stock crÃ­tico
+                ✓ Sin productos con stock crítico
               </div>
             ) : (
               <div className="space-y-2 max-h-72 overflow-y-auto">
@@ -193,7 +193,7 @@ export default function DashboardPage() {
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm truncate">{e.producto_name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {isNeg ? 'Stock negativo â€” faltante' : isZero ? 'Sin unidades' : 'Stock bajo'}
+                          {isNeg ? 'Stock negativo — faltante' : isZero ? 'Sin unidades' : 'Stock bajo'}
                         </p>
                       </div>
                       <div className="flex items-center gap-1 ml-3 shrink-0">

@@ -122,7 +122,7 @@ export const productsService = {
  * Los procesadores de pago en Colombia (Wompi, PayU, etc.) requieren
  * el monto en centavos como entero.
  *
- * Ejemplo: toCentavos(1850000) â†’ 185000000
+ * Ejemplo: toCentavos(1850000) → 185000000
  */
 export function toCentavos(priceCOP: number): number {
   return Math.round(priceCOP * 100)

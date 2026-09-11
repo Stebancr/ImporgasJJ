@@ -25,7 +25,7 @@ import {
   Loader2, AlertTriangle, RefreshCw, X, Boxes, ClipboardList,
 } from 'lucide-react'
 
-// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (val: string | number) =>
   Number(val).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })
@@ -44,7 +44,7 @@ const FACTURA_ESTADOS: Record<Factura['estado'], { label: string; color: string 
   anulada: { label: 'Anulada', color: 'bg-red-100 text-red-700' },
 }
 
-// â”€â”€â”€ sub-components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── sub-components ───────────────────────────────────────────────────────────
 
 function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
@@ -70,7 +70,7 @@ function Pagination({
   )
 }
 
-// â”€â”€â”€ Item editor (shared by Cotizacion + Factura forms) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Item editor (shared by Cotizacion + Factura forms) ───────────────────────
 
 interface ItemEditorProps {
   items: DocumentoItem[]
@@ -153,7 +153,7 @@ function ItemEditor({ items, onChange }: ItemEditorProps) {
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
-                <th className="text-left px-3 py-2 font-medium">DescripciÃ³n</th>
+                <th className="text-left px-3 py-2 font-medium">Descripción</th>
                 <th className="text-center px-3 py-2 font-medium w-20">Cant.</th>
                 <th className="text-right px-3 py-2 font-medium w-32">Precio unit.</th>
                 <th className="text-right px-3 py-2 font-medium w-28">Desc. $</th>
@@ -222,7 +222,7 @@ function ItemEditor({ items, onChange }: ItemEditorProps) {
   )
 }
 
-// â”€â”€â”€ Document totals summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Document totals summary ──────────────────────────────────────────────────
 
 function TotalesForm({
   descuentoPct, impuestoPct, items,
@@ -276,7 +276,7 @@ function TotalesForm({
   )
 }
 
-// â”€â”€â”€ View Document dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── View Document dialog ─────────────────────────────────────────────────────
 
 function DocumentoDetailDialog({
   open, onClose, titulo, doc,
@@ -291,7 +291,7 @@ function DocumentoDetailDialog({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{titulo} â€” {doc.numero}</DialogTitle>
+          <DialogTitle>{titulo} — {doc.numero}</DialogTitle>
           <DialogDescription className="sr-only">Detalle del documento</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">
@@ -299,11 +299,11 @@ function DocumentoDetailDialog({
             <div><span className="text-muted-foreground">Sede:</span> {doc.location_name}</div>
             <div><span className="text-muted-foreground">Creado por:</span> {doc.creado_por_usuario}</div>
             <div><span className="text-muted-foreground">Cliente:</span> {doc.cliente_nombre}</div>
-            <div><span className="text-muted-foreground">CÃ©dula:</span> {doc.cliente_cedula || 'â€”'}</div>
-            <div><span className="text-muted-foreground">Correo:</span> {doc.cliente_correo || 'â€”'}</div>
-            <div><span className="text-muted-foreground">TelÃ©fono:</span> {doc.cliente_telefono || 'â€”'}</div>
+            <div><span className="text-muted-foreground">Cédula:</span> {doc.cliente_cedula || '—'}</div>
+            <div><span className="text-muted-foreground">Correo:</span> {doc.cliente_correo || '—'}</div>
+            <div><span className="text-muted-foreground">Teléfono:</span> {doc.cliente_telefono || '—'}</div>
             {'fecha_vencimiento' in doc && (
-              <div><span className="text-muted-foreground">Vencimiento:</span> {doc.fecha_vencimiento || 'â€”'}</div>
+              <div><span className="text-muted-foreground">Vencimiento:</span> {doc.fecha_vencimiento || '—'}</div>
             )}
             <div><span className="text-muted-foreground">Fecha:</span> {doc.fecha_emision}</div>
           </div>
@@ -316,7 +316,7 @@ function DocumentoDetailDialog({
             <table className="w-full text-xs">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-left px-3 py-2">DescripciÃ³n</th>
+                  <th className="text-left px-3 py-2">Descripción</th>
                   <th className="text-center px-3 py-2">Cant.</th>
                   <th className="text-right px-3 py-2">Precio</th>
                   <th className="text-right px-3 py-2">Desc.</th>
@@ -364,9 +364,9 @@ function DocumentoDetailDialog({
   )
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//  TAB 1 â€” STOCK
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TAB 1 — STOCK
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; locationId: number | null; locations: Location[] }) {
   const [entries, setEntries] = useState<StockEntry[]>([])
@@ -435,7 +435,7 @@ function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; location
               <SelectContent>
                 <SelectItem value="__all__">Todas las sedes</SelectItem>
                 {locations.map((l) => (
-                  <SelectItem key={l.id} value={String(l.id)}>{l.name} â€” {l.city}</SelectItem>
+                  <SelectItem key={l.id} value={String(l.id)}>{l.name} — {l.city}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -501,7 +501,7 @@ function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; location
       <Dialog open={!!editEntry} onOpenChange={() => setEditEntry(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Ajustar stock â€” {editEntry?.producto_name}</DialogTitle>
+            <DialogTitle>Ajustar stock — {editEntry?.producto_name}</DialogTitle>
             <DialogDescription className="sr-only">Ajusta la cantidad disponible de este producto</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -531,9 +531,9 @@ function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; location
   )
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//  TAB 2 â€” COTIZACIONES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TAB 2 — COTIZACIONES
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: boolean; locationId: number | null; locations: Location[] }) {
   const [rows, setRows] = useState<Cotizacion[]>([])
@@ -655,14 +655,14 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
       load()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      alert(msg || 'Error al guardar la cotizaciÃ³n')
+      alert(msg || 'Error al guardar la cotización')
     } finally {
       setFormLoading(false)
     }
   }
 
   const deleteCot = async (id: number) => {
-    if (!confirm('Â¿Eliminar esta cotizaciÃ³n?')) return
+    if (!confirm('¿Eliminar esta cotización?')) return
     try {
       await gestionService.deleteCotizacion(id)
       load()
@@ -670,7 +670,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
   }
 
   const convertir = async (id: number) => {
-    if (!confirm('Â¿Convertir esta cotizaciÃ³n en factura? Se descontarÃ¡ el stock.')) return
+    if (!confirm('¿Convertir esta cotización en factura? Se descontará el stock.')) return
     try {
       await gestionService.convertirCotizacion(id)
       load()
@@ -701,7 +701,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
               <div className="flex gap-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input className="pl-8 h-9 w-52" placeholder="Buscar por cliente, nÃºmero..." value={search}
+                  <Input className="pl-8 h-9 w-52" placeholder="Buscar por cliente, número..." value={search}
                     onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
                 </div>
                 <Select value={estado} onValueChange={(v) => { setEstado(v); setPage(1) }}>
@@ -714,7 +714,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
                   </SelectContent>
                 </Select>
               </div>
-              <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4 mr-1" />Nueva cotizaciÃ³n</Button>
+              <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4 mr-1" />Nueva cotización</Button>
             </div>
           </div>
         </CardHeader>
@@ -723,12 +723,12 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>NÃºmero</TableHead>
+              <TableHead>Número</TableHead>
               <TableHead>Cliente</TableHead>
               <TableHead>Sede</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead className="text-right">Total</TableHead>
-              <TableHead className="text-right text-xs">EmisiÃ³n</TableHead>
+              <TableHead className="text-right text-xs">Emisión</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -804,14 +804,14 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
 
       {/* Detail dialog */}
       <DocumentoDetailDialog open={detailOpen} onClose={() => setDetailOpen(false)}
-        titulo="CotizaciÃ³n" doc={detailDoc} />
+        titulo="Cotización" doc={detailDoc} />
 
       {/* Create/Edit dialog */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editId ? 'Editar cotizaciÃ³n' : 'Nueva cotizaciÃ³n'}</DialogTitle>
-            <DialogDescription className="sr-only">Formulario de cotizaciÃ³n</DialogDescription>
+            <DialogTitle>{editId ? 'Editar cotización' : 'Nueva cotización'}</DialogTitle>
+            <DialogDescription className="sr-only">Formulario de cotización</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             {/* Client data */}
@@ -822,7 +822,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_nombre: e.target.value }))} />
               </div>
               <div>
-                <Label>CÃ©dula</Label>
+                <Label>Cédula</Label>
                 <Input className="mt-1" value={formData.cliente_cedula}
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_cedula: e.target.value }))} />
               </div>
@@ -832,7 +832,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_correo: e.target.value }))} />
               </div>
               <div>
-                <Label>TelÃ©fono</Label>
+                <Label>Teléfono</Label>
                 <Input className="mt-1" value={formData.cliente_telefono}
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_telefono: e.target.value }))} />
               </div>
@@ -853,7 +853,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
                     </SelectTrigger>
                     <SelectContent>
                       {locations.map((l) => (
-                        <SelectItem key={l.id} value={String(l.id)}>{l.name} â€” {l.city}</SelectItem>
+                        <SelectItem key={l.id} value={String(l.id)}>{l.name} — {l.city}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -884,7 +884,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
             <Button variant="outline" onClick={() => setFormOpen(false)}>Cancelar</Button>
             <Button onClick={saveForm} disabled={formLoading}>
               {formLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              {editId ? 'Guardar cambios' : 'Crear cotizaciÃ³n'}
+              {editId ? 'Guardar cambios' : 'Crear cotización'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -893,9 +893,9 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
   )
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//  TAB 3 â€” FACTURAS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TAB 3 — FACTURAS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: boolean; locationId: number | null; locations: Location[] }) {
   const [rows, setRows] = useState<Factura[]>([])
@@ -1004,7 +1004,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
   }
 
   const anular = async (id: number) => {
-    if (!confirm('Â¿Anular esta factura? Se restaurarÃ¡ el stock descontado.')) return
+    if (!confirm('¿Anular esta factura? Se restaurará el stock descontado.')) return
     try {
       await gestionService.anularFactura(id)
       load()
@@ -1027,7 +1027,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
               <div className="flex gap-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input className="pl-8 h-9 w-52" placeholder="Buscar por cliente, nÃºmero..." value={search}
+                  <Input className="pl-8 h-9 w-52" placeholder="Buscar por cliente, número..." value={search}
                     onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
                 </div>
                 <Select value={estado} onValueChange={(v) => { setEstado(v); setPage(1) }}>
@@ -1049,13 +1049,13 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>NÃºmero</TableHead>
+              <TableHead>Número</TableHead>
               <TableHead>Cliente</TableHead>
               <TableHead>Sede</TableHead>
               <TableHead>Cot. origen</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead className="text-right">Total</TableHead>
-              <TableHead className="text-right text-xs">EmisiÃ³n</TableHead>
+              <TableHead className="text-right text-xs">Emisión</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -1077,7 +1077,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
                 </TableCell>
                 <TableCell className="text-sm">{fac.location_name}</TableCell>
                 <TableCell className="text-xs text-muted-foreground font-mono">
-                  {fac.cotizacion_numero ?? 'â€”'}
+                  {fac.cotizacion_numero ?? '—'}
                 </TableCell>
                 <TableCell>
                   <StatusBadge {...FACTURA_ESTADOS[fac.estado]} />
@@ -1138,7 +1138,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_nombre: e.target.value }))} />
               </div>
               <div>
-                <Label>CÃ©dula</Label>
+                <Label>Cédula</Label>
                 <Input className="mt-1" value={formData.cliente_cedula}
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_cedula: e.target.value }))} />
               </div>
@@ -1148,7 +1148,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_correo: e.target.value }))} />
               </div>
               <div>
-                <Label>TelÃ©fono</Label>
+                <Label>Teléfono</Label>
                 <Input className="mt-1" value={formData.cliente_telefono}
                   onChange={(e) => setFormData((d) => ({ ...d, cliente_telefono: e.target.value }))} />
               </div>
@@ -1164,7 +1164,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
                     </SelectTrigger>
                     <SelectContent>
                       {locations.map((l) => (
-                        <SelectItem key={l.id} value={String(l.id)}>{l.name} â€” {l.city}</SelectItem>
+                        <SelectItem key={l.id} value={String(l.id)}>{l.name} — {l.city}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1200,14 +1200,14 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
   )
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════════════════
 //  MAIN PAGE
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════════════════
 
 type TabKey = 'cotizaciones' | 'facturas'
 
 const TAB_META: Record<TabKey, { label: string; icon: typeof FileText; description: string }> = {
-  cotizaciones: { label: 'Cotizaciones',       icon: ClipboardList, description: 'Gestiona cotizaciones y convÃ©rtelas en factura' },
+  cotizaciones: { label: 'Cotizaciones',       icon: ClipboardList, description: 'Gestiona cotizaciones y convértelas en factura' },
   facturas:     { label: 'Facturas',           icon: FileText,     description: 'Emite y administra facturas de venta' },
 }
 
@@ -1244,7 +1244,7 @@ export default function GestionPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
         <AlertTriangle className="h-10 w-10" />
-        <p className="font-medium">Sin permiso para acceder a esta secciÃ³n</p>
+        <p className="font-medium">Sin permiso para acceder a esta sección</p>
       </div>
     )
   }
@@ -1263,9 +1263,9 @@ export default function GestionPage() {
             <h1 className="text-2xl font-bold text-foreground">{label}</h1>
             <p className="text-muted-foreground text-sm">
               {isSuperAdmin
-                ? description + ' â€” todas las sedes'
+                ? description + ' — todas las sedes'
                 : sede
-                ? `${description} â€” ${sede.name}, ${sede.city}`
+                ? `${description} — ${sede.name}, ${sede.city}`
                 : description}
             </p>
           </div>
