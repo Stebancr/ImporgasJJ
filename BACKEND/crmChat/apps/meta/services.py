@@ -79,24 +79,27 @@ def verify_webhook_token(candidate):
     return ChannelIntegration.objects.filter(active=True, verify_token_digest=digest).exists()
 
 
-def _candidate_app_secrets():
+def _candidate_app_secrets(channel=''):
     global_secret = getattr(settings, 'META_APP_SECRET', '')
     if global_secret:
         yield global_secret
-    for encrypted in ChannelIntegration.objects.filter(active=True).exclude(app_secret_encrypted='').values_list('app_secret_encrypted', flat=True):
+    integrations = ChannelIntegration.objects.filter(active=True).exclude(app_secret_encrypted='')
+    if channel:
+        integrations = integrations.filter(channel=channel)
+    for encrypted in integrations.values_list('app_secret_encrypted', flat=True):
         try:
             yield secret_store.decrypt(encrypted)
         except SecretConfigurationError:
             logger.error('Una integración Meta tiene un App Secret que no se puede descifrar.')
 
 
-def verify_webhook_signature(raw_body, signature_header):
+def verify_webhook_signature(raw_body, signature_header, channel=''):
     """Valida ``X-Hub-Signature-256`` sobre los bytes exactos recibidos."""
 
     if not signature_header or not signature_header.startswith('sha256='):
         return False
     supplied = signature_header.removeprefix('sha256=')
-    for secret in _candidate_app_secrets():
+    for secret in _candidate_app_secrets(channel):
         expected = hmac.new(secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
         if hmac.compare_digest(expected, supplied):
             return True
@@ -106,7 +109,10 @@ def verify_webhook_signature(raw_body, signature_header):
 def graph_request(integration, method, path, *, json_body=None, params=None, base_url=None):
     """Ejecuta una solicitud Graph sin incluir tokens en URL, logs o errores."""
 
-    token = secret_store.decrypt(integration.access_token_encrypted)
+    encrypted_token = integration.access_token_encrypted
+    if not encrypted_token and integration.meta_facebook_page_id:
+        encrypted_token = integration.meta_facebook_page.page_access_token_encrypted
+    token = secret_store.decrypt(encrypted_token)
     if not token:
         raise MetaAPIError('La integración no tiene token de acceso.')
     version = integration.graph_api_version
@@ -146,7 +152,7 @@ def validate_integration_connection(integration):
     elif integration.channel == 'instagram':
         path = integration.instagram_account_id
         params = {'fields': 'id,username'}
-        base_url = integration.configuration.get('api_base_url', 'https://graph.instagram.com')
+        base_url = None if integration.meta_facebook_page_id else integration.configuration.get('api_base_url', 'https://graph.instagram.com')
     else:
         raise MetaAPIError('Canal no soportado.')
     data = graph_request(integration, 'GET', path, params=params, base_url=base_url)
@@ -168,7 +174,7 @@ def accept_webhook(raw_body, signature_header, forced_channel=''):
         raise ValueError('El objeto del webhook no corresponde a un canal soportado.')
     if forced_channel and detect_channel(payload) != forced_channel:
         raise ValueError('El payload no corresponde al endpoint del canal.')
-    if not verify_webhook_signature(raw_body, signature_header):
+    if not verify_webhook_signature(raw_body, signature_header, channel):
         raise PermissionError('Firma Meta inválida.')
 
     digest = hashlib.sha256(raw_body).hexdigest()

@@ -1,5 +1,11 @@
 # CRM omnicanal con Meta
 
+> El OAuth recomendado para nuevas conexiones de Facebook Pages e Instagram
+> Professional está documentado en `META_FACEBOOK_INSTAGRAM_OAUTH.md`. Ese
+> flujo es exclusivamente Facebook + Instagram y no solicita WhatsApp. El
+> callback antiguo `/api/meta/instagram/oauth/callback/` se conserva solo por
+> compatibilidad con integraciones existentes.
+
 Esta implementación amplía los modelos existentes `ChatSession` y
 `ChatMessage`; no reemplaza el chat del ecommerce. Todos los canales terminan
 en la misma bandeja `/admin/chat` y los eventos se publican por WebSocket.

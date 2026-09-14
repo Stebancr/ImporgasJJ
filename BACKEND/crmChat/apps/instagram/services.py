@@ -143,7 +143,9 @@ def exchange_authorization_code(integration, code):
 
 
 def _send(integration, recipient_id, payload):
-    base_url = integration.configuration.get('api_base_url', 'https://graph.instagram.com')
+    # Las cuentas conectadas mediante Facebook Login usan graph.facebook.com
+    # y el Page Access Token relacionado; se conserva Instagram Login legado.
+    base_url = None if integration.meta_facebook_page_id else integration.configuration.get('api_base_url', 'https://graph.instagram.com')
     body = {'recipient': {'id': recipient_id}}
     body.update(payload)
     return graph_request(

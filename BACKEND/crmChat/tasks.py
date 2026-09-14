@@ -26,6 +26,7 @@ from .models import (
     ChatAuditEvent,
     ChatMessage,
     ChatSession,
+    MetaConnection,
     WebhookEvent,
 )
 from .ollama_service import ollama_service
@@ -195,6 +196,35 @@ def audit_meta_tokens():
             )
             created += 1
     return {'audits_created': created}
+
+
+@shared_task
+def validate_meta_oauth_connections():
+    """Valida conexiones activas sin asumir una duración fija del token."""
+
+    from .apps.meta.oauth import get_token_info
+
+    checked = 0
+    disabled = 0
+    for connection in MetaConnection.objects.filter(is_active=True):
+        checked += 1
+        try:
+            info = get_token_info(secret_store.decrypt(connection.access_token_encrypted))
+            connection.token_last_validated_at = timezone.now()
+            if info.get('is_valid'):
+                connection.token_status = 'valid'
+                connection.save(update_fields=['token_status', 'token_last_validated_at', 'updated_at'])
+                continue
+            connection.token_status = 'expired'
+        except Exception:
+            logger.warning('No fue posible validar la conexión Meta %s.', connection.pk, exc_info=True)
+            connection.token_status = 'error'
+            connection.token_last_validated_at = timezone.now()
+        connection.is_active = False
+        connection.save(update_fields=['token_status', 'token_last_validated_at', 'is_active', 'updated_at'])
+        connection.channel_integrations.update(active=False)
+        disabled += 1
+    return {'checked': checked, 'disabled': disabled}
 
 
 def _typing(session, enabled):

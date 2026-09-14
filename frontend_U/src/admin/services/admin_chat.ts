@@ -74,9 +74,42 @@ export interface MetaIntegration {
   has_access_token: boolean
   has_app_secret: boolean
   has_verify_token: boolean
+  managed_by_meta_oauth: boolean
 }
 
-export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'has_access_token' | 'has_app_secret' | 'has_verify_token' | 'token_expires_at'> & {
+export interface MetaInstagramAccount {
+  instagram_account_id: string
+  username: string
+  name: string
+  profile_picture_url: string
+  is_selected: boolean
+  is_active: boolean
+}
+
+export interface MetaFacebookPage {
+  page_id: string
+  page_name: string
+  tasks: string[]
+  is_selected: boolean
+  is_active: boolean
+  instagram_account?: MetaInstagramAccount | null
+}
+
+export interface MetaConnection {
+  id: number
+  facebook_user_id: string
+  granted_scopes: string[]
+  token_created_at: string
+  token_expires_at: string | null
+  token_last_validated_at: string | null
+  token_status: 'pending' | 'valid' | 'expired' | 'revoked' | 'error'
+  is_active: boolean
+  facebook_pages: MetaFacebookPage[]
+  created_at: string
+  updated_at: string
+}
+
+export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'has_access_token' | 'has_app_secret' | 'has_verify_token' | 'managed_by_meta_oauth' | 'token_expires_at'> & {
   access_token?: string
   app_secret?: string
   verify_token?: string
@@ -167,6 +200,28 @@ export const adminChatService = {
   startInstagramOAuth: async (id: number): Promise<{ authorization_url: string; redirect_uri: string }> => {
     const res = await api.post(`/meta/instagram/integrations/${id}/oauth/start/`)
     return res.data
+  },
+
+  startMetaOAuth: async (): Promise<{ authorization_url: string }> => {
+    const res = await api.get('/meta/connect/')
+    return res.data
+  },
+
+  getMetaConnections: async (): Promise<MetaConnection[]> => {
+    const res = await api.get('/meta/connections/')
+    return res.data.results ?? res.data
+  },
+
+  selectMetaAccounts: async (
+    id: number,
+    payload: { facebook_page_ids: string[]; instagram_account_ids: string[] },
+  ): Promise<MetaConnection> => {
+    const res = await api.post(`/meta/connections/${id}/accounts/`, payload)
+    return res.data
+  },
+
+  disconnectMetaConnection: async (id: number): Promise<void> => {
+    await api.delete(`/meta/connections/${id}/`)
   },
 }
 

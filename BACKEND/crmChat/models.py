@@ -35,6 +35,97 @@ class CRMContact(models.Model):
         return self.name
 
 
+class MetaConnection(models.Model):
+    """Autorización OAuth de Facebook que pertenece a un usuario del CRM.
+
+    El token de usuario se conserva cifrado únicamente para validar y renovar
+    el inventario de activos. Nunca se expone mediante serializers o admin.
+    """
+
+    TOKEN_STATUS_CHOICES = [
+        ('pending', 'Pendiente de selección'),
+        ('valid', 'Válido'),
+        ('expired', 'Expirado'),
+        ('revoked', 'Revocado'),
+        ('error', 'Error'),
+    ]
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='meta_connections',
+    )
+    facebook_user_id = models.CharField(max_length=120)
+    access_token_encrypted = models.TextField()
+    granted_scopes = models.JSONField(default=list, blank=True)
+    token_created_at = models.DateTimeField(default=models.functions.Now)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    token_last_validated_at = models.DateTimeField(null=True, blank=True)
+    token_status = models.CharField(max_length=20, choices=TOKEN_STATUS_CHOICES, default='pending')
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'crm_meta_connection'
+        ordering = ['-updated_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['created_by', 'facebook_user_id'],
+                name='crm_unique_meta_user_connection',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Meta {self.facebook_user_id}'
+
+
+class MetaFacebookPage(models.Model):
+    """Página descubierta mediante OAuth y su Page Access Token cifrado."""
+
+    connection = models.ForeignKey(MetaConnection, on_delete=models.CASCADE, related_name='facebook_pages')
+    page_id = models.CharField(max_length=120, unique=True)
+    page_name = models.CharField(max_length=200)
+    page_access_token_encrypted = models.TextField()
+    tasks = models.JSONField(default=list, blank=True)
+    is_selected = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'crm_meta_facebook_page'
+        ordering = ['page_name', 'id']
+
+    def __str__(self):
+        return self.page_name
+
+
+class MetaInstagramAccount(models.Model):
+    """Cuenta Professional/Business/Creator vinculada a una Facebook Page."""
+
+    facebook_page = models.OneToOneField(
+        MetaFacebookPage,
+        on_delete=models.CASCADE,
+        related_name='instagram_account',
+    )
+    instagram_account_id = models.CharField(max_length=120, unique=True)
+    username = models.CharField(max_length=200, blank=True)
+    name = models.CharField(max_length=200, blank=True)
+    profile_picture_url = models.URLField(max_length=1000, blank=True)
+    is_selected = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'crm_meta_instagram_account'
+        ordering = ['username', 'id']
+
+    def __str__(self):
+        return f'@{self.username}' if self.username else self.instagram_account_id
+
+
 class ChannelIntegration(models.Model):
     """Cuenta externa configurada para recibir y enviar mensajes.
 
@@ -67,6 +158,27 @@ class ChannelIntegration(models.Model):
     verify_token_digest = models.CharField(max_length=64, blank=True)
     token_expires_at = models.DateTimeField(null=True, blank=True)
     configuration = models.JSONField(default=dict, blank=True)
+    meta_connection = models.ForeignKey(
+        MetaConnection,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='channel_integrations',
+    )
+    meta_facebook_page = models.ForeignKey(
+        MetaFacebookPage,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='channel_integrations',
+    )
+    meta_instagram_account = models.ForeignKey(
+        MetaInstagramAccount,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='channel_integrations',
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

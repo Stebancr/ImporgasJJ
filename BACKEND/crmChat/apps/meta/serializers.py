@@ -6,7 +6,13 @@ secreto existe, pero nunca su contenido cifrado o en texto plano.
 
 from rest_framework import serializers
 
-from crmChat.models import ChannelIntegration, ChatAuditEvent
+from crmChat.models import (
+    ChannelIntegration,
+    ChatAuditEvent,
+    MetaConnection,
+    MetaFacebookPage,
+    MetaInstagramAccount,
+)
 
 from .services import SecretConfigurationError, secret_store
 
@@ -18,6 +24,7 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
     has_access_token = serializers.SerializerMethodField()
     has_app_secret = serializers.SerializerMethodField()
     has_verify_token = serializers.SerializerMethodField()
+    managed_by_meta_oauth = serializers.SerializerMethodField()
 
     class Meta:
         model = ChannelIntegration
@@ -26,12 +33,22 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
             'phone_number_id', 'page_id', 'instagram_account_id',
             'graph_api_version', 'configuration', 'token_expires_at',
             'access_token', 'app_secret', 'verify_token', 'has_access_token',
-            'has_app_secret', 'has_verify_token', 'created_at', 'updated_at',
+            'has_app_secret', 'has_verify_token', 'managed_by_meta_oauth',
+            'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at')
 
     def get_has_access_token(self, obj):
-        return bool(obj.access_token_encrypted)
+        """Indica disponibilidad sin exponer el token ni su origen cifrado."""
+
+        if obj.access_token_encrypted:
+            return True
+        if obj.meta_facebook_page_id:
+            return bool(
+                obj.meta_facebook_page.page_access_token_encrypted
+                or obj.meta_facebook_page.connection.access_token_encrypted
+            )
+        return bool(obj.meta_connection_id and obj.meta_connection.access_token_encrypted)
 
     def get_has_app_secret(self, obj):
         return bool(obj.app_secret_encrypted)
@@ -39,13 +56,18 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
     def get_has_verify_token(self, obj):
         return bool(obj.verify_token_digest)
 
+    def get_managed_by_meta_oauth(self, obj):
+        """Las cuentas descubiertas por Facebook Login no usan OAuth legado."""
+
+        return bool(obj.meta_connection_id or obj.meta_facebook_page_id)
+
     def validate(self, attrs):
         channel = attrs.get('channel', getattr(self.instance, 'channel', None))
         active = attrs.get('active', getattr(self.instance, 'active', False))
         effective = lambda name: attrs.get(name, getattr(self.instance, name, ''))
         token_present = bool(attrs.get('access_token')) or bool(
             self.instance and self.instance.access_token_encrypted
-        )
+        ) or bool(self.instance and self.instance.meta_facebook_page_id)
 
         if channel == ChannelIntegration.CHANNEL_ECOMMERCE:
             raise serializers.ValidationError({'channel': 'Ecommerce no requiere una integración Meta.'})
@@ -111,3 +133,52 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
         instance = self._save_secrets(instance, secrets)
         self._audit(instance, 'integration.updated', changed_fields, [key for key, value in secrets.items() if value])
         return instance
+
+
+class MetaInstagramAccountSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MetaInstagramAccount
+        fields = ('instagram_account_id', 'username', 'name', 'profile_picture_url', 'is_selected', 'is_active')
+        read_only_fields = fields
+
+
+class MetaFacebookPageSerializer(serializers.ModelSerializer):
+    instagram_account = MetaInstagramAccountSerializer(read_only=True)
+
+    class Meta:
+        model = MetaFacebookPage
+        fields = ('page_id', 'page_name', 'tasks', 'is_selected', 'is_active', 'instagram_account')
+        read_only_fields = fields
+
+
+class MetaConnectionSerializer(serializers.ModelSerializer):
+    facebook_pages = MetaFacebookPageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = MetaConnection
+        fields = (
+            'id', 'facebook_user_id', 'granted_scopes', 'token_created_at',
+            'token_expires_at', 'token_last_validated_at', 'token_status',
+            'is_active', 'facebook_pages', 'created_at', 'updated_at',
+        )
+        read_only_fields = fields
+
+
+class MetaAccountSelectionSerializer(serializers.Serializer):
+    facebook_page_ids = serializers.ListField(
+        child=serializers.CharField(max_length=120),
+        required=False,
+        default=list,
+    )
+    instagram_account_ids = serializers.ListField(
+        child=serializers.CharField(max_length=120),
+        required=False,
+        default=list,
+    )
+
+    def validate(self, attrs):
+        attrs['facebook_page_ids'] = list(dict.fromkeys(attrs['facebook_page_ids']))
+        attrs['instagram_account_ids'] = list(dict.fromkeys(attrs['instagram_account_ids']))
+        if not attrs['facebook_page_ids'] and not attrs['instagram_account_ids']:
+            raise serializers.ValidationError('Seleccione al menos una página o cuenta de Instagram.')
+        return attrs

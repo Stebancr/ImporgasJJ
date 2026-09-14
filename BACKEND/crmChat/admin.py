@@ -16,6 +16,9 @@ from .models import (
     ChatMessage,
     ChatSession,
     CRMContact,
+    MetaConnection,
+    MetaFacebookPage,
+    MetaInstagramAccount,
     QueueMember,
     WebhookEvent,
 )
@@ -33,6 +36,27 @@ class ChannelIntegrationAdmin(admin.ModelAdmin):
     list_filter = ('channel', 'active')
     search_fields = ('name', 'external_account_id', 'phone_number_id', 'page_id')
     exclude = ('access_token_encrypted', 'app_secret_encrypted', 'verify_token_digest')
+
+
+@admin.register(MetaConnection)
+class MetaConnectionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'facebook_user_id', 'created_by', 'token_status', 'is_active', 'updated_at')
+    list_filter = ('token_status', 'is_active')
+    readonly_fields = ('facebook_user_id', 'granted_scopes', 'token_created_at', 'token_expires_at', 'token_last_validated_at')
+    exclude = ('access_token_encrypted',)
+
+
+@admin.register(MetaFacebookPage)
+class MetaFacebookPageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'page_name', 'page_id', 'connection', 'is_selected', 'is_active')
+    list_filter = ('is_selected', 'is_active')
+    exclude = ('page_access_token_encrypted',)
+
+
+@admin.register(MetaInstagramAccount)
+class MetaInstagramAccountAdmin(admin.ModelAdmin):
+    list_display = ('id', 'username', 'instagram_account_id', 'facebook_page', 'is_selected', 'is_active')
+    list_filter = ('is_selected', 'is_active')
 
 
 @admin.register(ChannelIdentity)

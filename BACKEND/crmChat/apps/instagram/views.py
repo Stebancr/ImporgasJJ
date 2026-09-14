@@ -29,6 +29,11 @@ class InstagramOAuthStartView(APIView):
     def post(self, request, pk):
         try:
             integration = ChannelIntegration.objects.get(pk=pk, channel='instagram')
+            if integration.meta_facebook_page_id or integration.meta_connection_id:
+                raise ValueError(
+                    'Esta cuenta ya está conectada mediante Facebook Login. '
+                    'No requiere el OAuth legado de Instagram.'
+                )
             authorization_url, redirect_uri = build_authorization_url(integration, request.user.pk)
             ChatAuditEvent.objects.create(
                 actor=request.user,

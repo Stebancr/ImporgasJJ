@@ -23,6 +23,9 @@ from .models import (
     ChatSession,
     ChatAuditEvent,
     CRMContact,
+    MetaConnection,
+    MetaFacebookPage,
+    MetaInstagramAccount,
     WebhookEvent,
     QueueMember,
 )
@@ -30,6 +33,7 @@ from usuarios.models import Credenciales
 from .assignment import assign_session_automatically
 from .apps.meta.webhooks import normalize_payload
 from .apps.meta.services import MetaAPIError, dispatch_outbound_message, secret_store
+from .apps.meta.oauth import REQUIRED_SCOPES
 from .ollama_service import ollama_service
 from .tasks import _assert_public_https, audit_meta_tokens
 from core.asgi import application
@@ -250,6 +254,19 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(response.status_code, 401)
         self.assertFalse(WebhookEvent.objects.exists())
 
+    @patch('crmChat.apps.meta.views.process_meta_webhook_task.delay')
+    def test_signed_whatsapp_alias_accepts_post(self, process_task):
+        body = json.dumps(self.payload, separators=(',', ':')).encode()
+        signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+        response = self.client.post(
+            '/api/meta/whatsapp/webhook/',
+            data=body,
+            content_type='application/json',
+            HTTP_X_HUB_SIGNATURE_256=signature,
+        )
+        self.assertEqual(response.status_code, 200)
+        process_task.assert_called_once()
+
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
     def test_whatsapp_message_is_normalized_and_idempotent(self, read_receipt):
         first = self._signed_post()
@@ -262,6 +279,167 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(message.direction, 'inbound')
         self.assertEqual(message.session.channel, 'whatsapp')
         read_receipt.assert_called_once_with(message.id)
+
+
+@override_settings(
+    META_APP_ID='facebook-app-test',
+    META_APP_SECRET='facebook-secret-test',
+    META_GRAPH_API_URL='https://graph.facebook.test',
+    META_GRAPH_API_VERSION='v26.0',
+    META_REDIRECT_URI='https://crm.example.test/api/meta/callback/',
+    META_OAUTH_AUTHORIZE_URL='https://www.facebook.com',
+    META_OAUTH_SCOPES=','.join(sorted(REQUIRED_SCOPES)),
+    META_OAUTH_FRONTEND_REDIRECT='/admin/chat/integraciones',
+    META_CREDENTIALS_ENCRYPTION_KEY=Fernet.generate_key().decode('ascii'),
+)
+class MetaFacebookInstagramOAuthTests(APITestCase):
+    """Prueba OAuth/selección sin ejecutar solicitudes reales contra Meta."""
+
+    def setUp(self):
+        self.admin_user = Credenciales.objects.create(usuario='oauth_admin', tipo_usuario=1, estado=1)
+        self.other_admin = Credenciales.objects.create(usuario='oauth_other', tipo_usuario=1, estado=1)
+        self.client.force_authenticate(self.admin_user)
+
+    @staticmethod
+    def _response(data, ok=True, status_code=200):
+        return Mock(ok=ok, status_code=status_code, content=b'json', json=lambda: data)
+
+    def test_oauth_start_generates_unique_state_without_whatsapp_scopes(self):
+        first = self.client.get(reverse('meta-connect'))
+        second = self.client.get(reverse('meta-connect'))
+        self.assertEqual(first.status_code, 200)
+        first_query = parse_qs(urlparse(first.data['authorization_url']).query)
+        second_query = parse_qs(urlparse(second.data['authorization_url']).query)
+        self.assertNotEqual(first_query['state'], second_query['state'])
+        self.assertEqual(first_query['redirect_uri'], ['https://crm.example.test/api/meta/callback/'])
+        self.assertIn('instagram_manage_messages', first_query['scope'][0])
+        self.assertNotIn('whatsapp', first_query['scope'][0])
+        self.assertNotIn('facebook-secret-test', first.data['authorization_url'])
+
+    def test_non_administrator_cannot_start_or_list_oauth_connections(self):
+        user = Credenciales.objects.create(usuario='oauth_customer', tipo_usuario=2, estado=1)
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.get(reverse('meta-connect')).status_code, 403)
+        self.assertEqual(self.client.get(reverse('meta-connections')).status_code, 403)
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_callback_discovers_pages_and_instagram_and_state_is_single_use(self, request_mock):
+        start = self.client.get(reverse('meta-connect'))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        request_mock.side_effect = [
+            self._response({'access_token': 'initial-user-token'}),
+            self._response({'access_token': 'persistent-user-token'}),
+            self._response({'data': {
+                'is_valid': True,
+                'user_id': 'facebook-user-1',
+                'scopes': sorted(REQUIRED_SCOPES),
+                'expires_at': 1_900_000_000,
+            }}),
+            self._response({'data': [{
+                'id': 'page-1',
+                'name': 'Página Uno',
+                'access_token': 'page-token-secret',
+                'tasks': ['MESSAGING'],
+                'instagram_business_account': {
+                    'id': 'instagram-1', 'username': 'empresa', 'name': 'Empresa',
+                },
+            }]}),
+        ]
+        callback = self.client.get(reverse('meta-callback'), {'code': 'valid-code', 'state': state})
+        self.assertEqual(callback.status_code, 302)
+        self.assertIn('meta_oauth=select', callback['Location'])
+        connection = MetaConnection.objects.get(facebook_user_id='facebook-user-1')
+        self.assertNotIn('persistent-user-token', connection.access_token_encrypted)
+        page = MetaFacebookPage.objects.get(page_id='page-1')
+        self.assertNotIn('page-token-secret', page.page_access_token_encrypted)
+        self.assertTrue(MetaInstagramAccount.objects.filter(instagram_account_id='instagram-1').exists())
+
+        replay = self.client.get(reverse('meta-callback'), {'code': 'valid-code', 'state': state})
+        self.assertIn('meta_oauth=invalid_state', replay['Location'])
+        self.assertEqual(request_mock.call_count, 4)
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_invalid_meta_token_is_not_saved(self, request_mock):
+        start = self.client.get(reverse('meta-connect'))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        request_mock.side_effect = [
+            self._response({'access_token': 'initial'}),
+            self._response({'access_token': 'persistent'}),
+            self._response({'data': {'is_valid': False}}),
+        ]
+        response = self.client.get(reverse('meta-callback'), {'code': 'bad-code', 'state': state})
+        self.assertIn('meta_oauth=error', response['Location'])
+        self.assertFalse(MetaConnection.objects.exists())
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_meta_http_error_does_not_expose_or_save_token(self, request_mock):
+        start = self.client.get(reverse('meta-connect'))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        request_mock.return_value = self._response(
+            {'error': {'code': 190, 'type': 'OAuthException', 'message': 'sensitive remote detail'}},
+            ok=False,
+            status_code=400,
+        )
+        response = self.client.get(reverse('meta-callback'), {'code': 'rejected-code', 'state': state})
+        self.assertIn('meta_oauth=error', response['Location'])
+        self.assertNotIn('sensitive', response['Location'])
+        self.assertFalse(MetaConnection.objects.exists())
+
+    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(self):
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user,
+            facebook_user_id='facebook-user-selection',
+            access_token_encrypted=secret_store.encrypt('user-token'),
+            granted_scopes=sorted(REQUIRED_SCOPES),
+        )
+        page = MetaFacebookPage.objects.create(
+            connection=connection,
+            page_id='page-selection',
+            page_name='Página Selección',
+            page_access_token_encrypted=secret_store.encrypt('page-token'),
+        )
+        instagram = MetaInstagramAccount.objects.create(
+            facebook_page=page,
+            instagram_account_id='instagram-selection',
+            username='seleccion',
+        )
+        response = self.client.post(reverse('meta-connection-accounts', args=[connection.pk]), {
+            'facebook_page_ids': [page.page_id],
+            'instagram_account_ids': [instagram.instagram_account_id],
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ChannelIntegration.objects.get(channel='facebook').active)
+        instagram_integration = ChannelIntegration.objects.get(channel='instagram')
+        self.assertTrue(instagram_integration.active)
+        self.assertEqual(instagram_integration.meta_facebook_page, page)
+        integrations = self.client.get(reverse('meta-integrations'))
+        instagram_payload = next(item for item in integrations.data if item['channel'] == 'instagram')
+        self.assertTrue(instagram_payload['has_access_token'])
+        self.assertTrue(instagram_payload['managed_by_meta_oauth'])
+
+        disconnected = self.client.delete(reverse('meta-connection-detail', args=[connection.pk]))
+        self.assertEqual(disconnected.status_code, 204)
+        self.assertEqual(ChannelIntegration.objects.filter(active=True).count(), 0)
+        self.assertTrue(ChannelIntegration.objects.filter(meta_connection=connection).exists())
+        connection.refresh_from_db()
+        page.refresh_from_db()
+        self.assertEqual(connection.access_token_encrypted, '')
+        self.assertEqual(page.page_access_token_encrypted, '')
+
+    def test_connection_cannot_be_read_or_disconnected_by_another_admin(self):
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user,
+            facebook_user_id='private-facebook-user',
+            access_token_encrypted=secret_store.encrypt('private-token'),
+        )
+        self.client.force_authenticate(self.other_admin)
+        self.assertEqual(self.client.get(reverse('meta-connection-accounts', args=[connection.pk])).status_code, 404)
+        self.assertEqual(self.client.delete(reverse('meta-connection-detail', args=[connection.pk])).status_code, 404)
+
+    def test_cancelled_callback_does_not_create_connection(self):
+        response = self.client.get(reverse('meta-callback'), {'error': 'access_denied'})
+        self.assertIn('meta_oauth=denied', response['Location'])
+        self.assertFalse(MetaConnection.objects.exists())
 
 
 class ChannelAdapterTests(APITestCase):

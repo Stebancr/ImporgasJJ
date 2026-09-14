@@ -193,6 +193,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'crmChat.tasks.audit_meta_tokens',
         'schedule': timedelta(hours=24),
     },
+    'validate-meta-oauth-connections-daily': {
+        'task': 'crmChat.tasks.validate_meta_oauth_connections',
+        'schedule': timedelta(hours=24),
+    },
 }
 
 
@@ -400,6 +404,7 @@ FIREBASE_PRIVATE_KEY = config('FIREBASE_PRIVATE_KEY', default='')
 # valor predeterminado para impedir que una versión obsoleta se use sin revisión.
 META_GRAPH_API_URL = config('META_GRAPH_API_URL', default='https://graph.facebook.com')
 META_GRAPH_API_VERSION = config('META_GRAPH_API_VERSION', default='')
+META_APP_ID = config('META_APP_ID', default='')
 META_HTTP_TIMEOUT = config('META_HTTP_TIMEOUT', default=15, cast=int)
 META_WEBHOOK_MAX_BYTES = config('META_WEBHOOK_MAX_BYTES', default=2 * 1024 * 1024, cast=int)
 CRM_ATTACHMENT_MAX_BYTES = config('CRM_ATTACHMENT_MAX_BYTES', default=25 * 1024 * 1024, cast=int)
@@ -408,6 +413,20 @@ META_WEBHOOK_VERIFY_TOKEN = config('META_WEBHOOK_VERIFY_TOKEN', default='')
 META_APP_SECRET = config('META_APP_SECRET', default='')
 META_CREDENTIALS_ENCRYPTION_KEY = config('META_CREDENTIALS_ENCRYPTION_KEY', default='')
 META_TOKEN_WARNING_DAYS = config('META_TOKEN_WARNING_DAYS', default=7, cast=int)
+META_REDIRECT_URI = config('META_REDIRECT_URI', default='')
+META_OAUTH_AUTHORIZE_URL = config('META_OAUTH_AUTHORIZE_URL', default='https://www.facebook.com')
+META_OAUTH_STATE_MAX_AGE = config('META_OAUTH_STATE_MAX_AGE', default=600, cast=int)
+META_OAUTH_SCOPES = config(
+    'META_OAUTH_SCOPES',
+    default=(
+        'pages_show_list,pages_read_engagement,pages_manage_metadata,'
+        'pages_messaging,instagram_basic,instagram_manage_messages'
+    ),
+)
+META_OAUTH_FRONTEND_REDIRECT = config(
+    'META_OAUTH_FRONTEND_REDIRECT',
+    default='/admin/chat/integraciones',
+)
 
 # Instagram Business Login. La URI debe coincidir literalmente con la
 # registrada en Meta for Developers y apuntar al callback HTTPS de Django.

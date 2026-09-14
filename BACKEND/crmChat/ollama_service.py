@@ -89,10 +89,7 @@ REGLAS ESTRICTAS:
 
     def needs_human_agent(self, message):
         normalized = self._normalize(message)
-        explicit = any(re.search(pattern, normalized) for pattern in self.HUMAN_PATTERNS)
-        purchase = re.search(r'\b(?:comprar(?:lo|la)?|adquirir(?:lo|la)?|lo quiero|me lo llevo)\b', normalized)
-        negated = re.search(r'\bno\b.{0,25}\b(?:comprar|adquirir)', normalized)
-        return explicit or bool(purchase and not negated and not self._is_out_of_scope(message))
+        return any(re.search(pattern, normalized) for pattern in self.HUMAN_PATTERNS)
 
     def _is_out_of_scope(self, message):
         normalized = self._normalize(message)
@@ -190,9 +187,7 @@ REGLAS ESTRICTAS:
         state['previous_topics'] = list(state.get('previous_topics') or [])[-4:]
         normalized = self._normalize(message)
 
-        handoff = self.needs_human_agent(message)
-        # Elimina el presupuesto heredado para que no bloquee la selección.
-        state['budget'] = None
+        handoff = bool(state.get('needs_human')) or self.needs_human_agent(message)
 
         if any(word in normalized for word in self.PURCHASE_WORDS):
             state['intent'] = 'purchase'
@@ -212,6 +207,10 @@ REGLAS ESTRICTAS:
         if product:
             state['product'] = product
             state['intent'] = state.get('intent') or 'purchase'
+
+        budget = self._extract_budget(message, state)
+        if budget is not None:
+            state['budget'] = budget
 
         if any(phrase in normalized for phrase in (
             'cualquier marca', 'sin preferencia de marca', 'me da igual la marca', 'no importa la marca',
