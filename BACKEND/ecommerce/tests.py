@@ -8,7 +8,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from usuarios.models import Credenciales, Usuario
-from .models import Brand, Category, FCMDeviceToken, Order, Product, Review
+from .models import Brand, Category, FCMDeviceToken, Location, Order, Product, ProductStock, Review, WompiPaymentIntent
 from .email_service import send_order_payment_confirmation
 
 
@@ -52,25 +52,80 @@ class ProductReviewAPITests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class EcommercePurchaseFlowTests(APITestCase):
+    def setUp(self):
+        brand = Brand.objects.create(name='Marca Compra')
+        category = Category.objects.create(name='Categoría Compra')
+        self.product = Product.objects.create(
+            name='Producto comprable', description='Producto para flujo completo',
+            price=Decimal('600000.00'), brand=brand, category=category,
+        )
+        location = Location.objects.create(name='Bodega Compra', address='Calle 2', city='Bogotá')
+        ProductStock.objects.create(product=self.product, location=location, quantity=4)
+        self.payload = {
+            'customer_name': 'Cliente Compra', 'customer_email': 'compra@example.com',
+            'customer_phone': '3000000000', 'shipping_address': 'Calle 10 # 20-30',
+            'city': 'Bogotá', 'department': 'Bogotá D.C.', 'payment_method': 'cash',
+            'items': [{'product_id': self.product.id, 'quantity': 2}],
+        }
+
+    def test_catalog_detail_cart_payload_cash_order_and_tracking(self):
+        listing = self.client.get(reverse('product-list'))
+        detail = self.client.get(reverse('product-detail', args=[self.product.id]))
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.data['data']['total_stock'], 4)
+
+        response = self.client.post(reverse('order-list'), self.payload, format='json')
+        self.assertEqual(response.status_code, 201)
+        order = Order.objects.get(pk=response.data['data']['id'])
+        self.assertEqual(order.items.get().quantity, 2)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.total_stock, 2)
+        tracked = self.client.get(reverse('order-tracking', args=[order.tracking_code]))
+        self.assertEqual(tracked.status_code, 200)
+        self.assertEqual(tracked.data['data']['order_number'], order.order_number)
+
+    def test_zero_quantity_never_creates_order(self):
+        self.payload['items'][0]['quantity'] = 0
+        response = self.client.post(reverse('order-list'), self.payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+
 @override_settings(
     WOMPI_EVENTS_SECRET='events-secret-for-tests',
     WOMPI_PUBLIC_KEY='pub_test_for_tests',
+    WOMPI_INTEGRITY_SECRET='integrity-secret-for-tests',
     WOMPI_API_URL='https://sandbox.wompi.co/v1',
     WOMPI_HTTP_TIMEOUT=2,
 )
 class WompiPaymentTests(APITestCase):
-    def create_order(self, suffix):
-        return Order.objects.create(
-            customer_name='Cliente Wompi', customer_email='wompi@example.com',
-            shipping_address='Dirección de prueba', total=Decimal('125000.00'),
-            payment_method=Order.PaymentMethod.WOMPI,
-            wompi_reference=f'REF-{suffix}', wompi_status=Order.WompiStatus.PENDING,
+    def setUp(self):
+        brand = Brand.objects.create(name='Wompi Brand')
+        category = Category.objects.create(name='Wompi Category')
+        self.product = Product.objects.create(
+            name='Calentador Wompi', description='10 litros gas natural', price=Decimal('125000.00'),
+            brand=brand, category=category,
+        )
+        location = Location.objects.create(name='Bodega Wompi', address='Calle 1', city='Bogotá')
+        ProductStock.objects.create(product=self.product, location=location, quantity=10)
+
+    def create_intent(self, suffix):
+        return WompiPaymentIntent.objects.create(
+            reference=f'REF-{suffix}', subtotal=Decimal('125000.00'), shipping_cost=0,
+            total=Decimal('125000.00'), checkout_data={
+                'customer_name': 'Cliente Wompi', 'customer_email': 'wompi@example.com',
+                'shipping_address': 'Dirección de prueba',
+                'items': [{'product_id': self.product.id, 'product_name': self.product.name,
+                           'quantity': 1, 'unit_price': '125000.00'}],
+            },
         )
 
-    def signed_payload(self, order, payment_status):
+    def signed_payload(self, intent, payment_status):
         transaction = {
-            'id': f'TX-{payment_status}', 'reference': order.wompi_reference,
-            'status': payment_status, 'amount_in_cents': 12500000, 'currency': 'COP',
+            'id': f'TX-{intent.pk}-{payment_status}', 'reference': intent.reference,
+            'status': payment_status, 'amount_in_cents': int(intent.total * 100), 'currency': 'COP',
         }
         timestamp = 1700000000
         properties = ['transaction.id', 'transaction.status', 'transaction.amount_in_cents']
@@ -82,35 +137,52 @@ class WompiPaymentTests(APITestCase):
         }
 
     def test_signed_webhook_handles_all_wompi_states(self):
-        expected_order_status = {
-            'APPROVED': Order.Status.PAID, 'PENDING': Order.Status.PENDING,
-            'DECLINED': Order.Status.CANCELLED, 'VOIDED': Order.Status.CANCELLED,
-            'ERROR': Order.Status.CANCELLED,
-        }
-        for payment_status, order_status in expected_order_status.items():
+        for payment_status in ('APPROVED', 'PENDING', 'DECLINED', 'VOIDED', 'ERROR'):
             with self.subTest(payment_status=payment_status):
-                order = self.create_order(payment_status)
-                response = self.client.post(reverse('wompi-webhook'), self.signed_payload(order, payment_status), format='json')
+                intent = self.create_intent(payment_status)
+                response = self.client.post(reverse('wompi-webhook'), self.signed_payload(intent, payment_status), format='json')
                 self.assertEqual(response.status_code, 200)
-                order.refresh_from_db()
-                self.assertEqual(order.wompi_status, payment_status)
-                self.assertEqual(order.status, order_status)
+                intent.refresh_from_db()
+                self.assertEqual(intent.wompi_status, payment_status)
+                self.assertEqual(Order.objects.filter(wompi_reference=intent.reference).count(), 1 if payment_status == 'APPROVED' else 0)
+
+    def test_duplicate_approved_webhook_creates_one_order(self):
+        intent = self.create_intent('DUPLICATE')
+        payload = self.signed_payload(intent, 'APPROVED')
+        self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 200)
+        self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 200)
+        self.assertEqual(Order.objects.filter(wompi_reference=intent.reference).count(), 1)
+
+    def test_checkout_creates_intent_and_order_only_after_approval(self):
+        payload = {
+            'customer_name': 'Cliente Wompi', 'customer_email': 'wompi@example.com',
+            'shipping_address': 'Dirección de prueba', 'payment_method': 'wompi',
+            'wompi_reference': 'REF-CHECKOUT',
+            'items': [{'product_id': self.product.id, 'quantity': 1}],
+        }
+        response = self.client.post(reverse('order-list'), payload, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Order.objects.count(), 0)
+        intent = WompiPaymentIntent.objects.get(reference='REF-CHECKOUT')
+        approved = self.client.post(reverse('wompi-webhook'), self.signed_payload(intent, 'APPROVED'), format='json')
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(Order.objects.filter(wompi_reference='REF-CHECKOUT', status=Order.Status.PAID).count(), 1)
 
     def test_webhook_rejects_invalid_signature(self):
-        order = self.create_order('INVALID')
-        payload = self.signed_payload(order, 'APPROVED')
+        intent = self.create_intent('INVALID')
+        payload = self.signed_payload(intent, 'APPROVED')
         payload['signature']['checksum'] = 'invalid'
         self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 401)
 
     @patch('ecommerce.views.requests.get')
     def test_status_endpoint_verifies_transaction_with_wompi(self, request_get):
-        order = self.create_order('QUERY')
+        intent = self.create_intent('QUERY')
         provider_response = Mock()
         provider_response.raise_for_status.return_value = None
-        provider_response.json.return_value = {'data': self.signed_payload(order, 'APPROVED')['data']['transaction']}
+        provider_response.json.return_value = {'data': self.signed_payload(intent, 'APPROVED')['data']['transaction']}
         request_get.return_value = provider_response
         response = self.client.get(reverse('wompi-payment-status'), {
-            'tracking': str(order.tracking_code), 'transaction_id': 'TX-APPROVED',
+            'tracking': str(intent.tracking_code), 'transaction_id': f'TX-{intent.pk}-APPROVED',
         })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['payment_status'], 'APPROVED')

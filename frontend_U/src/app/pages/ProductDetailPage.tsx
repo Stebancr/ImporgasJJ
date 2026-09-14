@@ -90,14 +90,7 @@ function ProductDetailPage() {
   }
 
   const handleAddToCart = () => {
-    if (!isAuthenticated) {
-      sessionStorage.setItem(
-        'pendingCartItem',
-        JSON.stringify({ productId: product.id, quantity })
-      )
-      navigate(`/login?redirect=/producto/${product.id}`)
-      return
-    }
+    if (!product.isAvailable || product.stock < 1 || quantity < 1) return
     addToCart(product, quantity)
     setAddedToCart(true)
     setTimeout(() => setAddedToCart(false), 2000)
@@ -218,7 +211,7 @@ function ProductDetailPage() {
 
               {/* Stock Status */}
               <div className="flex items-center gap-2 mb-6">
-                {product.isAvailable ? (
+                {product.isAvailable && product.stock > 0 ? (
                   <>
                     <Check className="w-5 h-5 text-green-500" />
                     <span className="text-green-600 font-medium">En stock ({product.stock} disponibles)</span>
@@ -247,7 +240,7 @@ function ProductDetailPage() {
                 </div>
                 <button
                   onClick={handleAddToCart}
-                  disabled={!product.isAvailable}
+                  disabled={!product.isAvailable || product.stock < 1}
                   style={{ backgroundColor: addedToCart ? '#16a34a' : '#2563eb' }}
                   className="flex-1 flex items-center justify-center gap-2 py-3 px-8 rounded-lg font-semibold text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
                 >
@@ -259,7 +252,7 @@ function ProductDetailPage() {
                   ) : (
                     <>
                       <ShoppingCart className="w-5 h-5" />
-                      {isAuthenticated ? 'Agregar al Carrito' : 'Inicia sesión para comprar'}
+                      Agregar al Carrito
                     </>
                   )}
                 </button>

@@ -2,7 +2,7 @@ import api from './api'
 
 export type WompiStatus = 'APPROVED' | 'DECLINED' | 'PENDING' | 'VOIDED' | 'ERROR'
 export interface PaymentResult {
-  order_number: string; tracking_code: string; reference: string; transaction_id: string
+  order_number: string; tracking_code: string; payment_tracking_code: string; reference: string; transaction_id: string
   payment_status: WompiStatus; amount: string; currency: 'COP'; customer_name: string
   items: { product_name: string; quantity: number; unit_price: string }[]
 }

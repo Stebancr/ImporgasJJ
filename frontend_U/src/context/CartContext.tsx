@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import { CartItem, Product } from '../types'
 
 interface CartContextType {
@@ -11,21 +11,42 @@ interface CartContextType {
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined)
+const CART_STORAGE_KEY = 'imporgas-cart-v1'
+
+function readStoredCart(): CartItem[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || '[]') as CartItem[]
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item) =>
+      item?.product?.id && Number.isInteger(item.quantity) && item.quantity >= 1 &&
+      Number.isFinite(item.product.stock) && item.product.stock >= item.quantity
+    )
+  } catch {
+    localStorage.removeItem(CART_STORAGE_KEY)
+    return []
+  }
+}
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>([])
+  const [items, setItems] = useState<CartItem[]>(readStoredCart)
+
+  useEffect(() => {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items))
+  }, [items])
 
   const addToCart = useCallback((product: Product, quantity = 1) => {
+    const safeQuantity = Math.floor(Number(quantity))
+    if (!product.isAvailable || product.stock < 1 || safeQuantity < 1) return
     setItems((prev) => {
       const existing = prev.find((item) => item.product.id === product.id)
       if (existing) {
         return prev.map((item) =>
           item.product.id === product.id
-            ? { ...item, quantity: Math.min(item.quantity + quantity, product.stock) }
+            ? { ...item, product, quantity: Math.min(item.quantity + safeQuantity, product.stock) }
             : item
         )
       }
-      return [...prev, { product, quantity: Math.min(quantity, product.stock) }]
+      return [...prev, { product, quantity: Math.min(safeQuantity, product.stock) }]
     })
   }, [])
 
@@ -34,11 +55,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const updateQuantity = useCallback((productId: string, quantity: number) => {
-    if (quantity < 1) return
+    const safeQuantity = Math.floor(Number(quantity))
+    if (safeQuantity < 1) return
     setItems((prev) =>
       prev.map((item) =>
         item.product.id === productId
-          ? { ...item, quantity: Math.min(quantity, item.product.stock) }
+          ? { ...item, quantity: Math.max(1, Math.min(safeQuantity, item.product.stock)) }
           : item
       )
     )

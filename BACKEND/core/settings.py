@@ -329,6 +329,7 @@ OLLAMA_API_URL = config('OLLAMA_API_URL', default='http://ollama:11434/api/chat'
 OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen2.5:1.5b')
 OLLAMA_TIMEOUT = config('OLLAMA_TIMEOUT', default=90, cast=int)
 OLLAMA_NUM_CTX = config('OLLAMA_NUM_CTX', default=4096, cast=int)
+OLLAMA_ECOMMERCE_ENABLED = config('OLLAMA_ECOMMERCE_ENABLED', default=True, cast=bool)
 
 # Cache Configuration
 # Usa cache en memoria para desarrollo, Redis para producción

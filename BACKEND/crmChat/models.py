@@ -419,6 +419,10 @@ class ChatMessage(models.Model):
     external_timestamp = models.DateTimeField(null=True, blank=True)
     reply_to_external_id = models.CharField(max_length=255, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    bot_processing_at = models.DateTimeField(null=True, blank=True, editable=False)
+    reply_to_message = models.OneToOneField(
+        'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='bot_reply',
+    )
     created_at  = models.DateTimeField(auto_now_add=True)
 
     class Meta:

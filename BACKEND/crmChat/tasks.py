@@ -11,6 +11,7 @@ import requests
 from celery import shared_task
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.db import transaction
 from django.utils import timezone
 
 from .apps.meta.services import (
@@ -245,12 +246,18 @@ def _typing(session, enabled):
 def generate_omnichannel_bot_reply(self, user_message_id):
     """Usa la misma memoria estructurada de Ollama en cualquier canal."""
 
-    user_message = ChatMessage.objects.select_related('session').get(pk=user_message_id)
-    session = user_message.session
-    if session.status != 'bot':
-        return {'skipped': 'conversation_not_in_bot_mode'}
-    if ChatMessage.objects.filter(session=session, metadata__reply_to_message_id=user_message.id).exists():
-        return {'duplicate': True}
+    with transaction.atomic():
+        user_message = ChatMessage.objects.select_for_update().select_related('session').get(pk=user_message_id)
+        session = ChatSession.objects.select_for_update().get(pk=user_message.session_id)
+        stale_before = timezone.now() - timedelta(minutes=5)
+        if session.status != 'bot':
+            return {'skipped': 'conversation_not_in_bot_mode'}
+        if hasattr(user_message, 'bot_reply'):
+            return {'duplicate': True}
+        if user_message.bot_processing_at and user_message.bot_processing_at > stale_before:
+            return {'skipped': 'already_processing'}
+        user_message.bot_processing_at = timezone.now()
+        user_message.save(update_fields=['bot_processing_at'])
 
     previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8])
     history = [
@@ -268,22 +275,27 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             conversation_state=session.conversation_state,
             summary=session.conversation_summary,
         )
+    except Exception:
+        ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
+        raise
     finally:
         _typing(session, False)
-    session.conversation_state = result.get('state', session.conversation_state)
-    session.conversation_summary = result.get('summary', session.conversation_summary)
-    if result.get('needs_agent'):
-        session.status = 'waiting'
-    session.save(update_fields=['conversation_state', 'conversation_summary', 'status', 'updated_at'])
-
-    reply = ChatMessage.objects.create(
-        session=session,
-        text=result.get('response', 'No pude procesar el mensaje.'),
-        sender_type='bot',
-        direction='outbound',
-        status='queued',
-        metadata={'reply_to_message_id': user_message.id},
-    )
+    with transaction.atomic():
+        session = ChatSession.objects.select_for_update().get(pk=session.pk)
+        user_message = ChatMessage.objects.select_for_update().get(pk=user_message.pk)
+        if session.status != 'bot' or hasattr(user_message, 'bot_reply'):
+            return {'skipped': 'conversation_taken_or_replied'}
+        session.conversation_state = result.get('state', session.conversation_state)
+        session.conversation_summary = result.get('summary', session.conversation_summary)
+        if result.get('needs_agent'):
+            session.status = 'waiting'
+        session.save(update_fields=['conversation_state', 'conversation_summary', 'status', 'updated_at'])
+        reply = ChatMessage.objects.create(
+            session=session, reply_to_message=user_message,
+            text=result.get('response', 'No pude procesar el mensaje.'),
+            sender_type='bot', direction='outbound', status='queued',
+            metadata={'reply_to_message_id': user_message.id},
+        )
     dispatch_outbound_message(reply)
     publish_crm_event('message.created', session_id=session.id, message_id=reply.id)
     return {'message_id': reply.id}

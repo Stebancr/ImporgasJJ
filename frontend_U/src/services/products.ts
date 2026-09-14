@@ -68,7 +68,8 @@ function toProduct(p: ApiProduct): Product {
     reviewsCount: p.reviews_count,
     stock: p.total_stock,
     specifications: specs,
-    isAvailable: p.is_available,
+    // `is_available` controla la publicación; para comprar también debe haber inventario.
+    isAvailable: p.is_available && Number(p.total_stock) > 0,
     isFeatured: p.is_featured,
     discount: p.discount_percentage || undefined,
     slug: p.slug,
@@ -133,4 +134,3 @@ export const productsService = {
 }
 
 export default productsService
-

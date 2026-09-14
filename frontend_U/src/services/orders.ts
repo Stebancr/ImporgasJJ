@@ -48,6 +48,14 @@ export interface BackendOrder {
   updated_at: string
 }
 
+export interface WompiCheckoutIntent {
+  tracking_code: string
+  wompi_reference: string
+  wompi_signature: string
+  total: string
+  payment_status: 'PENDING'
+}
+
 export interface CreateOrderPayload {
   customer_name: string
   customer_email: string
@@ -66,6 +74,11 @@ export const ordersService = {
   create: async (data: CreateOrderPayload): Promise<BackendOrder> => {
     const res = await api.post<{ data: BackendOrder }>('/orders', data)
     return (res as unknown as { data: BackendOrder }).data
+  },
+
+  createWompiIntent: async (data: CreateOrderPayload): Promise<WompiCheckoutIntent> => {
+    const res = await api.post<{ data: BackendOrder | WompiCheckoutIntent }>('/orders', data)
+    return (res as unknown as { data: WompiCheckoutIntent }).data
   },
 
   getByTracking: async (trackingCode: string): Promise<BackendOrder> => {

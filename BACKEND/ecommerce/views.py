@@ -2,6 +2,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -18,7 +19,7 @@ from usuarios.permissions import IsAdminUser, IsNormalUserOrAdmin, IsAuthenticat
 from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
-    Review, Order, OrderItem, TrackingEvent,
+    Review, Order, OrderItem, TrackingEvent, WompiPaymentIntent,
     UserAddress, Favorite, Notification, FCMDeviceToken,
 )
 from .serializers import (
@@ -843,6 +844,48 @@ class OrderListView(APIView):
         shipping = 0 if subtotal >= SHIPPING_THRESHOLD else SHIPPING_COST
         total    = subtotal + shipping
 
+        # Wompi recibe una intención de pago, no una orden. La orden y el
+        # descuento de inventario ocurren únicamente tras la aprobación oficial.
+        if data['payment_method'] == 'wompi':
+            reference = data.get('wompi_reference', '')
+            if not reference:
+                return Response({'error': 'La referencia de pago es obligatoria.'}, status=400)
+            intent, created = WompiPaymentIntent.objects.get_or_create(
+                reference=reference,
+                defaults={
+                    'user': request.user if request.user.is_authenticated else None,
+                    'checkout_data': {
+                        'customer_name': data['customer_name'],
+                        'customer_email': data['customer_email'],
+                        'customer_phone': data.get('customer_phone', ''),
+                        'shipping_address': data['shipping_address'],
+                        'city': data.get('city', ''),
+                        'department': data.get('department', ''),
+                        'postal_code': data.get('postal_code', ''),
+                        'notes': data.get('notes', ''),
+                        'items': [{
+                            'product_id': item['product_id'], 'quantity': item['quantity'],
+                            'product_name': products[item['product_id']].name,
+                            'unit_price': str(products[item['product_id']].price),
+                        } for item in items_data],
+                    },
+                    'subtotal': subtotal, 'shipping_cost': shipping, 'total': total,
+                },
+            )
+            existing_items = [(item['product_id'], item['quantity']) for item in intent.checkout_data.get('items', [])]
+            submitted_items = [(item['product_id'], item['quantity']) for item in items_data]
+            if not created and (intent.total != total or existing_items != submitted_items):
+                return Response({'error': 'La referencia de pago ya fue utilizada.'}, status=409)
+            amount_in_cents = int(intent.total * 100)
+            signature_string = f"{intent.reference}{amount_in_cents}COP{settings.WOMPI_INTEGRITY_SECRET}"
+            return Response({'data': {
+                'tracking_code': str(intent.tracking_code),
+                'wompi_reference': intent.reference,
+                'wompi_signature': hashlib.sha256(signature_string.encode()).hexdigest(),
+                'total': str(intent.total),
+                'payment_status': intent.wompi_status,
+            }}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
         # ── 3. Crear orden ────────────────────────────────────────────────────
         # El estado inicial depende del método de pago:
         #   wompi → PENDING (confirmar luego vía webhook)
@@ -1034,39 +1077,79 @@ def _valid_wompi_event(payload, header_checksum=''):
     return hmac.compare_digest(expected.lower(), str(received).lower())
 
 
-def _validate_wompi_transaction(order, transaction_data):
+def _validate_wompi_intent(intent, transaction_data):
     try:
-        amount_matches = int(transaction_data.get('amount_in_cents', -1)) == int(order.total * 100)
+        amount_matches = int(transaction_data.get('amount_in_cents', -1)) == int(intent.total * 100)
     except (TypeError, ValueError):
         amount_matches = False
     return (
-        transaction_data.get('reference') == order.wompi_reference
-        and transaction_data.get('currency') == 'COP'
+        transaction_data.get('reference') == intent.reference
+        and transaction_data.get('currency') == intent.currency
         and amount_matches
         and transaction_data.get('status') in dict(Order.WompiStatus.choices)
+        and bool(transaction_data.get('id'))
     )
 
 
-def _apply_wompi_status(order, transaction_data):
-    tx_status = transaction_data['status']
-    previous = order.wompi_status
-    should_send_confirmation = (
-        tx_status == Order.WompiStatus.APPROVED
-        and not order.payment_confirmation_email_sent_at
+def _create_approved_order(intent):
+    """Materializa una intención aprobada una sola vez, bajo bloqueo de fila."""
+    if intent.order_id:
+        return intent.order
+    data = intent.checkout_data
+    order = Order.objects.create(
+        user=intent.user, customer_name=data['customer_name'], customer_email=data['customer_email'],
+        customer_phone=data.get('customer_phone', ''), shipping_address=data['shipping_address'],
+        city=data.get('city', ''), department=data.get('department', ''),
+        postal_code=data.get('postal_code', ''), notes=data.get('notes', ''),
+        subtotal=intent.subtotal, shipping_cost=intent.shipping_cost, total=intent.total,
+        payment_method=Order.PaymentMethod.WOMPI, wompi_reference=intent.reference,
+        wompi_transaction_id=intent.transaction_id or '', wompi_status=Order.WompiStatus.APPROVED,
+        status=Order.Status.PAID,
     )
-    order.wompi_status = tx_status
-    order.wompi_transaction_id = transaction_data.get('id', order.wompi_transaction_id)
-    if tx_status == Order.WompiStatus.APPROVED:
-        order.status = Order.Status.PAID
-    elif tx_status in (Order.WompiStatus.DECLINED, Order.WompiStatus.ERROR, Order.WompiStatus.VOIDED):
-        order.status = Order.Status.CANCELLED
-    order.save(update_fields=['wompi_status', 'wompi_transaction_id', 'status', 'updated_at'])
-    if previous != tx_status:
-        TrackingEvent.objects.create(order=order, status=order.status, description=f"Estado del pago Wompi actualizado a {tx_status}.")
-    if should_send_confirmation:
-        transaction.on_commit(
-            lambda order_id=order.pk: send_order_payment_confirmation(order_id)
+    stock_shortages = []
+    for item in data['items']:
+        product = Product.objects.select_for_update().get(pk=item['product_id'])
+        quantity = item['quantity']
+        OrderItem.objects.create(
+            order=order, product=product, quantity=quantity,
+            unit_price=item.get('unit_price', product.price),
         )
+        remaining = quantity
+        for stock_entry in ProductStock.objects.filter(product=product, quantity__gt=0).order_by('-quantity').select_for_update():
+            deduct = min(stock_entry.quantity, remaining)
+            stock_entry.quantity -= deduct
+            stock_entry.save()
+            remaining -= deduct
+            if remaining == 0:
+                break
+        if remaining:
+            stock_shortages.append(f'{product.name}: {remaining} unidad(es)')
+    description = 'Pago confirmado por Wompi. Orden creada.'
+    if stock_shortages:
+        description += ' Requiere gestión de inventario: ' + ', '.join(stock_shortages)
+    TrackingEvent.objects.create(order=order, status=Order.Status.PAID, description=description)
+    intent.order = order
+    intent.processed_at = timezone.now()
+    intent.save(update_fields=['order', 'processed_at', 'updated_at'])
+    transaction.on_commit(lambda order_id=order.pk: send_order_payment_confirmation(order_id))
+    return order
+
+
+def _apply_wompi_intent_status(intent, transaction_data):
+    tx_status = transaction_data['status']
+    tx_id = transaction_data['id']
+    if intent.transaction_id and intent.transaction_id != tx_id:
+        raise ValueError('La intención ya está asociada a otra transacción.')
+    # Un pago aprobado nunca retrocede por eventos tardíos o duplicados.
+    if intent.wompi_status == Order.WompiStatus.APPROVED and tx_status != Order.WompiStatus.APPROVED:
+        return intent.order
+    intent.transaction_id = tx_id
+    intent.wompi_status = tx_status
+    intent.provider_payload = transaction_data
+    if tx_status == Order.WompiStatus.APPROVED:
+        intent.approved_at = intent.approved_at or timezone.now()
+    intent.save(update_fields=['transaction_id', 'wompi_status', 'provider_payload', 'approved_at', 'updated_at'])
+    return _create_approved_order(intent) if tx_status == Order.WompiStatus.APPROVED else None
 
 
 class WompiWebhookView(APIView):
@@ -1082,12 +1165,15 @@ class WompiWebhookView(APIView):
             return Response({'ok': True})
         transaction_data = request.data.get('data', {}).get('transaction', {})
         try:
-            order = Order.objects.select_for_update().get(wompi_reference=transaction_data.get('reference', ''))
-        except Order.DoesNotExist:
-            return Response({'error': 'order not found'}, status=404)
-        if not _validate_wompi_transaction(order, transaction_data):
-            return Response({'error': 'transaction does not match order'}, status=400)
-        _apply_wompi_status(order, transaction_data)
+            intent = WompiPaymentIntent.objects.select_for_update().get(reference=transaction_data.get('reference', ''))
+        except WompiPaymentIntent.DoesNotExist:
+            return Response({'error': 'payment intent not found'}, status=404)
+        if not _validate_wompi_intent(intent, transaction_data):
+            return Response({'error': 'transaction does not match payment intent'}, status=400)
+        try:
+            _apply_wompi_intent_status(intent, transaction_data)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=409)
         return Response({'ok': True})
 
 
@@ -1102,9 +1188,9 @@ class WompiPaymentStatusView(APIView):
         if not tracking_code:
             return Response({'error': 'tracking is required'}, status=400)
         try:
-            order = Order.objects.prefetch_related('items__product').get(tracking_code=tracking_code, payment_method=Order.PaymentMethod.WOMPI)
-        except (Order.DoesNotExist, ValueError):
-            return Response({'error': 'order not found'}, status=404)
+            intent = WompiPaymentIntent.objects.select_related('order').get(tracking_code=tracking_code)
+        except (WompiPaymentIntent.DoesNotExist, ValueError):
+            return Response({'error': 'payment intent not found'}, status=404)
 
         if transaction_id:
             if not settings.WOMPI_PUBLIC_KEY:
@@ -1120,22 +1206,28 @@ class WompiPaymentStatusView(APIView):
             except (requests.RequestException, ValueError):
                 logger.exception('No fue posible consultar la transacción Wompi %s', transaction_id)
                 return Response({'error': 'payment provider unavailable'}, status=502)
-            if not _validate_wompi_transaction(order, transaction_data):
-                return Response({'error': 'transaction does not match order'}, status=400)
+            if not _validate_wompi_intent(intent, transaction_data):
+                return Response({'error': 'transaction does not match payment intent'}, status=400)
             with transaction.atomic():
-                order = Order.objects.select_for_update().get(pk=order.pk)
-                _apply_wompi_status(order, transaction_data)
+                intent = WompiPaymentIntent.objects.select_for_update().get(pk=intent.pk)
+                try:
+                    _apply_wompi_intent_status(intent, transaction_data)
+                except ValueError as exc:
+                    return Response({'error': str(exc)}, status=409)
+        intent.refresh_from_db()
+        order = intent.order
 
         return Response({
-            'order_number': order.order_number,
-            'tracking_code': str(order.tracking_code),
-            'reference': order.wompi_reference,
-            'transaction_id': order.wompi_transaction_id,
-            'payment_status': order.wompi_status or Order.WompiStatus.PENDING,
-            'amount': str(order.total),
-            'currency': 'COP',
-            'customer_name': order.customer_name,
-            'items': [{'product_name': item.product.name, 'quantity': item.quantity, 'unit_price': str(item.unit_price)} for item in order.items.all()],
+            'order_number': order.order_number if order else '',
+            'tracking_code': str(order.tracking_code) if order else '',
+            'payment_tracking_code': str(intent.tracking_code),
+            'reference': intent.reference,
+            'transaction_id': intent.transaction_id or '',
+            'payment_status': intent.wompi_status,
+            'amount': str(intent.total), 'currency': intent.currency,
+            'customer_name': intent.checkout_data.get('customer_name', ''),
+            'items': ([{'product_name': item.product.name, 'quantity': item.quantity, 'unit_price': str(item.unit_price)} for item in order.items.select_related('product')]
+                      if order else intent.checkout_data.get('items', [])),
         })
 
 

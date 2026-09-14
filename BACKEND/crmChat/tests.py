@@ -40,20 +40,20 @@ from core.asgi import application
 
 
 class ConversationStateTests(APITestCase):
-    def test_purchase_budget_topic_change_and_return(self):
-        state = ollama_service.update_state('Quiero comprar un calentador')
+    def test_product_context_ignores_budget_and_tracks_topics(self):
+        state = ollama_service.update_state('Estoy interesado en un calentador')
         self.assertEqual(state['intent'], 'purchase')
         self.assertEqual(state['product'], 'calentador')
         self.assertFalse(state['needs_human'])
 
         state = ollama_service.update_state('Tengo un millón', state)
-        self.assertEqual(state['budget'], 1_000_000)
+        self.assertIsNone(state['budget'])
         self.assertEqual(state['stage'], 'recommendation')
 
         state = ollama_service.update_state('¿Y hacen envíos?', state)
         self.assertEqual(state['topic'], 'shipping')
         self.assertEqual(state['product'], 'calentador')
-        self.assertEqual(state['budget'], 1_000_000)
+        self.assertIsNone(state['budget'])
 
         state = ollama_service.update_state('¿Qué garantía manejan?', state)
         self.assertEqual(state['topic'], 'warranty')
@@ -64,6 +64,8 @@ class ConversationStateTests(APITestCase):
 
     def test_buying_does_not_escalate_but_explicit_advisor_does(self):
         self.assertFalse(ollama_service.needs_human_agent('Quiero comprar un celular'))
+        self.assertTrue(ollama_service.needs_human_agent('Quiero comprar un calentador'))
+        self.assertTrue(ollama_service.needs_human_agent('Necesito cotizar 20 unidades'))
         self.assertTrue(ollama_service.needs_human_agent('Quiero hablar con un asesor'))
         self.assertTrue(ollama_service.needs_human_agent('No me estás entendiendo'))
 
@@ -89,7 +91,7 @@ class ConversationStateTests(APITestCase):
         session = ChatSession.objects.get(pk=session_id)
         self.assertEqual(session.conversation_state['intent'], 'purchase')
         self.assertEqual(session.conversation_state['product'], 'celular')
-        self.assertEqual(session.conversation_state['budget'], 1_000_000)
+        self.assertIsNone(session.conversation_state['budget'])
         self.assertEqual(session.conversation_state['topic'], 'shipping')
         self.assertIn('catálogo actual', responses['¿Cuál me recomiendas?'])
         self.assertIn('envíos a todo el país', responses['¿Y hacen envíos?'])
@@ -100,9 +102,18 @@ class ConversationStateTests(APITestCase):
             'session_id': session_id,
         }, format='json')
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data['needs_login'])
+        self.assertTrue(response.data['needs_agent'])
         session.refresh_from_db()
         self.assertTrue(session.conversation_state['needs_human'])
+        self.assertEqual(session.status, 'waiting')
+
+        bot_count = session.messages.filter(sender_type='bot').count()
+        response = self.client.post(reverse('bot-chat'), {
+            'message': '¿Sigues ahí?', 'session_id': session_id,
+        }, format='json')
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data['message'], '')
+        self.assertEqual(session.messages.filter(sender_type='bot').count(), bot_count)
 
 
 class OmnichannelModelTests(APITestCase):

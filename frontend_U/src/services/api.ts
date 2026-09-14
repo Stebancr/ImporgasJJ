@@ -6,6 +6,21 @@ interface RequestOptions {
   headers?: Record<string, string>
 }
 
+function errorMessage(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(errorMessage).filter(Boolean).join(' ')
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if (typeof record.message === 'string') return record.message
+    if (typeof record.error === 'string') return record.error
+    return Object.entries(record)
+      .map(([field, detail]) => `${field}: ${errorMessage(detail)}`)
+      .filter((part) => !part.endsWith(': '))
+      .join(' ')
+  }
+  return ''
+}
+
 // Flag to prevent multiple simultaneous refresh attempts
 let isRefreshing = false
 let refreshSubscribers: Array<(token: string) => void> = []
@@ -91,7 +106,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Error de conexión' }))
-    throw new Error(error.message || 'Error en la solicitud')
+    throw new Error(errorMessage(error) || 'Error en la solicitud')
   }
 
   return response.json()

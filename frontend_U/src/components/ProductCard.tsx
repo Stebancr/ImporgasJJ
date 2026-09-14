@@ -50,14 +50,6 @@ function ProductCard({ product }: ProductCardProps) {
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault()
-    if (!isAuthenticated) {
-      sessionStorage.setItem(
-        'pendingCartItem',
-        JSON.stringify({ productId: product.id, quantity: 1 })
-      )
-      navigate(`/login?redirect=/producto/${product.id}`)
-      return
-    }
     addToCart(product, 1)
   }
 
@@ -146,7 +138,7 @@ function ProductCard({ product }: ProductCardProps) {
         </div>
 
         {/* Out of Stock Overlay */}
-        {!product.isAvailable && (
+        {(!product.isAvailable || product.stock < 1) && (
           <div className="absolute inset-0 bg-[#1A1D21]/60 backdrop-blur-sm flex items-center justify-center">
             <span className="px-4 py-2 bg-white text-[#1A1D21] font-semibold rounded-lg shadow-lg">
               Agotado
@@ -162,7 +154,7 @@ function ProductCard({ product }: ProductCardProps) {
         >
           <button
             onClick={handleAddToCart}
-            disabled={!product.isAvailable}
+            disabled={!product.isAvailable || product.stock < 1}
             className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:shadow-[#001575]/25 transition-all disabled:opacity-50"
           >
             <ShoppingCart className="w-5 h-5" />
@@ -224,7 +216,7 @@ function ProductCard({ product }: ProductCardProps) {
         {/* Mobile: always-visible add-to-cart */}
         <button
           onClick={handleAddToCart}
-          disabled={!product.isAvailable}
+          disabled={!product.isAvailable || product.stock < 1}
           className="sm:hidden w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
         >
           <ShoppingCart className="w-4 h-4" />

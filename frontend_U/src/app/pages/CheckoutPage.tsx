@@ -92,7 +92,7 @@ function CheckoutPage() {
   )
   const shipping = subtotal >= 500000 ? 0 : 25000
   const total = subtotal + shipping
-  const amountInCents = total * 100
+  const amountInCents = Math.round(total * 100)
 
   // Unique reference per session
   const reference = useMemo(
@@ -113,6 +113,10 @@ function CheckoutPage() {
 
   const handleSubmitInfo = (e: React.FormEvent) => {
     e.preventDefault()
+    if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
+      alert('El carrito contiene una cantidad inválida. Regresa al carrito y vuelve a agregar el producto.')
+      return
+    }
     setStep('payment')
   }
 
@@ -129,7 +133,6 @@ function CheckoutPage() {
         department: form.department,
         postal_code: form.postalCode,
         payment_method: 'cash',
-        wompi_reference: reference,
         items: items.map((i) => ({
           product_id: parseInt(i.product.id),
           quantity: i.quantity,
@@ -148,7 +151,7 @@ function CheckoutPage() {
   const handleWompiConfirm = async () => {
     setSubmitting(true)
     try {
-      const order = await ordersService.create({
+      const paymentIntent = await ordersService.createWompiIntent({
         customer_name: form.name,
         customer_email: form.email,
         customer_phone: form.phone,
@@ -166,9 +169,8 @@ function CheckoutPage() {
       
       // Store order info for after redirect
       sessionStorage.setItem('pendingWompiOrder', JSON.stringify({
-        tracking_code: order.tracking_code,
+        tracking_code: paymentIntent.tracking_code,
         reference,
-        clearCartOnReturn: true,
       }))
       
       // Mark that we're processing Wompi payment (don't show empty cart message)
@@ -216,21 +218,21 @@ function CheckoutPage() {
       }
 
       // ✨ Agregar signature de integridad (requerida por Wompi)
-      if (order.wompi_signature) {
-        params.set('signature:integrity', order.wompi_signature)
-        console.log('✅ Wompi signature agregada:', order.wompi_signature)
+      if (paymentIntent.wompi_signature) {
+        params.set('signature:integrity', paymentIntent.wompi_signature)
+        console.log('✅ Wompi signature agregada:', paymentIntent.wompi_signature)
       } else {
         console.warn('⚠️ No se recibió signature de Wompi. El pago puede fallar.')
       }
 
       if (!isLocalhost) {
-        const redirectUrl = `${window.location.origin}/checkout/resultado?tracking=${order.tracking_code}`
+        const redirectUrl = `${window.location.origin}/checkout/resultado?tracking=${paymentIntent.tracking_code}`
         params.set('redirect-url', redirectUrl)
       }
 
       window.location.href = `https://checkout.wompi.co/p/?${params.toString()}`
 
-      return order
+      return paymentIntent
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
       alert(message)
@@ -512,8 +514,8 @@ function CheckoutPage() {
                 {form.paymentMethod === 'wompi' && (
                   <div className="mb-4 p-4 bg-blue-50 rounded-xl">
                     <p className="text-sm text-blue-800">
-                      Al hacer clic en <strong>"Pagar con Wompi"</strong> registraremos tu pedido y te redirigiremos al
-                      checkout seguro de Wompi para completar el pago de <strong>{formatPrice(total)}</strong>.
+                      Al hacer clic en <strong>"Pagar con Wompi"</strong> te redirigiremos al checkout seguro de Wompi
+                      para completar el pago de <strong>{formatPrice(total)}</strong>. La orden se creará cuando Wompi confirme el pago.
                     </p>
                     <p className="text-xs text-blue-600 mt-2">
                       Acepta tarjetas crédito/débito, PSE, Nequi, Bancolombia y más.

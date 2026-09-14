@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { CheckCircle, Package, ArrowRight, Loader2 } from 'lucide-react'
 import ordersService from '../../services/orders'
-import { useCart } from '../../context/CartContext'
 
 interface OrderDetails {
   tracking_code: string
@@ -16,7 +15,6 @@ interface OrderDetails {
 function OrderConfirmationPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { clearCart } = useCart()
   const [loading, setLoading] = useState(true)
   const [order, setOrder] = useState<OrderDetails | null>(null)
   const [error, setError] = useState('')
@@ -32,14 +30,17 @@ function OrderConfirmationPage() {
     const trackingCode = searchParams.get('tracking')
     const reference = searchParams.get('id')
 
-    // Check if there's a pending Wompi order
+    // Some Wompi configurations still return to this legacy route. Send those
+    // responses through the status verifier; it clears the cart only on APPROVED.
     const pendingOrder = sessionStorage.getItem('pendingWompiOrder')
     if (pendingOrder) {
       try {
         const orderData = JSON.parse(pendingOrder)
-        if (orderData.clearCartOnReturn) {
-          clearCart()
-          sessionStorage.removeItem('pendingWompiOrder')
+        if (orderData.tracking_code) {
+          const params = new URLSearchParams({ tracking: orderData.tracking_code })
+          if (reference) params.set('id', reference)
+          navigate(`/checkout/resultado?${params.toString()}`, { replace: true })
+          return
         }
       } catch (e) {
         console.error('Error parsing pending order:', e)

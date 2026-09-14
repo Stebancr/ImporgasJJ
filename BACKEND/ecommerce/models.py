@@ -446,6 +446,38 @@ class Order(models.Model):
         return f"{self.order_number} [{self.status}] — {self.customer_name}"
 
 
+class WompiPaymentIntent(models.Model):
+    """Datos del checkout antes del pago; una intención todavía no es una orden."""
+
+    tracking_code = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    reference = models.CharField(max_length=200, unique=True)
+    transaction_id = models.CharField(max_length=200, null=True, blank=True, unique=True)
+    wompi_status = models.CharField(
+        max_length=10, choices=Order.WompiStatus.choices, default=Order.WompiStatus.PENDING,
+    )
+    checkout_data = models.JSONField(default=dict)
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2)
+    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2)
+    total = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3, default='COP')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    order = models.OneToOneField(
+        Order, null=True, blank=True, on_delete=models.SET_NULL, related_name='payment_intent',
+    )
+    provider_payload = models.JSONField(default=dict, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'wompi_payment_intents'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.reference
+
+
 # ─────────────────────────────────────────────
 #  ORDER ITEM
 # ─────────────────────────────────────────────

@@ -2,9 +2,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
+from django.db import transaction
 from django.db.models import F, Q
+from django.conf import settings
 
-from .models import AssignmentQueue, ChatAuditEvent, ChatSession, ChatMessage, QueueMember
+from .models import AssignmentQueue, ChannelIntegration, ChatAuditEvent, ChatSession, ChatMessage, QueueMember
 from .ollama_service import ollama_service
 from .apps.meta.services import MetaAPIError, dispatch_outbound_message
 from .realtime import publish_crm_event
@@ -495,11 +497,16 @@ class BotChatView(APIView):
 
         # Crear nueva sesión si no existe
         if not session:
+            ecommerce_integration = ChannelIntegration.objects.filter(
+                channel=ChannelIntegration.CHANNEL_ECOMMERCE, active=True,
+            ).first()
             session = ChatSession.objects.create(
                 user_id_ref=user_id_ref,
                 user_name=user_name,
                 user_cedula=user_cedula,
                 status='bot',  # Inicialmente con bot
+                channel=ChannelIntegration.CHANNEL_ECOMMERCE,
+                integration=ecommerce_integration,
             )
             logger.info(f"Nueva sesión de chat creada: {session.id} para {user_name}")
 
@@ -512,6 +519,19 @@ class BotChatView(APIView):
             direction='inbound',
             status='received',
         )
+
+        # Cuando un asesor ya tomó la conversación, el mensaje queda en el CRM
+        # y Ollama no interviene. También admite apagar el bot del ecommerce.
+        ecommerce_bot_enabled = getattr(settings, 'OLLAMA_ECOMMERCE_ENABLED', True)
+        if session.integration_id:
+            ecommerce_bot_enabled = bool(session.integration.configuration.get('bot_enabled', False))
+        if session.status != 'bot' or not ecommerce_bot_enabled:
+            return Response({
+                'session_id': session.id, 'message': '', 'sender_type': 'bot',
+                'status': session.status, 'needs_agent': session.status == 'waiting',
+                'needs_login': False, 'user_message_id': user_message.id,
+                'bot_message_id': None, 'conversation_state': session.conversation_state,
+            }, status=status.HTTP_202_ACCEPTED)
 
         # Obtener historial de conversación para contexto
         conversation_history = []
@@ -534,37 +554,28 @@ class BotChatView(APIView):
 
         bot_response_text = bot_result.get('response', 'Lo siento, no pude procesar tu mensaje.')
         needs_agent = bot_result.get('needs_agent', False)
-        session.conversation_state = bot_result.get('state', session.conversation_state)
-        session.conversation_summary = bot_result.get('summary', session.conversation_summary)
-        session.save(update_fields=['conversation_state', 'conversation_summary', 'updated_at'])
-
-        # Guardar respuesta del bot
-        bot_message = ChatMessage.objects.create(
-            session=session,
-            text=bot_response_text,
-            sender_type='bot',
-            sender_name='',
-            direction='outbound',
-            status='sent',
-        )
-
-        # Si necesita agente:
-        # - Usuario autenticado → marcar sesión como 'waiting' (en cola para asesor)
-        # - Usuario anónimo    → NOT marcar como waiting; pedir que inicie sesión
+        with transaction.atomic():
+            session = ChatSession.objects.select_for_update().get(pk=session.pk)
+            if session.status != 'bot':
+                return Response({
+                    'session_id': session.id, 'message': '', 'sender_type': 'bot',
+                    'status': session.status, 'needs_agent': session.status == 'waiting',
+                    'needs_login': False, 'user_message_id': user_message.id,
+                    'bot_message_id': None, 'conversation_state': session.conversation_state,
+                }, status=status.HTTP_202_ACCEPTED)
+            session.conversation_state = bot_result.get('state', session.conversation_state)
+            session.conversation_summary = bot_result.get('summary', session.conversation_summary)
+            if needs_agent:
+                session.status = 'waiting'
+                session.unread_by_agent += 1
+            session.save(update_fields=[
+                'conversation_state', 'conversation_summary', 'status', 'unread_by_agent', 'updated_at',
+            ])
+            bot_message = ChatMessage.objects.create(
+                session=session, reply_to_message=user_message, text=bot_response_text,
+                sender_type='bot', sender_name='', direction='outbound', status='sent',
+            )
         needs_login = False
-        if needs_agent:
-            is_authenticated = request.user and request.user.is_authenticated
-            if is_authenticated:
-                if session.status == 'bot':
-                    session.status = 'waiting'
-                    session.unread_by_agent = 1
-                    session.save()
-                    logger.info(f"Sesión {session.id} → 'waiting' (usuario autenticado)")
-            else:
-                # Usuario anónimo: conservar historial pero no poner en cola aún
-                needs_login = True
-                needs_agent = False  # No cambiar status todavía
-                logger.info(f"Sesión {session.id}: necesita login para hablar con asesor")
 
         return Response({
             'session_id': session.id,

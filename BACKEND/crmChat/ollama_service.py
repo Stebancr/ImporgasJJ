@@ -89,7 +89,15 @@ REGLAS ESTRICTAS:
 
     def needs_human_agent(self, message):
         normalized = self._normalize(message)
-        return any(re.search(pattern, normalized) for pattern in self.HUMAN_PATTERNS)
+        explicit = any(re.search(pattern, normalized) for pattern in self.HUMAN_PATTERNS)
+        commercial = re.search(
+            r'\b(?:comprar(?:lo|la)?|adquirir(?:lo|la)?|cotizar|cotizacion|negociar|mayoreo|al por mayor|me lo llevo)\b',
+            normalized,
+        )
+        quantity = re.search(r'\b\d+\s*(?:unidades?|equipos?|calentadores?|reguladores?)\b', normalized)
+        how_to_buy = re.search(r'\b(?:como|donde)\s+(?:lo\s+)?(?:compro|comprar|adquiero|adquirir)\b', normalized)
+        negated = re.search(r'\b(?:no|todavia no|aun no)\b.{0,25}\b(?:comprar|adquirir|cotizar)', normalized)
+        return explicit or bool((commercial or quantity or how_to_buy) and not negated and not self._is_out_of_scope(message))
 
     def _is_out_of_scope(self, message):
         normalized = self._normalize(message)
@@ -196,9 +204,8 @@ REGLAS ESTRICTAS:
         use_case = self._detect_use_case(message)
         product = self._extract_product(message)
 
-        # Limpiar presupuesto si el usuario pide un producto diferente al actual
-        if product and product != (current_state or {}).get('product'):
-            state['budget'] = None
+        # El bot orienta por producto y especificaciones, no solicita ni conserva presupuesto.
+        state['budget'] = None
 
         if category:
             state['category'] = category
@@ -207,10 +214,6 @@ REGLAS ESTRICTAS:
         if product:
             state['product'] = product
             state['intent'] = state.get('intent') or 'purchase'
-
-        budget = self._extract_budget(message, state)
-        if budget is not None:
-            state['budget'] = budget
 
         if any(phrase in normalized for phrase in (
             'cualquier marca', 'sin preferencia de marca', 'me da igual la marca', 'no importa la marca',
@@ -273,7 +276,7 @@ REGLAS ESTRICTAS:
         parts = []
         labels = (
             ('intent', 'intención'), ('product', 'producto'), ('category', 'categoría'),
-            ('use_case', 'uso'), ('budget', 'presupuesto'), ('stage', 'etapa'), ('topic', 'tema'),
+            ('use_case', 'uso'), ('stage', 'etapa'), ('topic', 'tema'),
         )
         for key, label in labels:
             value = state.get(key)
@@ -376,7 +379,7 @@ REGLAS ESTRICTAS:
             from django.db.models import Q
             from ecommerce.models import Product
 
-            products = Product.objects.filter(is_available=True).select_related('category', 'brand')
+            products = Product.objects.filter(is_available=True).select_related('category', 'brand').prefetch_related('specifications__attribute')
 
             if category_filter:
                 products = products.filter(category__name__iexact=category_filter)
@@ -444,6 +447,12 @@ REGLAS ESTRICTAS:
                 f'**{p.name}**',
                 f'Marca: {p.brand.name} | Precio: ${float(p.price):,.0f} | {availability}{budget_note}',
             ]
+            specs = list(p.specifications.all())[:5]
+            if specs:
+                lines.append('Características: ' + ', '.join(
+                    f'{spec.attribute.name}: {spec.value}{(" " + spec.attribute.unit) if spec.attribute.unit else ""}'
+                    for spec in specs
+                ))
             if desc:
                 lines.append(desc[:100])
             lines.append(f'/producto/{p.id}')

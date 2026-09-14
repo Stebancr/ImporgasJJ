@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
-    Review, Order, OrderItem, TrackingEvent,
+    Review, Order, OrderItem, TrackingEvent, WompiPaymentIntent,
 )
 
 
@@ -77,3 +77,24 @@ class OrderAdmin(admin.ModelAdmin):
     list_display = ['id', 'user', 'total', 'status', 'payment_method', 'created_at']
     list_filter = ['status']
     inlines = [OrderItemInline, TrackingEventInline]
+
+
+@admin.register(WompiPaymentIntent)
+class WompiPaymentIntentAdmin(admin.ModelAdmin):
+    list_display = ['reference', 'transaction_id', 'wompi_status', 'order', 'total', 'created_at']
+    list_filter = ['wompi_status']
+    search_fields = ['reference', 'transaction_id']
+    readonly_fields = [
+        'tracking_code', 'reference', 'transaction_id', 'wompi_status', 'checkout_data',
+        'subtotal', 'shipping_cost', 'total', 'currency', 'user', 'order',
+        'provider_payload', 'approved_at', 'processed_at', 'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

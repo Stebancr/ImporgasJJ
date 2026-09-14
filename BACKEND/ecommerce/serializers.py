@@ -245,7 +245,13 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class OrderItemInputSerializer(serializers.Serializer):
     product_id = serializers.IntegerField()
-    quantity   = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(
+        min_value=1,
+        error_messages={
+            'min_value': 'La cantidad debe ser mayor o igual a 1.',
+            'invalid': 'La cantidad debe ser un número entero.',
+        },
+    )
 
 
 class OrderCreateSerializer(serializers.Serializer):

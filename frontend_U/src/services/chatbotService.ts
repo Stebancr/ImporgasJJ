@@ -22,7 +22,7 @@ export interface ChatResponse {
   needs_agent: boolean;
   needs_login: boolean;    // true cuando el usuario anónimo quiere un asesor
   user_message_id: number;
-  bot_message_id: number;
+  bot_message_id: number | null;
 }
 
 export interface SessionMessagesResponse {

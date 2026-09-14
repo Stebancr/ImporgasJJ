@@ -211,26 +211,6 @@ function Chatbot() {
   const pushBotMsg = (text: string) =>
     setMessages((prev) => [...prev, { id: Date.now(), text, isBot: true, timestamp: new Date() }])
 
-  // ── request agent ─────────────────────────────────────────────────────────
-  const handleRequestAgent = async () => {
-    if (!isAuthenticated) {
-      pushBotMsg('Para hablar con un asesor, necesitas iniciar sesion en tu cuenta primero.')
-      return
-    }
-    setChatMode('creating')
-    try {
-      const initialMsgs = messages.map((m) => ({ text: m.text, is_bot: m.isBot }))
-      const session = await chatService.createSession(initialMsgs)
-      setSessionId(session.id)
-      sessionStorage.setItem('chatSessionId', String(session.id))
-      setChatMode('waiting')
-      pushBotMsg('Tu solicitud fue enviada. Un asesor se conectara contigo en breve...')
-    } catch {
-      setChatMode('local')
-      pushBotMsg('No se pudo conectar con el servicio en este momento. Intenta mas tarde.')
-    }
-  }
-
   // ── send ──────────────────────────────────────────────────────────────────
   const handleSend = async (text?: string) => {
     const messageText = (text ?? inputValue).trim()
@@ -281,19 +261,18 @@ Fecha: ${result.created_at}
       setIsTyping(false)
       
       // Agregar respuesta del bot con flag de needs_login si aplica
-      setMessages((prev) => [...prev, {
-        id: Date.now(),
-        text: response.message,
-        isBot: true,
-        needsLogin: response.needs_login === true,
-        timestamp: new Date(),
-      }])
+      if (response.message) {
+        setMessages((prev) => [...prev, {
+          id: Date.now(), text: response.message, isBot: true,
+          needsLogin: response.needs_login === true, timestamp: new Date(),
+        }])
+      }
 
       // Si necesita agente y está autenticado, escalar automáticamente
-      if (response.needs_agent && isAuthenticated) {
+      if (response.needs_agent) {
         setSessionId(response.session_id)
         sessionStorage.setItem('chatSessionId', String(response.session_id))
-        lastMsgIdRef.current = response.bot_message_id
+        lastMsgIdRef.current = response.bot_message_id ?? response.user_message_id
         setChatMode(response.status === 'active' ? 'active' : 'waiting')
       }
     } catch (error) {
@@ -304,7 +283,7 @@ Fecha: ${result.created_at}
   }
 
   const handleQuickReply = (reply: string) => {
-    if (reply === 'Hablar con asesor') { handleRequestAgent(); return }
+    if (reply === 'Hablar con asesor') { handleSend(reply); return }
 
     if (reply === 'Consultar pedido') {
       setMessages((prev) => [...prev, { id: Date.now(), text: reply, isBot: false, timestamp: new Date() }])
