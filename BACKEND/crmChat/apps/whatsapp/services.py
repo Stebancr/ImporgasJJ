@@ -25,13 +25,6 @@ def send_media(integration, recipient_id, media_type, *, media_id='', link='', c
     return _send(integration, recipient_id, {'type': media_type, media_type: media})
 
 
-def send_template(integration, recipient_id, name, language_code, components=None):
-    template = {'name': name, 'language': {'code': language_code}}
-    if components:
-        template['components'] = components
-    return _send(integration, recipient_id, {'type': 'template', 'template': template})
-
-
 def send_interactive(integration, recipient_id, interactive):
     return _send(integration, recipient_id, {'type': 'interactive', 'interactive': interactive})
 

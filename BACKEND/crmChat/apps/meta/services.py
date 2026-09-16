@@ -5,12 +5,12 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 
 import requests
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from crmChat.models import (
@@ -239,7 +239,22 @@ def persist_normalized_message(event):
             message = ChatMessage.objects.filter(external_message_id=event.external_message_id).first()
             if message:
                 message.status = event.status
-                message.save(update_fields=['status'])
+                message.metadata = {
+                    **message.metadata,
+                    'meta_status': event.status,
+                    **({'meta_errors': event.metadata.get('errors', [])} if event.metadata.get('errors') else {}),
+                }
+                message.save(update_fields=['status', 'metadata'])
+                if event.status == 'failed':
+                    errors = event.metadata.get('errors') or []
+                    first_error = errors[0] if errors and isinstance(errors[0], dict) else {}
+                    logger.warning(
+                        'Meta reportó entrega fallida: session_id=%s message_id=%s channel=%s '
+                        'code=%s title=%s',
+                        message.session_id, message.id, event.channel,
+                        first_error.get('code', 'desconocido'),
+                        str(first_error.get('title') or first_error.get('message') or 'sin detalle')[:300],
+                    )
             return message
         watermark = _timestamp(event.metadata.get('watermark'))
         if event.sender_id:
@@ -253,6 +268,14 @@ def persist_normalized_message(event):
                 messages = messages.filter(created_at__lte=watermark)
             messages.update(status=event.status)
         return None
+
+    if not event.sender_id:
+        raise ValueError(f'El mensaje entrante de {event.channel} no contiene identificador de remitente.')
+
+    if event.external_message_id:
+        existing = ChatMessage.objects.filter(external_message_id=event.external_message_id).first()
+        if existing:
+            return existing
 
     identity = ChannelIdentity.objects.select_related('contact').filter(
         integration=integration,
@@ -271,31 +294,32 @@ def persist_normalized_message(event):
         contact.name = event.sender_name
         contact.save(update_fields=['name', 'updated_at'])
 
-    session, _ = ChatSession.objects.get_or_create(
+    session = ChatSession.objects.filter(
         integration=integration,
         external_thread_id=event.sender_id,
-        defaults={
+    ).exclude(status='closed').order_by('-created_at').first()
+    if session is None:
+        session_defaults = {
             'contact': contact,
             'channel': event.channel,
             'user_name': event.sender_name or contact.name,
             'user_cedula': event.sender_id,
             'status': 'bot',
-        },
-    )
-    if session.status == 'closed':
-        session.status = 'bot'
-        session.assigned_to = None
-        session.agent_id_ref = None
-        session.agent_name = ''
-        session.inactivity_warning_at = None
-        session.save(update_fields=['status', 'assigned_to', 'agent_id_ref', 'agent_name', 'inactivity_warning_at', 'updated_at'])
-    if session.assigned_to_id is None:
-        from crmChat.assignment import assign_session_automatically
-        assign_session_automatically(session)
-    if event.external_message_id:
-        existing = ChatMessage.objects.filter(external_message_id=event.external_message_id).first()
-        if existing:
-            return existing
+        }
+        try:
+            # La restricción parcial garantiza una única sesión activa por hilo,
+            # sin impedir conservar todas las sesiones cerradas anteriores.
+            with transaction.atomic():
+                session = ChatSession.objects.create(
+                    integration=integration,
+                    external_thread_id=event.sender_id,
+                    **session_defaults,
+                )
+        except IntegrityError:
+            session = ChatSession.objects.exclude(status='closed').get(
+                integration=integration,
+                external_thread_id=event.sender_id,
+            )
     message = ChatMessage.objects.create(
         session=session,
         text=event.text,
@@ -309,12 +333,6 @@ def persist_normalized_message(event):
         metadata=event.metadata,
         status='received',
     )
-    # Cierra la ventana de carrera con el barrido de inactividad: el mensaje
-    # entrante siempre tiene precedencia y vuelve a abrir la misma sesión.
-    ChatSession.objects.filter(pk=session.pk, status='closed').update(
-        status='bot', assigned_to=None, agent_id_ref=None, agent_name='', inactivity_warning_at=None,
-    )
-    session.refresh_from_db()
     for attachment in event.attachments:
         ChatAttachment.objects.create(
             message=message,
@@ -330,6 +348,16 @@ def persist_normalized_message(event):
     return message
 
 
+def _mask_destination(value):
+    """Identifica un destino en logs sin revelar el número o ID completo."""
+
+    value = str(value or '')
+    if not value:
+        return '(vacío)'
+    visible = value[-4:]
+    return f'{"*" * max(0, len(value) - len(visible))}{visible}'
+
+
 def dispatch_outbound_message(message):
     """Envía un mensaje por su canal y actualiza su estado sin ocultar fallos."""
 
@@ -339,6 +367,19 @@ def dispatch_outbound_message(message):
         message.status = 'sent'
         message.save(update_fields=['direction', 'status'])
         return message
+    if message.message_type == 'template':
+        detail = (
+            'El envío de plantillas está deshabilitado por la política de cero costos. '
+            'El sistema esperará una nueva interacción del cliente.'
+        )
+        message.status = 'failed'
+        message.metadata = {**message.metadata, 'error': detail, 'error_code': 'paid_messaging_disabled'}
+        message.save(update_fields=['status', 'metadata'])
+        logger.warning(
+            'Plantilla bloqueada por política de cero costos: session_id=%s message_id=%s channel=%s',
+            session.id, message.id, session.channel,
+        )
+        raise MetaAPIError(detail)
     if not session.messages.filter(sender_type='user', direction='inbound', external_message_id__isnull=False).exists():
         message.status = 'failed'
         message.metadata = {**message.metadata, 'error': 'No existe un mensaje entrante previo de Meta.'}
@@ -362,16 +403,42 @@ def dispatch_outbound_message(message):
             'La conversación no tiene identificador del destinatario. '
             'Es necesario recibir nuevamente el mensaje de Meta antes de responder.'
         )
+    if (
+        session.channel in {
+            ChannelIntegration.CHANNEL_WHATSAPP,
+            ChannelIntegration.CHANNEL_FACEBOOK,
+            ChannelIntegration.CHANNEL_INSTAGRAM,
+        }
+        and (
+            session.last_customer_message_at is None
+            or session.last_customer_message_at < timezone.now() - timedelta(hours=24)
+        )
+    ):
+        detail = (
+            f'La ventana reactiva de {session.get_channel_display()} está cerrada. '
+            'No se enviará el mensaje; el sistema esperará una nueva interacción del cliente.'
+        )
+        message.status = 'failed'
+        message.metadata = {**message.metadata, 'error': detail, 'error_code': 'reactive_window_closed'}
+        message.save(update_fields=['status', 'metadata'])
+        logger.warning(
+            'Envío Meta bloqueado por ventana cerrada: session_id=%s message_id=%s '
+            'channel=%s type=%s destination=%s',
+            session.id, message.id, session.channel, message.message_type, _mask_destination(recipient),
+        )
+        raise MetaAPIError(detail)
+
+    logger.info(
+        'Enviando mensaje externo: session_id=%s message_id=%s contact_id=%s channel=%s '
+        'type=%s status=%s destination=%s',
+        session.id, message.id, session.contact_id, session.channel,
+        message.message_type, message.status, _mask_destination(recipient),
+    )
     try:
         outbound_payload = message.metadata.get('outbound_payload', {})
         if session.channel == ChannelIntegration.CHANNEL_WHATSAPP:
             from crmChat.apps.whatsapp import services as channel_service
-            if message.message_type == 'template':
-                response = channel_service.send_template(
-                    session.integration, recipient, outbound_payload['name'],
-                    outbound_payload.get('language_code', 'es'), outbound_payload.get('components'),
-                )
-            elif message.message_type == 'interactive':
+            if message.message_type == 'interactive':
                 response = channel_service.send_interactive(session.integration, recipient, outbound_payload)
             elif message.message_type in {'image', 'audio', 'video', 'document', 'sticker'}:
                 response = channel_service.send_media(
@@ -391,10 +458,7 @@ def dispatch_outbound_message(message):
             external_id = response.get('message_id', '')
         elif session.channel == ChannelIntegration.CHANNEL_INSTAGRAM:
             from crmChat.apps.instagram import services as channel_service
-            if message.message_type == 'template':
-                response = channel_service.send_template(session.integration, recipient, outbound_payload)
-            else:
-                response = channel_service.send_text(session.integration, recipient, message.text, outbound_payload.get('quick_replies'))
+            response = channel_service.send_text(session.integration, recipient, message.text, outbound_payload.get('quick_replies'))
             external_id = response.get('message_id', '')
         else:
             raise MetaAPIError('Canal de salida no soportado.')
@@ -402,11 +466,22 @@ def dispatch_outbound_message(message):
         message.status = 'sent'
         message.direction = 'outbound'
         message.save(update_fields=['external_message_id', 'status', 'direction'])
+        logger.info(
+            'Meta aceptó el mensaje: session_id=%s message_id=%s channel=%s '
+            'external_message_id=%s status=%s',
+            session.id, message.id, session.channel, external_id or '-', message.status,
+        )
         return message
     except Exception as exc:
         message.status = 'failed'
         message.metadata = {**message.metadata, 'error': str(exc)[:500]}
         message.save(update_fields=['status', 'metadata'])
+        logger.warning(
+            'Falló envío externo: session_id=%s message_id=%s contact_id=%s channel=%s '
+            'type=%s destination=%s error=%s',
+            session.id, message.id, session.contact_id, session.channel,
+            message.message_type, _mask_destination(recipient), str(exc)[:500],
+        )
         if isinstance(exc, MetaAPIError):
             raise
         raise MetaAPIError('No fue posible construir o enviar el mensaje por el canal externo.') from exc

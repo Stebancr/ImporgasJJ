@@ -289,15 +289,13 @@ class MessageListCreateView(APIView):
         text = (request.data.get('text') or '').strip()
         message_type = request.data.get('message_type', 'text')
         payload = request.data.get('payload') or {}
-        allowed_types = {'text', 'image', 'audio', 'video', 'document', 'sticker', 'template', 'interactive'}
+        allowed_types = {'text', 'image', 'audio', 'video', 'document', 'sticker', 'interactive'}
         if message_type not in allowed_types:
             return Response({'error': 'Tipo de mensaje no permitido'}, status=400)
         if not text and message_type == 'text':
             return Response({'error': 'El texto no puede estar vacío'}, status=400)
         if not isinstance(payload, dict):
             return Response({'error': 'El payload debe ser un objeto'}, status=400)
-        if message_type == 'template' and not payload.get('name'):
-            return Response({'error': 'La plantilla requiere name'}, status=400)
         if message_type in {'image', 'audio', 'video', 'document', 'sticker'} and not (payload.get('id') or payload.get('url')):
             return Response({'error': 'El archivo requiere id o url'}, status=400)
 
@@ -495,29 +493,41 @@ class BotChatView(APIView):
             except ChatSession.DoesNotExist:
                 session = None
 
-        # Crear nueva sesión si no existe
-        if not session:
-            ecommerce_integration = ChannelIntegration.objects.filter(
-                channel=ChannelIntegration.CHANNEL_ECOMMERCE, active=True,
-            ).first()
+        # Una sesión cerrada es histórica e inmutable para efectos de contexto.
+        # Si el cliente vuelve a escribir, se crea una conversación independiente.
+        create_new_session = session is None or session.status == 'closed'
+        if create_new_session:
+            previous_session = session
+            ecommerce_integration = (
+                previous_session.integration
+                if previous_session and previous_session.integration_id
+                else ChannelIntegration.objects.filter(
+                    channel=ChannelIntegration.CHANNEL_ECOMMERCE, active=True,
+                ).first()
+            )
             session = ChatSession.objects.create(
                 user_id_ref=user_id_ref,
-                user_name=user_name,
-                user_cedula=user_cedula,
+                user_name=(
+                    user_name if user_name != 'Usuario'
+                    else getattr(previous_session, 'user_name', user_name)
+                ),
+                user_cedula=user_cedula or getattr(previous_session, 'user_cedula', ''),
                 status='bot',  # Inicialmente con bot
                 channel=ChannelIntegration.CHANNEL_ECOMMERCE,
                 integration=ecommerce_integration,
+                contact=getattr(previous_session, 'contact', None),
             )
             logger.info(f"Nueva sesión de chat creada: {session.id} para {user_name}")
-
-        if session.status == 'closed':
-            session.status = 'bot'
-            session.agent_id_ref = None
-            session.agent_name = ''
-            session.assigned_to = None
-            session.inactivity_warning_at = None
-            session.save(update_fields=['status', 'agent_id_ref', 'agent_name', 'assigned_to', 'inactivity_warning_at', 'updated_at'])
-            logger.info('Sesión ecommerce %s reabierta por mensaje entrante.', session.id)
+            greeting = ChatMessage.objects.create(
+                session=session,
+                text=ollama_service.INITIAL_GREETING,
+                sender_type='bot',
+                direction='outbound',
+                status='sent',
+                metadata={'system_event': 'initial_greeting'},
+            )
+            session.last_bot_message_at = greeting.created_at
+            session.save(update_fields=['last_bot_message_at', 'updated_at'])
 
         # Guardar mensaje del usuario
         user_message = ChatMessage.objects.create(
@@ -527,9 +537,6 @@ class BotChatView(APIView):
             sender_name=user_name,
             direction='inbound',
             status='received',
-        )
-        ChatSession.objects.filter(pk=session.pk, status='closed').update(
-            status='bot', assigned_to=None, agent_id_ref=None, agent_name='', inactivity_warning_at=None,
         )
         session.refresh_from_db()
         session.last_customer_message_at = user_message.created_at
@@ -599,6 +606,10 @@ class BotChatView(APIView):
             session.save(update_fields=['last_bot_message_at', 'inactivity_warning_at', 'updated_at'])
             if needs_agent:
                 publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
+        if needs_agent and session.status == 'waiting' and session.assigned_to_id is None:
+            from .assignment import assign_session_automatically
+            assign_session_automatically(session)
+            session.refresh_from_db()
         needs_login = False
 
         return Response({

@@ -107,15 +107,42 @@ class ConversationStateTests(APITestCase):
         self.assertIn('no tiene stock', result['response'])
 
     @patch('crmChat.views.ollama_service.get_bot_response')
-    def test_closed_ecommerce_chat_reopens_only_on_customer_message(self, bot):
+    def test_closed_ecommerce_chat_creates_independent_conversation(self, bot):
         bot.return_value = {'response': 'Hola de nuevo', 'needs_agent': False, 'state': {}, 'summary': ''}
-        session = ChatSession.objects.create(user_name='Cliente', status='closed')
+        old_message = ChatMessage.objects.create(
+            session=ChatSession.objects.create(user_name='Cliente', status='closed'),
+            text='Contexto anterior', sender_type='user', direction='inbound',
+        )
+        session = old_message.session
         response = self.client.post(reverse('bot-chat'), {'message': 'Necesito ayuda', 'session_id': session.id}, format='json')
         self.assertEqual(response.status_code, 200)
         session.refresh_from_db()
-        self.assertEqual(session.status, 'bot')
-        self.assertEqual(session.messages.filter(sender_type='user').count(), 1)
-        self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
+        self.assertEqual(session.status, 'closed')
+        self.assertEqual(session.messages.count(), 1)
+        new_session = ChatSession.objects.get(pk=response.data['session_id'])
+        self.assertNotEqual(new_session.id, session.id)
+        self.assertEqual(new_session.status, 'bot')
+        self.assertEqual(new_session.messages.filter(sender_type='user').count(), 1)
+        self.assertEqual(new_session.messages.filter(sender_type='bot').count(), 2)
+        self.assertEqual(new_session.messages.first().text, ollama_service.INITIAL_GREETING)
+        history = bot.call_args.kwargs['conversation_history']
+        self.assertNotIn('Contexto anterior', [item['content'] for item in history])
+
+    def test_identity_scope_and_commercial_handoff_are_deterministic(self):
+        greeting = ollama_service.get_bot_response('Hola')
+        self.assertEqual(greeting['response'], ollama_service.INITIAL_GREETING)
+        self.assertNotIn('Ollama', greeting['response'])
+        outside = ollama_service.get_bot_response('¿Quién es el presidente de Colombia?')
+        self.assertIn('productos y servicios de IMPORGAS JJ', outside['response'])
+        for phrase in (
+            'Quiero cotizar un calentador',
+            'Necesito 10 unidades',
+            'Necesito precio para una empresa',
+            'Quiero hablar con una persona',
+            'Cómprame 3 unidades',
+            'Quiero comprar este producto',
+        ):
+            self.assertTrue(ollama_service.get_bot_response(phrase)['needs_agent'], phrase)
 
 
 class ChatInactivityTests(APITestCase):
@@ -168,7 +195,7 @@ class ChatInactivityTests(APITestCase):
 
     @patch('crmChat.tasks.ollama_service.get_bot_response')
     @patch('crmChat.tasks.dispatch_outbound_message')
-    def test_failed_bot_reply_retries_same_message_without_regeneration(self, dispatch, ollama):
+    def test_failed_bot_reply_is_not_retried_or_regenerated(self, dispatch, ollama):
         session = ChatSession.objects.create(user_name='Reintento', status='bot')
         inbound = ChatMessage.objects.create(
             session=session, text='Hola', sender_type='user', direction='inbound',
@@ -178,18 +205,66 @@ class ChatInactivityTests(APITestCase):
             direction='outbound', status='failed', reply_to_message=inbound,
         )
 
-        def mark_sent(message):
-            message.status = 'sent'
-            message.save(update_fields=['status'])
-
-        dispatch.side_effect = mark_sent
         result = generate_omnichannel_bot_reply.run(inbound.id)
         reply.refresh_from_db()
-        self.assertTrue(result['retried'])
-        self.assertEqual(result['message_id'], reply.id)
-        self.assertEqual(reply.status, 'sent')
+        self.assertTrue(result['duplicate'])
+        self.assertEqual(reply.status, 'failed')
+        dispatch.assert_not_called()
         ollama.assert_not_called()
         self.assertEqual(ChatMessage.objects.filter(reply_to_message=inbound).count(), 1)
+
+    def test_external_inactivity_closes_locally_without_sending_warning(self):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp sin avisos', channel='whatsapp', active=True,
+            external_account_id='waba-no-warning', phone_number_id='phone-no-warning',
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', status='bot', channel='whatsapp', integration=integration,
+            external_thread_id='customer-no-warning',
+        )
+        inbound = ChatMessage.objects.create(
+            session=session, text='Hola', sender_type='user', direction='inbound',
+            external_message_id='wamid.no-warning',
+        )
+        ChatMessage.objects.create(
+            session=session, text='Respuesta', sender_type='bot', direction='outbound',
+            status='sent', reply_to_message=inbound,
+        )
+        old = timezone.now() - timedelta(minutes=3, seconds=5)
+        session.last_customer_message_at = old - timedelta(seconds=5)
+        session.last_bot_message_at = old
+        session.save(update_fields=['last_customer_message_at', 'last_bot_message_at'])
+
+        result = close_inactive_bot_sessions()
+
+        session.refresh_from_db()
+        self.assertEqual(result, {'warned': 0, 'closed': 1})
+        self.assertEqual(session.status, 'closed')
+        self.assertFalse(session.messages.filter(metadata__system_event='inactivity_warning').exists())
+
+    @patch('crmChat.tasks.ollama_service.get_bot_response')
+    @patch('crmChat.tasks.dispatch_outbound_message')
+    def test_external_bot_does_not_reply_when_integration_bot_is_disabled(self, dispatch, ollama):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp bot apagado', channel='whatsapp', active=True,
+            external_account_id='waba-bot-off', phone_number_id='phone-bot-off',
+            configuration={'bot_enabled': False},
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', status='bot', channel='whatsapp', integration=integration,
+            external_thread_id='customer-bot-off',
+        )
+        inbound = ChatMessage.objects.create(
+            session=session, text='Hola', sender_type='user', direction='inbound',
+            external_message_id='wamid.bot-off',
+        )
+
+        result = generate_omnichannel_bot_reply.run(inbound.id)
+
+        self.assertEqual(result, {'skipped': 'bot_disabled'})
+        ollama.assert_not_called()
+        dispatch.assert_not_called()
+        self.assertFalse(ChatMessage.objects.filter(reply_to_message=inbound).exists())
 
     @patch('crmChat.ollama_service.requests.post')
     def test_api_persists_structured_memory_across_turns(self, ollama_post):
@@ -216,7 +291,14 @@ class ChatInactivityTests(APITestCase):
         self.assertIsNone(session.conversation_state['budget'])
         self.assertEqual(session.conversation_state['topic'], 'shipping')
         self.assertIn('catálogo actual', responses['¿Cuál me recomiendas?'])
-        self.assertIn('envíos a todo el país', responses['¿Y hacen envíos?'])
+        self.assertIn('No tengo información confirmada', responses['¿Y hacen envíos?'])
+        ollama_service.get_bot_response(
+            '¿Cómo puedo elegir el modelo adecuado?',
+            conversation_history=[
+                {'role': 'user' if index % 2 == 0 else 'assistant', 'content': f'Mensaje {index}'}
+                for index in range(20)
+            ],
+        )
         self.assertLessEqual(len(ollama_post.call_args.kwargs['json']['messages']), 12)
 
         response = self.client.post(reverse('bot-chat'), {
@@ -280,6 +362,104 @@ class OmnichannelModelTests(APITestCase):
                 contact=CRMContact.objects.create(name='Duplicado'),
                 external_id='573001234567',
             )
+
+    def test_closed_external_conversations_do_not_block_a_new_active_session(self):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp sesiones', channel='whatsapp', active=True,
+            external_account_id='waba-sessions', phone_number_id='phone-sessions',
+        )
+        for _ in range(2):
+            ChatSession.objects.create(
+                user_name='Cliente', channel='whatsapp', integration=integration,
+                external_thread_id='protected-user', status='closed',
+            )
+        ChatSession.objects.create(
+            user_name='Cliente', channel='whatsapp', integration=integration,
+            external_thread_id='protected-user', status='bot',
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ChatSession.objects.create(
+                user_name='Duplicada', channel='whatsapp', integration=integration,
+                external_thread_id='protected-user', status='waiting',
+            )
+
+    @patch('crmChat.apps.whatsapp.services.send_text')
+    def test_whatsapp_free_text_requires_open_24_hour_window(self, send_text):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp ventana', channel='whatsapp', active=True,
+            external_account_id='waba-window', phone_number_id='phone-window',
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', channel='whatsapp', integration=integration,
+            external_thread_id='protected-user-window', status='active',
+            last_customer_message_at=timezone.now() - timedelta(hours=25),
+        )
+        ChatMessage.objects.create(
+            session=session, text='Mensaje antiguo', sender_type='user', direction='inbound',
+            external_message_id='wamid.old-window',
+        )
+        outbound = ChatMessage.objects.create(
+            session=session, text='Seguimiento', sender_type='agent', direction='outbound', status='queued',
+        )
+        with self.assertRaisesMessage(MetaAPIError, 'esperará una nueva interacción'):
+            dispatch_outbound_message(outbound)
+        send_text.assert_not_called()
+        outbound.refresh_from_db()
+        self.assertEqual(outbound.metadata['error_code'], 'reactive_window_closed')
+
+    @patch('crmChat.apps.meta.services.graph_request')
+    def test_whatsapp_template_is_blocked_without_calling_meta(self, graph_request):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp plantilla', channel='whatsapp', active=True,
+            external_account_id='waba-template', phone_number_id='phone-template',
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', channel='whatsapp', integration=integration,
+            external_thread_id='protected-user-template', status='active',
+            last_customer_message_at=timezone.now() - timedelta(hours=25),
+        )
+        ChatMessage.objects.create(
+            session=session, text='Mensaje antiguo', sender_type='user', direction='inbound',
+            external_message_id='wamid.old-template',
+        )
+        outbound = ChatMessage.objects.create(
+            session=session, text='', sender_type='agent', direction='outbound', status='queued',
+            message_type='template',
+            metadata={'outbound_payload': {'name': 'seguimiento', 'language_code': 'es'}},
+        )
+        with self.assertRaisesMessage(MetaAPIError, 'política de cero costos'):
+            dispatch_outbound_message(outbound)
+        outbound.refresh_from_db()
+        self.assertEqual(outbound.status, 'failed')
+        self.assertEqual(outbound.metadata['error_code'], 'paid_messaging_disabled')
+        graph_request.assert_not_called()
+
+    @patch('crmChat.apps.facebook.services.send_text')
+    def test_facebook_message_is_blocked_outside_reactive_window(self, send_text):
+        integration = ChannelIntegration.objects.create(
+            name='Facebook ventana', channel='facebook', active=True,
+            external_account_id='page-window', page_id='page-window',
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', channel='facebook', integration=integration,
+            external_thread_id='psid-window', status='active',
+            last_customer_message_at=timezone.now() - timedelta(hours=25),
+        )
+        ChatMessage.objects.create(
+            session=session, text='Mensaje antiguo', sender_type='user', direction='inbound',
+            external_message_id='mid.old-window',
+        )
+        outbound = ChatMessage.objects.create(
+            session=session, text='Seguimiento', sender_type='agent',
+            direction='outbound', status='queued',
+        )
+
+        with self.assertRaisesMessage(MetaAPIError, 'esperará una nueva interacción'):
+            dispatch_outbound_message(outbound)
+
+        send_text.assert_not_called()
+        outbound.refresh_from_db()
+        self.assertEqual(outbound.metadata['error_code'], 'reactive_window_closed')
 
     @patch('crmChat.apps.facebook.services.send_text', side_effect=ValueError('payload inválido'))
     def test_outbound_failure_is_safe_and_preserves_payload(self, _send):
@@ -414,7 +594,7 @@ class MetaWebhookTests(APITestCase):
         read_receipt.assert_called_once_with(message.id)
 
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
-    def test_new_inbound_message_reopens_closed_whatsapp_session_and_keeps_history(self, _receipt):
+    def test_new_inbound_message_creates_new_whatsapp_session_without_old_history(self, _receipt):
         self._signed_post()
         session = ChatSession.objects.get(channel='whatsapp')
         original_count = session.messages.count()
@@ -425,8 +605,43 @@ class MetaWebhookTests(APITestCase):
         payload['entry'][0]['changes'][0]['value']['messages'][0]['text']['body'] = 'Necesito ayuda otra vez'
         self.assertEqual(self._signed_post(payload).status_code, 200)
         session.refresh_from_db()
-        self.assertEqual(session.status, 'bot')
-        self.assertEqual(session.messages.count(), original_count + 1)
+        self.assertEqual(session.status, 'closed')
+        self.assertEqual(session.messages.count(), original_count)
+        sessions = ChatSession.objects.filter(channel='whatsapp').order_by('id')
+        self.assertEqual(sessions.count(), 2)
+        new_session = sessions.last()
+        self.assertEqual(new_session.status, 'bot')
+        self.assertEqual(new_session.external_thread_id, session.external_thread_id)
+        self.assertEqual(new_session.messages.count(), 1)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    def test_whatsapp_failed_delivery_preserves_meta_error_details(self, _receipt):
+        self._signed_post()
+        session = ChatSession.objects.get(channel='whatsapp')
+        outbound = ChatMessage.objects.create(
+            session=session, text='Respuesta', sender_type='bot', direction='outbound',
+            status='sent', external_message_id='wamid.outbound-status',
+        )
+        payload = {
+            'object': 'whatsapp_business_account',
+            'entry': [{'id': 'waba-1', 'changes': [{
+                'field': 'messages',
+                'value': {
+                    'metadata': {'phone_number_id': 'phone-1'},
+                    'statuses': [{
+                        'id': 'wamid.outbound-status',
+                        'status': 'failed',
+                        'timestamp': '1700000001',
+                        'recipient_id': '573001234567',
+                        'errors': [{'code': 131047, 'title': 'Re-engagement message'}],
+                    }],
+                },
+            }]}],
+        }
+        self.assertEqual(self._signed_post(payload).status_code, 200)
+        outbound.refresh_from_db()
+        self.assertEqual(outbound.status, 'failed')
+        self.assertEqual(outbound.metadata['meta_errors'][0]['code'], 131047)
 
 
 @override_settings(

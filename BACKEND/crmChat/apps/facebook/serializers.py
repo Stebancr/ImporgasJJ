@@ -1,4 +1,4 @@
-"""Validación de plantillas y quick replies de Messenger."""
+"""Validación de mensajes reactivos y quick replies de Messenger."""
 
 from rest_framework import serializers
 

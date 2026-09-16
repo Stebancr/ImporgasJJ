@@ -164,10 +164,6 @@ def send_text(integration, recipient_id, text, quick_replies=None):
     return _send(integration, recipient_id, {'message': message})
 
 
-def send_template(integration, recipient_id, attachment_payload):
-    return _send(integration, recipient_id, {'message': {'attachment': attachment_payload}})
-
-
 def sender_action(integration, recipient_id, action):
     if action not in {'mark_seen', 'typing_on', 'typing_off'}:
         raise ValueError('Sender action no soportada.')

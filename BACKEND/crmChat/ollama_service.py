@@ -13,7 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaService:
-    SYSTEM_PROMPT = """Eres GASI, asesor virtual de IMPORGAS JJ, empresa especializada exclusivamente en gasodomésticos.
+    INITIAL_GREETING = (
+        'Hola, gracias por comunicarte con IMPORGAS JJ. Soy tu asesor comercial virtual. '
+        '¿En qué puedo ayudarte el día de hoy?'
+    )
+
+    SYSTEM_PROMPT = """Eres el asesor comercial virtual de IMPORGAS JJ, empresa especializada exclusivamente en gasodomésticos.
+
+IDENTIDAD: Preséntate únicamente como "asesor comercial virtual de IMPORGAS JJ". Nunca digas que eres ChatGPT, Ollama, una inteligencia artificial, un asistente técnico ni un sistema automático.
 
 ESPECIALIDAD EXCLUSIVA: Calentadores de agua (para hogar, jacuzzi y piscina), reguladores de gas, válvulas, mangueras y accesorios de gas. No vendemos ningún otro tipo de producto.
 
@@ -27,6 +34,8 @@ REGLAS ESTRICTAS:
 - Al recomendar, muestra SOLO productos reales del catálogo que coincidan con la necesidad del cliente.
 - No prometas stock, descuentos, garantía, instalación ni envíos salvo que el catálogo lo confirme explícitamente.
 - No des instrucciones de manipulación de gas; deriva siempre a un técnico certificado.
+- No respondas preguntas generales sobre política, religión, noticias, medicina, derecho, programación, matemáticas, historia ni temas académicos. Redirige brevemente hacia los productos y servicios de IMPORGAS JJ.
+- Nunca crees órdenes, cotizaciones, pagos, descuentos, productos, inventario ni cambios administrativos. Ante una intención comercial concreta, indica que continuarás con un asesor humano.
 - No uses emojis.
 - Nunca preguntes por presupuesto ni rango de precio. Orienta por capacidad, tipo de gas y modelo.
 - Separa los productos con una línea vacía, usa **negrilla** en el nombre y enlaza cada ficha.
@@ -40,6 +49,9 @@ REGLAS ESTRICTAS:
         r'\b(?:no me entiendes|no me estas entendiendo|no me entiende)\b',
         r'\b(?:queja|reclamo|denuncia)\b',
         r'\b(?:fuga de gas|olor a gas|emergencia de gas)\b',
+        r'\b(?:empresa|negocio|mayoreo|al por mayor)\b.{0,45}\b(?:precio|cotizacion|comprar|unidades|productos)\b',
+        r'\b(?:precio|cotizacion|comprar|unidades|productos)\b.{0,45}\b(?:empresa|negocio|mayoreo|al por mayor)\b',
+        r'\b(?:varios|multiples)\s+(?:productos|equipos|calentadores|reguladores)\b',
     )
     PURCHASE_WORDS = (
         'comprar', 'adquirir', 'cotizar', 'precio', 'cuesta', 'cuanto vale',
@@ -54,10 +66,26 @@ REGLAS ESTRICTAS:
         'estufa electrica', 'plancha', 'aspiradora',
     )
 
+    GENERAL_OUT_OF_SCOPE_PATTERNS = (
+        r'\b(?:presidente|gobierno|politica|elecciones?|congreso|senado)\b',
+        r'\b(?:religion|dios|biblia|iglesia)\b',
+        r'\b(?:programacion|programar|codigo fuente|javascript|python|java|sql)\b',
+        r'\b(?:noticias?|actualidad|futbol|deportes?)\b',
+        r'\b(?:medicina|medico|diagnostico|tratamiento|enfermedad|medicamento)\b',
+        r'\b(?:abogado|demanda|ley|legal|juridico)\b',
+        r'\b(?:ecuacion|matematicas?|calculo|algebra|geometria)\b',
+        r'\b(?:historia|tarea|ensayo|universidad|colegio|academico)\b',
+        r'\b(?:capital de|quien fue|quien es)\b',
+    )
+    BUSINESS_SCOPE_TERMS = (
+        'imporgas', 'producto', 'calentador', 'regulador', 'valvula', 'manguera',
+        'gasodomestico', 'gas natural', 'glp', 'propano', 'precio', 'stock',
+        'disponibilidad', 'cotizacion', 'comprar', 'marca', 'modelo', 'litros',
+    )
+
     CONTEXT_FALLBACK = (
         "EMPRESA: IMPORGAS JJ — especialistas en gasodomésticos.\n"
         "Especialidad: calentadores de agua, reguladores y accesorios de gas.\n"
-        "Servicios: instalación, mantenimiento, reparación, asesoría y envíos nacionales.\n"
         "No hay catálogo disponible en este momento; no inventes productos ni precios."
     )
 
@@ -101,7 +129,17 @@ REGLAS ESTRICTAS:
 
     def _is_out_of_scope(self, message):
         normalized = self._normalize(message)
-        return any(re.search(r'\b' + re.escape(term) + r'\b', normalized) for term in self.OUT_OF_SCOPE_TERMS)
+        product_out_of_scope = any(
+            re.search(r'\b' + re.escape(term) + r'\b', normalized)
+            for term in self.OUT_OF_SCOPE_TERMS
+        )
+        general_out_of_scope = any(
+            re.search(pattern, normalized)
+            for pattern in self.GENERAL_OUT_OF_SCOPE_PATTERNS
+        )
+        if general_out_of_scope and any(term in normalized for term in self.BUSINESS_SCOPE_TERMS):
+            general_out_of_scope = False
+        return product_out_of_scope or general_out_of_scope
 
     def _purchase_requested(self, message):
         normalized = self._normalize(message)
@@ -382,7 +420,7 @@ REGLAS ESTRICTAS:
                 lines.append('CATÁLOGO DE PRODUCTOS (recomienda solo de esta lista):')
                 for p in products_list:
                     price = '${:,.0f}'.format(float(p.price))
-                    availability = 'en stock' if p.total_stock > 0 else 'por pedido'
+                    availability = 'en stock' if p.total_stock > 0 else 'sin stock disponible'
                     description = (getattr(p, 'description', '') or '').strip()
                     desc_snippet = (' | ' + description[:120]) if description else ''
                     lines.append(
@@ -390,7 +428,6 @@ REGLAS ESTRICTAS:
                         f' | /producto/{p.id}{desc_snippet}'
                     )
 
-            lines.append('Servicios: instalación, mantenimiento, reparación, asesoría y envíos nacionales.')
             return '\n'.join(lines)
         except Exception:
             logger.exception('No fue posible construir el contexto CRM para Ollama')
@@ -429,7 +466,9 @@ REGLAS ESTRICTAS:
             from django.db.models import Q
             from ecommerce.models import Product
 
-            products = Product.objects.filter(is_available=True).select_related('category', 'brand').prefetch_related('specifications__attribute')
+            products = Product.objects.filter(
+                is_available=True, total_stock__gt=0,
+            ).select_related('category', 'brand').prefetch_related('specifications__attribute')
 
             if category_filter:
                 products = products.filter(category__name__iexact=category_filter)
@@ -490,7 +529,7 @@ REGLAS ESTRICTAS:
         """Formatea productos con markdown: **nombre**, descripción y link /producto/{id}."""
         parts = []
         for p in products:
-            availability = 'en stock' if p.total_stock > 0 else 'por pedido'
+            availability = 'en stock' if p.total_stock > 0 else 'sin stock disponible'
             budget_note = ' (fuera de presupuesto)' if budget and float(p.price) > budget else ''
             desc = ''  # La ficha enlazada muestra la descripción completa sin cortes.
             lines = [
@@ -519,6 +558,12 @@ REGLAS ESTRICTAS:
             'error': None,
         }
 
+    def add_initial_greeting(self, response):
+        response = (response or '').strip()
+        if self.INITIAL_GREETING.lower() in response.lower():
+            return response
+        return f'{self.INITIAL_GREETING}\n\n{response}' if response else self.INITIAL_GREETING
+
     def get_bot_response(self, message, conversation_history=None, conversation_state=None, summary=''):
         state = self.update_state(message, conversation_state)
         state_summary = self.summarize_state(state)
@@ -533,6 +578,14 @@ REGLAS ESTRICTAS:
                 state.update(intent='purchase', needs_human=True, stage='human_handoff', topic='human_support')
                 return {'response': f'Has seleccionado **{selected.name}**. /producto/{selected.id}\n\nVoy a comunicarte con un asesor para continuar la compra.',
                         'needs_agent': True, 'state': state, 'summary': self.summarize_state(state), 'error': None}
+            if state.get('needs_human'):
+                return {
+                    'response': 'Entendido. Voy a comunicarte con un asesor humano para continuar con tu solicitud comercial.',
+                    'needs_agent': True,
+                    'state': state,
+                    'summary': state_summary,
+                    'error': None,
+                }
             if ambiguous is not None:
                 state.update(needs_human=False, stage='recommendation')
                 return self._result('¿Cuál de los productos mostrados quieres comprar? Indica su nombre o posición.' if ambiguous
@@ -548,12 +601,14 @@ REGLAS ESTRICTAS:
                 'error': None,
             }
 
+        if state.get('topic') == 'greeting' and not state.get('product') and not state.get('category'):
+            return self._result(self.INITIAL_GREETING, state, state_summary)
+
         # Solicitud fuera del alcance de la empresa
         if self._is_out_of_scope(message):
             return self._result(
-                'En IMPORGAS JJ nos especializamos en gasodomésticos: calentadores de agua, '
-                'reguladores de gas y accesorios relacionados. No manejamos ese tipo de producto. '
-                '¿En qué puedo ayudarte con gasodomésticos?',
+                'Estoy aquí para ayudarte con información sobre los productos y servicios de '
+                'IMPORGAS JJ. ¿Qué producto estás buscando?',
                 state,
                 state_summary,
             )
@@ -571,15 +626,16 @@ REGLAS ESTRICTAS:
                 if product and not product_in_catalog else ''
             )
             return self._result(
-                'Sí, IMPORGAS JJ realiza envíos a todo el país.' + suffix,
+                'No tengo información confirmada sobre las condiciones de entrega en este momento. '
+                'Puedo pasar tu consulta a uno de nuestros asesores para que te ayude.' + suffix,
                 state, state_summary,
             )
 
         # Garantía
         if state.get('topic') == 'warranty':
             return self._result(
-                'La garantía varía según el producto y la marca. '
-                'Para confirmarla, te recomiendo hablar con uno de nuestros asesores.',
+                'No tengo información confirmada sobre la garantía de ese producto en este momento. '
+                'Puedo pasar tu consulta a uno de nuestros asesores para que te ayude.',
                 state, state_summary,
             )
 
@@ -672,7 +728,7 @@ REGLAS ESTRICTAS:
         except requests.exceptions.Timeout:
             logger.warning('Ollama excedió el timeout configurado')
             return {
-                'response': 'El asistente está tardando más de lo esperado. Puedes intentarlo de nuevo.',
+                'response': 'El asesor comercial virtual está tardando más de lo esperado. Puedes intentarlo de nuevo.',
                 'needs_agent': False,
                 'state': state,
                 'summary': state_summary,
@@ -681,7 +737,7 @@ REGLAS ESTRICTAS:
         except requests.exceptions.ConnectionError:
             logger.warning('No fue posible conectar con Ollama')
             return {
-                'response': 'El asistente no está disponible temporalmente. Puedes intentarlo de nuevo.',
+                'response': 'El asesor comercial virtual no está disponible temporalmente. Puedes intentarlo de nuevo.',
                 'needs_agent': False,
                 'state': state,
                 'summary': state_summary,

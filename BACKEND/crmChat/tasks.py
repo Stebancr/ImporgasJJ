@@ -232,67 +232,43 @@ def validate_meta_oauth_connections():
     return {'checked': checked, 'disabled': disabled}
 
 
-def _typing(session, enabled):
-    if not session.integration or session.channel not in {'facebook', 'instagram'}:
-        return
-    if session.channel == 'facebook':
-        from .apps.facebook.services import sender_action
-    else:
-        from .apps.instagram.services import sender_action
-    try:
-        sender_action(session.integration, session.external_thread_id, 'typing_on' if enabled else 'typing_off')
-    except Exception:
-        # El indicador es una mejora visual; nunca debe bloquear una respuesta.
-        logger.warning('No fue posible actualizar el indicador de escritura.', exc_info=True)
-
-
-@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=3)
+@shared_task(bind=True)
 def generate_omnichannel_bot_reply(self, user_message_id):
-    """Usa la misma memoria estructurada de Ollama en cualquier canal."""
+    """Genera una sola respuesta reactiva para un mensaje real del cliente."""
 
     logger.info('Iniciando respuesta omnicanal para message_id=%s.', user_message_id)
 
-    retry_reply_id = None
     with transaction.atomic():
         user_message = ChatMessage.objects.select_for_update().select_related('session').get(pk=user_message_id)
+        # ``integration`` es nullable. Incluirla con ``select_related`` crea un
+        # LEFT OUTER JOIN y PostgreSQL no permite aplicar FOR UPDATE sobre ese
+        # lado del join. Bloqueamos únicamente la fila de la sesión; Django
+        # carga la integración con una consulta separada al acceder al campo.
         session = ChatSession.objects.select_for_update().get(pk=user_message.session_id)
         stale_before = timezone.now() - timedelta(minutes=5)
         if user_message.sender_type != 'user' or user_message.direction != 'inbound':
             return {'skipped': 'not_a_customer_message'}
         if session.channel != 'ecommerce' and not user_message.external_message_id:
             return {'skipped': 'missing_meta_message_id'}
-        if session.status != 'bot':
-            return {'skipped': 'conversation_not_in_bot_mode'}
+        if session.channel != 'ecommerce' and (
+            not session.integration
+            or not session.integration.active
+            or not session.integration.configuration.get('bot_enabled', False)
+        ):
+            return {'skipped': 'bot_disabled'}
         existing_reply = getattr(user_message, 'bot_reply', None)
         if existing_reply:
-            if existing_reply.status != 'failed':
-                return {'duplicate': True}
-            # La respuesta ya fue generada: reintenta exactamente el mismo
-            # mensaje sin volver a consultar Ollama ni crear duplicados.
-            existing_reply.status = 'queued'
-            existing_reply.save(update_fields=['status'])
-            user_message.bot_processing_at = timezone.now()
-            user_message.save(update_fields=['bot_processing_at'])
-            retry_reply_id = existing_reply.id
+            return {'duplicate': True}
+        if session.status != 'bot':
+            return {'skipped': 'conversation_not_in_bot_mode'}
         if user_message.bot_processing_at and user_message.bot_processing_at > stale_before:
-            if retry_reply_id is None:
-                return {'skipped': 'already_processing'}
-        elif retry_reply_id is None:
+            return {'skipped': 'already_processing'}
+        else:
             user_message.bot_processing_at = timezone.now()
             user_message.save(update_fields=['bot_processing_at'])
-
-    if retry_reply_id is not None:
-        reply = ChatMessage.objects.select_related('session__integration').get(pk=retry_reply_id)
-        try:
-            dispatch_outbound_message(reply)
-        except Exception:
-            ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
-            raise
-        ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
-        publish_crm_event('message.created', session_id=reply.session_id, message_id=reply.id)
-        return {'message_id': reply.id, 'retried': True}
 
     previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8])
+    is_new_conversation = not previous
     history = [
         {
             'role': 'assistant' if item.sender_type in ('bot', 'agent') else 'user',
@@ -301,7 +277,6 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         for item in reversed(previous)
     ]
     try:
-        _typing(session, True)
         result = ollama_service.get_bot_response(
             user_message.text,
             conversation_history=history,
@@ -309,11 +284,9 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             summary=session.conversation_summary,
         )
     except Exception:
-        logger.exception('Falló Ollama para message_id=%s; Celery reintentará según la política configurada.', user_message_id)
+        logger.exception('Falló Ollama para message_id=%s; no se enviará ni reintentará automáticamente.', user_message_id)
         ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
         raise
-    finally:
-        _typing(session, False)
     with transaction.atomic():
         session = ChatSession.objects.select_for_update().get(pk=session.pk)
         user_message = ChatMessage.objects.select_for_update().get(pk=user_message.pk)
@@ -324,9 +297,12 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         if result.get('needs_agent'):
             session.status = 'waiting'
         session.save(update_fields=['conversation_state', 'conversation_summary', 'status', 'updated_at'])
+        reply_text = result.get('response', 'No pude procesar el mensaje.')
+        if is_new_conversation:
+            reply_text = ollama_service.add_initial_greeting(reply_text)
         reply = ChatMessage.objects.create(
             session=session, reply_to_message=user_message,
-            text=result.get('response', 'No pude procesar el mensaje.'),
+            text=reply_text,
             sender_type='bot', direction='outbound', status='queued',
             metadata={'reply_to_message_id': user_message.id},
         )
@@ -342,13 +318,18 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         raise
     ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
     logger.info('Respuesta omnicanal enviada message_id=%s reply_id=%s session_id=%s.', user_message_id, reply.id, session.id)
+    if result.get('needs_agent'):
+        from .assignment import assign_session_automatically
+        session.refresh_from_db()
+        if session.status == 'waiting' and session.assigned_to_id is None:
+            assign_session_automatically(session)
     publish_crm_event('message.created', session_id=session.id, message_id=reply.id)
     return {'message_id': reply.id}
 
 
 @shared_task
 def close_inactive_bot_sessions():
-    """Advierte una sola vez a los 2 minutos y cierra al minuto siguiente."""
+    """Cierra sesiones Meta localmente; sólo el chat web muestra aviso gratuito."""
     now = timezone.now()
     warned = closed = 0
     candidates = ChatSession.objects.filter(status__in=('bot', 'waiting'), last_bot_message_at__isnull=False)
@@ -357,6 +338,17 @@ def close_inactive_bot_sessions():
         if session.last_customer_message_at and session.last_customer_message_at > session.last_bot_message_at:
             if session.inactivity_warning_at:
                 ChatSession.objects.filter(pk=session.pk).update(inactivity_warning_at=None)
+            continue
+        if session.channel != ChannelIntegration.CHANNEL_ECOMMERCE:
+            if session.last_bot_message_at <= now - timedelta(minutes=3):
+                updated = ChatSession.objects.filter(
+                    pk=session.pk,
+                    status__in=('bot', 'waiting'),
+                    last_bot_message_at=session.last_bot_message_at,
+                ).update(status='closed', inactivity_warning_at=None)
+                if updated:
+                    closed += 1
+                    publish_crm_event('session.closed', session_id=session.id)
             continue
         if session.inactivity_warning_at:
             if session.inactivity_warning_at <= now - timedelta(minutes=1):

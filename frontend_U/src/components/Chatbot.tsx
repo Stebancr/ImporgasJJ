@@ -31,21 +31,6 @@ const quickReplies = [
   'Hablar con asesor',
 ]
 
-const botResponses: Record<string, string> = {
-  horarios:    'Nuestro horario de atencion es de Lunes a Viernes de 8:00 AM a 6:00 PM y Sabados de 9:00 AM a 2:00 PM.',
-  instalacion: 'Ofrecemos servicio de instalacion profesional para todos nuestros productos. Te gustaria agendar una instalacion?',
-  rastrear:    'Para rastrear tu pedido, ve a la seccion "Seguimiento" en el menu principal e ingresa tu numero de orden.',
-  default:     'Gracias por contactarnos. Hay algo especifico en lo que pueda ayudarte?',
-}
-
-function getBotResponse(msg: string): string {
-  const lower = msg.toLowerCase()
-  if (lower.includes('horario')) return botResponses.horarios
-  if (lower.includes('instalac') || lower.includes('instalar')) return botResponses.instalacion
-  if (lower.includes('rastrear') || lower.includes('pedido') || lower.includes('seguimiento')) return botResponses.rastrear
-  return botResponses.default
-}
-
 // ─── BotMessageText: renderiza texto con markdown y links ─────────────────────
 
 function BotMessageText({ text }: { text: string }) {
@@ -124,7 +109,7 @@ function Chatbot() {
 
   const [isOpen, setIsOpen]         = useState(false)
   const [messages, setMessages]     = useState<Message[]>([
-    { id: 1, text: '¡Hola! Soy el asistente virtual de Imporgas JJ. ¿En qué puedo ayudarte hoy?', isBot: true, timestamp: new Date() },
+    { id: 1, text: 'Hola, gracias por comunicarte con IMPORGAS JJ. Soy tu asesor comercial virtual. ¿En qué puedo ayudarte el día de hoy?', isBot: true, timestamp: new Date() },
   ])
   const [inputValue, setInputValue] = useState('')
   const [isTyping, setIsTyping]     = useState(false)
@@ -327,12 +312,12 @@ Fecha: ${result.created_at}
             if (loc.hours_saturday) msg += `   Sáb: ${loc.hours_saturday}\n`
             msg += '\n'
           })
-          msg += 'Servicios disponibles:\n🔧 Instalacion de gasodomesticos (estufa, calentador, horno)\n🔧 Mantenimiento preventivo y correctivo\n🔧 Revision de fugas y conexiones\n\n¿Deseas agendar un servicio? Escribe "Hablar con asesor"'
+          msg += 'Para confirmar servicios disponibles, escribe "Hablar con asesor".'
           pushBotMsg(msg)
         })
         .catch(() => {
           setIsTyping(false)
-          pushBotMsg('Servicios disponibles:\n🔧 Instalacion de gasodomesticos\n🔧 Mantenimiento y reparacion\n🔧 Revision de fugas y conexiones\n\nPara ver sedes y horarios visita nuestra pagina o haz clic en "Hablar con asesor".')
+          pushBotMsg('No tengo la información de sedes y servicios disponible en este momento. Escribe "Hablar con asesor" para que podamos ayudarte.')
         })
       return
     }
@@ -353,7 +338,7 @@ Fecha: ${result.created_at}
     setAgentName('')
     setChatMode('local')
     setMessages([
-      { id: Date.now(), text: '¡Hola! Soy el asistente virtual de Imporgas JJ. ¿En qué puedo ayudarte hoy?', isBot: true, timestamp: new Date() },
+      { id: Date.now(), text: 'Hola, gracias por comunicarte con IMPORGAS JJ. Soy tu asesor comercial virtual. ¿En qué puedo ayudarte el día de hoy?', isBot: true, timestamp: new Date() },
     ])
     setInputValue('')
     setPendingAction(null)
@@ -402,7 +387,7 @@ Fecha: ${result.created_at}
                   {chatMode === 'active' ? <UserCheck className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
                 </div>
                 <div>
-                  <h3 className="font-semibold text-lg">Asistente Imporgas JJ</h3>
+                  <h3 className="font-semibold text-lg">Asesor comercial IMPORGAS JJ</h3>
                   <div className="flex items-center gap-1.5 text-sm text-white/80">
                     <span className={`w-2 h-2 rounded-full ${dot}`} />
                     {statusText}

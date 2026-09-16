@@ -357,8 +357,8 @@ class ChatSession(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=['integration', 'external_thread_id'],
-                condition=~models.Q(external_thread_id=''),
-                name='crm_unique_external_thread',
+                condition=(~models.Q(external_thread_id='') & ~models.Q(status='closed')),
+                name='crm_unique_active_external_thread',
             ),
         ]
 
