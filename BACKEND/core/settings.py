@@ -50,7 +50,7 @@ def _csv_env(name, default=''):
 
 ALLOWED_HOSTS = _csv_env(
     'ALLOWED_HOSTS',
-    'localhost,127.0.0.1,0.0.0.0,testserver,.ngrok.io',
+    'imporgasjj.com,www.imporgasjj.com,.djsolutions.io,djsolutions.io,www.djsolutions.io,2.25.225.216',
 )
 
 APPEND_SLASH = False
@@ -90,7 +90,7 @@ MIDDLEWARE = [
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = _csv_env(
     'CORS_ALLOWED_ORIGINS',
-    'http://localhost,http://localhost:81,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:81,http://127.0.0.1:3000',
+    'http://localhost,https://djsolutions.io, http://localhost:81,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:81,http://127.0.0.1:3000',
 )
 CSRF_TRUSTED_ORIGINS = _csv_env(
     'CSRF_TRUSTED_ORIGINS',

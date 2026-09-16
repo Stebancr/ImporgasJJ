@@ -11,14 +11,14 @@ services:
     restart: always
     environment:
       POSTGRES_DB: imporgas_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ImporgasJJ
+      POSTGRES_PASSWORD: pn$[5/qH"O%kJL_Z~vM4\NWX7
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ImporgasJJ"]
       interval: 10s
       timeout: 5s
       retries: 5

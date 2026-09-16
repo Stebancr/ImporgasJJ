@@ -1,0 +1,272 @@
+# Despliegue de producción de IMPORGAS JJ
+
+La infraestructura se divide en `docker-compose.prodData.yml` (PostgreSQL y media) y
+`docker-compose.prod.yml` (aplicación). Ambos usan la red externa
+`imporgas_prod_network`. Sólo Nginx publica los puertos 80 y 443.
+
+## 1. Requisitos
+
+- Servidor Linux con Docker Engine y Docker Compose v2.
+- Registros DNS `A` de `imporgasjj.com` y `www.imporgasjj.com` hacia `2.25.225.216`.
+- Puertos TCP 80 y 443 permitidos en el firewall.
+- Recursos para PostgreSQL, Django, Celery y `qwen2.5:1.5b` de Ollama.
+- Credenciales reales de PostgreSQL, SMTP, Wompi y Meta en el servidor.
+
+## 2. Respaldar el origen
+
+Ejecutar desde la raíz del proyecto. Estos comandos sólo leen los datos.
+
+```bash
+mkdir -p "backups/$(date +%F-%H%M%S)"
+BACKUP_DIR="$(find backups -mindepth 1 -maxdepth 1 -type d | sort | tail -1)"
+
+docker exec postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  > "$BACKUP_DIR/postgres.dump"
+docker run --rm -v media_data:/source:ro -v "$PWD/$BACKUP_DIR:/backup" alpine \
+  sh -c 'cd /source && tar -czf /backup/media.tar.gz .'
+cp .env "$BACKUP_DIR/env.backup"
+chmod 600 "$BACKUP_DIR/env.backup"
+git bundle create "$BACKUP_DIR/repository.bundle" --all
+
+pg_restore --list "$BACKUP_DIR/postgres.dump" >/dev/null
+tar -tzf "$BACKUP_DIR/media.tar.gz" >/dev/null
+test -s "$BACKUP_DIR/repository.bundle"
+```
+
+Si el volumen de media no se llama `media_data`, obtener su nombre real con:
+
+```bash
+docker inspect backend --format '{{range .Mounts}}{{if eq .Destination "/app/media"}}{{.Name}}{{end}}{{end}}'
+```
+
+Guardar una copia cifrada de `.env.prod`, los respaldos y `/etc/letsencrypt`
+fuera del VPS. No almacenar secretos en Git.
+
+## 3. Variables, red y volúmenes
+
+```bash
+cp .env.prod.example .env.prod
+chmod 600 .env.prod
+```
+
+Completar en `.env.prod`:
+
+- `SECRET_KEY` con un valor nuevo y largo.
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DB_USER` y `DB_PASSWORD`. Los dos pares
+  deben coincidir.
+- Las llaves de producción de Wompi. `VITE_WOMPI_PUBLIC_KEY` puede contener
+  únicamente la llave pública.
+- Credenciales de Meta y tokens de verificación.
+- SMTP real. Mailpit no forma parte de producción.
+- Firebase sólo si la integración está activa.
+
+Validar los campos mínimos:
+
+```bash
+set -a
+. ./.env.prod
+set +a
+test -n "$SECRET_KEY" && test -n "$POSTGRES_USER" && \
+  test -n "$POSTGRES_PASSWORD" && test -n "$DB_USER" && test -n "$DB_PASSWORD"
+test "$POSTGRES_USER" = "$DB_USER"
+test "$POSTGRES_PASSWORD" = "$DB_PASSWORD"
+```
+
+Crear recursos externos de forma idempotente:
+
+```bash
+docker network inspect imporgas_prod_network >/dev/null 2>&1 || \
+  docker network create imporgas_prod_network
+
+for volume in imporgas_prod_postgres_data imporgas_prod_media_data \
+  imporgas_prod_static_data imporgas_prod_redis_data imporgas_prod_ollama_data
+do
+  docker volume inspect "$volume" >/dev/null 2>&1 || docker volume create "$volume"
+done
+```
+
+No usar `docker compose down -v`, `docker volume rm` ni
+`docker system prune --volumes` en este proyecto.
+
+## 4. Certificado HTTPS
+
+Con DNS propagado y el puerto 80 libre:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y certbot
+sudo certbot certonly --standalone \
+  -d imporgasjj.com -d www.imporgasjj.com \
+  --agree-tos --no-eff-email -m CORREO_DEL_ADMINISTRADOR
+sudo certbot certificates
+sudo certbot renew --dry-run
+```
+
+Después de una renovación real:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec nginx nginx -s reload
+```
+
+## 5. Levantar datos
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prodData.yml config --quiet
+docker compose --env-file .env.prod -f docker-compose.prodData.yml pull
+docker compose --env-file .env.prod -f docker-compose.prodData.yml up -d
+docker compose --env-file .env.prod -f docker-compose.prodData.yml ps
+docker exec imporgas-prod-postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker exec imporgas-prod-media wget -qO- http://127.0.0.1/health
+```
+
+### Restauración opcional de desarrollo
+
+Restaurar una sola vez sobre los volúmenes vacíos. Primero verificar el respaldo
+y que la base no contenga tablas:
+
+```bash
+pg_restore --list backups/AAAA-MM-DD-HHMMSS/postgres.dump >/dev/null
+docker exec imporgas-prod-postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from pg_tables where schemaname = '\''public'\''"'
+```
+
+Si el resultado es `0`:
+
+```bash
+cat backups/AAAA-MM-DD-HHMMSS/postgres.dump | \
+  docker exec -i imporgas-prod-postgres sh -c \
+  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-privileges'
+
+docker run --rm -i -v imporgas_prod_media_data:/restore alpine \
+  sh -c 'cd /restore && tar -xzf -' \
+  < backups/AAAA-MM-DD-HHMMSS/media.tar.gz
+```
+
+No repetir la restauración sobre datos que ya estén en uso.
+
+## 6. Construir y arrancar la aplicación
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml config --quiet
+docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+docker compose --env-file .env.prod -f docker-compose.prod.yml build
+
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d redis ollama
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec ollama \
+  ollama pull "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm --user root backend \
+  sh -c 'chown -R django:django /app/media /app/staticfiles'
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend \
+  python manage.py migrate --noinput
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend \
+  python manage.py collectstatic --noinput
+
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+```
+
+El modelo se descarga sólo con el comando explícito anterior. Ollama conserva el
+flujo reactivo: no crea campañas, recordatorios ni mensajes proactivos.
+
+Crear un superusuario únicamente si no existe uno válido:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec backend \
+  python manage.py createsuperuser
+```
+
+## 7. Verificaciones
+
+### Infraestructura
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prodData.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec backend \
+  python manage.py check --deploy
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec nginx nginx -t
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec redis redis-cli ping
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec ollama ollama list
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec celery-worker \
+  celery -A core inspect ping
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+```
+
+Para esta aplicación la última salida sólo debe publicar 80 y 443. Los puertos
+8001, 5432, 6379 y 11434 deben permanecer privados.
+
+### Sitio, API, admin y media
+
+```bash
+curl --fail --head http://imporgasjj.com
+curl --fail --head https://imporgasjj.com/
+curl --fail --head https://www.imporgasjj.com/
+curl --fail https://imporgasjj.com/api/health/
+curl --fail --head https://imporgasjj.com/admin/
+curl --fail --head https://imporgasjj.com/admin/login
+curl --fail --head https://imporgasjj.com/media/RUTA_DE_UN_ARCHIVO_REAL
+```
+
+Abrir `/admin/` en una sesión privada y confirmar la redirección a
+`/admin/login`. Después, probar navegación y una operación autorizada.
+
+### Wompi
+
+Configurar en Wompi producción el evento:
+
+```text
+https://imporgasjj.com/api/webhooks/wompi
+```
+
+Realizar una compra controlada de valor mínimo y verificar:
+
+1. El widget usa una llave `pub_prod_*` y `https://production.wompi.co/v1`.
+2. Antes de confirmar existe una intención pendiente, sin orden pagada.
+3. El webhook firmado llega con estado `APPROVED`.
+4. Sólo entonces se crea la orden pagada; un evento repetido no la duplica.
+
+### Meta y chatbot
+
+Registrar las URI aplicables:
+
+```text
+https://imporgasjj.com/api/meta/callback/
+https://imporgasjj.com/api/meta/webhook/
+https://imporgasjj.com/api/meta/whatsapp/webhook/
+https://imporgasjj.com/api/meta/facebook/webhook/
+https://imporgasjj.com/api/meta/instagram/webhook/
+https://imporgasjj.com/api/meta/instagram/oauth/callback/
+```
+
+Confirmar el `verify token`, conectar cada canal y enviar un mensaje entrante de
+prueba. Debe crearse una sola conversación y una sola respuesta cuando el bot
+esté habilitado; debe detenerse cuando un asesor tome el chat. Esta configuración
+no agrega plantillas, campañas, marketing, mensajes masivos ni envíos proactivos.
+
+### Email
+
+Ejecutar una función existente que envíe correo y comprobar la entrega con SMTP
+real. No configurar `mailpit`, `localhost` ni el puerto 1025 en `.env.prod`.
+
+## 8. Logs, actualización y backups
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 backend nginx
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 celery-worker celery-beat
+docker compose --env-file .env.prod -f docker-compose.prodData.yml logs --tail=200 postgres media
+```
+
+Actualizar sin eliminar datos:
+
+```bash
+git pull --ff-only
+docker compose --env-file .env.prod -f docker-compose.prod.yml build
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend python manage.py migrate --noinput
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend python manage.py collectstatic --noinput
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+```
+
+Crear respaldos periódicos apuntando a `imporgas-prod-postgres` y
+`imporgas_prod_media_data`. Validarlos con `pg_restore --list` y `tar -tzf`, y
+copiarlos fuera del servidor.

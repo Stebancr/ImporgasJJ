@@ -50,6 +50,12 @@ ALLOWED_HOSTS = [
     '127.0.0.1',
     '0.0.0.0',
     'testserver',
+    'imporgasjj.com',
+    'www.imporgasjj.com',
+    '.djsolutions.io',
+    'djsolutions.io',
+    'www.djsolutions.io',
+    "2.25.225.216"
 ]
 
 # Application definition

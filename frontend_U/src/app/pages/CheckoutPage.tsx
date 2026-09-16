@@ -8,8 +8,9 @@ import ordersService from '../../services/orders'
 import { getWompiOptions, loadWompiWidget } from '../../services/wompiCheckout'
 import addressesService, { UserAddress } from '../../services/addresses'
 
-// Replace with your real Wompi public key from https://comercios.wompi.co
-const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? 'pub_test_YOUR_KEY_HERE'
+// La llave pública puede incluirse en el bundle; los secretos permanecen sólo
+// en Django. El backend también devuelve esta llave con la intención de pago.
+const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? ''
 
 interface CheckoutForm {
   email: string

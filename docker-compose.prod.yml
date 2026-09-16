@@ -1,0 +1,168 @@
+name: imporgas-prod
+
+x-backend-environment: &backend-environment
+  SECRET_KEY: ${SECRET_KEY:?SECRET_KEY es obligatorio}
+  DJANGO_SETTINGS_MODULE: core.settings_production
+  DEBUG: "False"
+  DB_ENGINE: django.db.backends.postgresql
+  DB_NAME: ${DB_NAME:?DB_NAME es obligatorio}
+  DB_USER: ${DB_USER:?DB_USER es obligatorio}
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD es obligatorio}
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  REDIS_URL: redis://redis:6379/1
+  CHANNEL_REDIS_URL: redis://redis:6379/2
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+  OLLAMA_API_URL: http://ollama:11434/api/chat
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+
+x-backend-service: &backend-service
+  build:
+    context: ./BACKEND
+    dockerfile: Dockerfile.prod
+  env_file:
+    - ${PROD_ENV_FILE:-.env.prod}
+  environment: *backend-environment
+  volumes:
+    - imporgas_prod_media_data:/app/media
+    - imporgas_prod_static_data:/app/staticfiles
+  networks:
+    - imporgas_prod_network
+
+services:
+  backend:
+    <<: *backend-service
+    container_name: imporgas-prod-backend
+    restart: unless-stopped
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8001", "core.asgi:application"]
+    expose:
+      - "8001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          request=urllib.request.Request('http://127.0.0.1:8001/health/',headers={'Host':'imporgasjj.com','X-Forwarded-Proto':'https'});
+          raise SystemExit(0 if urllib.request.urlopen(request,timeout=5).status == 200 else 1)
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    <<: *backend-service
+    container_name: imporgas-prod-celery-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "core", "worker", "--loglevel=INFO", "--concurrency=2"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A core inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  celery-beat:
+    <<: *backend-service
+    container_name: imporgas-prod-celery-beat
+    restart: unless-stopped
+    command: ["celery", "-A", "core", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend_U
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: /api
+        VITE_WOMPI_PUBLIC_KEY: ${VITE_WOMPI_PUBLIC_KEY:-}
+    container_name: imporgas-prod-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - imporgas_prod_network
+
+  nginx:
+    image: nginx:alpine@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1
+    container_name: imporgas-prod-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginxprod/nginx.conf:/etc/nginx/nginx.conf:ro
+      - imporgas_prod_static_data:/var/www/static:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - imporgas_prod_network
+
+  redis:
+    image: redis:7-alpine@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
+    container_name: imporgas-prod-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - imporgas_prod_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - imporgas_prod_network
+
+  ollama:
+    image: ollama/ollama:latest@sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4
+    container_name: imporgas-prod-ollama
+    restart: unless-stopped
+    volumes:
+      - imporgas_prod_ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - imporgas_prod_network
+
+volumes:
+  imporgas_prod_media_data:
+    external: true
+  imporgas_prod_static_data:
+    external: true
+  imporgas_prod_redis_data:
+    external: true
+  imporgas_prod_ollama_data:
+    external: true
+
+networks:
+  imporgas_prod_network:
+    external: true

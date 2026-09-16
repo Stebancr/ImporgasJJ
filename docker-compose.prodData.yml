@@ -1,0 +1,46 @@
+name: imporgas-prod-data
+
+services:
+  postgres:
+    image: postgres:16@sha256:972eeb4e0a5fee4c3046cf868896719227e845aa9e38ff79a353efb3b2b2c10a
+    container_name: imporgas-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: imporgas_db
+      POSTGRES_USER: ImporgasJJ
+      POSTGRES_PASSWORD: pn$[5/qH"O%kJL_Z~vM4\NWX7
+    volumes:
+      - imporgas_prod_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - imporgas_prod_network
+
+  media:
+    image: nginx:alpine@sha256:e7257f1ef28ba17cf7c248cb8ccf6f0c6e0228ab9c315c152f9c203cd34cf6d1
+    container_name: imporgas-prod-media
+    restart: unless-stopped
+    volumes:
+      - imporgas_prod_media_data:/usr/share/nginx/html/media:ro
+      - ./nginxprod/media.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - imporgas_prod_network
+
+volumes:
+  imporgas_prod_postgres_data:
+    external: true
+  imporgas_prod_media_data:
+    external: true
+
+networks:
+  imporgas_prod_network:
+    external: true

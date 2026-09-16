@@ -1,6 +1,6 @@
 # Media files (uploads, generated files)
 media/
-!.env
+.env
 
 # Python
 __pycache__/
