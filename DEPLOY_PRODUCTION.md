@@ -2,7 +2,26 @@
 
 La infraestructura se divide en `docker-compose.prodData.yml` (PostgreSQL y media) y
 `docker-compose.prod.yml` (aplicación). Ambos usan la red externa
-`imporgas_prod_network`. Sólo Nginx publica los puertos 80 y 443.
+`imporgas_prod_network`. Nginx publica `81:80`: 81 es el puerto del host y 80 el
+del contenedor. Django conserva el puerto interno 8001.
+
+El dominio activo solicitado es `https://djsolutions.io`. El proxy existente de
+Coolify/Traefik conserva 80/443 y termina HTTPS; únicamente Nginx se conecta
+también a la red externa `coolify`. Los routers `imporgas-*` tienen prioridad
+100 para dirigir ese dominio al proyecto. Esto sustituye la ruta del panel de
+Coolify en ese dominio; el servicio administrativo conserva su puerto 8000.
+
+El 16/09/2026 el DNS de djsolutions.io apuntaba a 2.57.91.91 (página aparcada de
+Hostinger), mientras el VPS es 2.25.225.216. Su certificado público estaba en el
+proveedor, no en el VPS. Hay que corregir DNS y suministrar el certificado
+existente al proxy, o autorizar expresamente su emisión. Las etiquetas del
+proyecto no configuran un certresolver ni solicitan certificados nuevos.
+No debe eliminarse la validación TLS para dar por aprobada una prueba HTTPS.
+
+Pruebas directas: `http://2.25.225.216:81/` y `/admin/`. Django mantiene la
+redirección HTTPS: la API autenticada requiere completar DNS/SSL. Para probar
+el enrutamiento interno desde el servidor se puede enviar `Host: djsolutions.io`
+y `X-Forwarded-Proto: https` al puerto 81; esto no valida el certificado público.
 
 ## 1. Requisitos
 
@@ -88,24 +107,22 @@ done
 No usar `docker compose down -v`, `docker volume rm` ni
 `docker system prune --volumes` en este proyecto.
 
-## 4. Certificado HTTPS
+## 4. Certificado HTTPS (proxy existente)
 
-Con DNS propagado y el puerto 80 libre:
+No ejecutar Certbot standalone: Coolify ya ocupa 80/443. Conservar el proxy y
+sus certificados. La configuración de Nginx de este proyecto sirve HTTP
+interno en 80 y recibe el protocolo original mediante X-Forwarded-Proto.
+La redirección pública HTTP a HTTPS se realiza en Traefik.
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y certbot
-sudo certbot certonly --standalone \
-  -d imporgasjj.com -d www.imporgasjj.com \
-  --agree-tos --no-eff-email -m CORREO_DEL_ADMINISTRADOR
-sudo certbot certificates
-sudo certbot renew --dry-run
+docker network inspect coolify
+curl --fail --head https://djsolutions.io/
 ```
 
-Después de una renovación real:
+Comprobar la sintaxis del proxy de la aplicación:
 
 ```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml exec nginx nginx -s reload
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec nginx nginx -t
 ```
 
 ## 5. Levantar datos
@@ -193,7 +210,8 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml exec celery-worke
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-Para esta aplicación la última salida sólo debe publicar 80 y 443. Los puertos
+Para esta aplicación la última salida sólo debe publicar 81. Coolify conserva
+los puertos 80 y 443. Los puertos
 8001, 5432, 6379 y 11434 deben permanecer privados.
 
 ### Sitio, API, admin y media

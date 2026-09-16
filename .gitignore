@@ -3,6 +3,7 @@
 !.env.example
 !**/.env.example
 .env.prod
+.envdev
 
 node_modules/
 **/node_modules/

@@ -104,12 +104,26 @@ services:
     container_name: imporgas-prod-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "81:80"
     volumes:
       - ./nginxprod/nginx.conf:/etc/nginx/nginx.conf:ro
       - imporgas_prod_static_data:/var/www/static:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: coolify
+      traefik.http.routers.imporgas-http.rule: Host(`djsolutions.io`)
+      traefik.http.routers.imporgas-http.priority: "100"
+      traefik.http.routers.imporgas-http.entrypoints: http
+      traefik.http.routers.imporgas-http.middlewares: imporgas-https
+      traefik.http.routers.imporgas-http.service: imporgas
+      traefik.http.middlewares.imporgas-https.redirectscheme.scheme: https
+      traefik.http.middlewares.imporgas-https.redirectscheme.permanent: "true"
+      traefik.http.routers.imporgas-https.rule: Host(`djsolutions.io`)
+      traefik.http.routers.imporgas-https.priority: "100"
+      traefik.http.routers.imporgas-https.entrypoints: https
+      traefik.http.routers.imporgas-https.tls: "true"
+      traefik.http.routers.imporgas-https.service: imporgas
+      traefik.http.services.imporgas.loadbalancer.server.port: "80"
     depends_on:
       backend:
         condition: service_healthy
@@ -122,6 +136,7 @@ services:
       retries: 3
     networks:
       - imporgas_prod_network
+      - coolify
 
   redis:
     image: redis:7-alpine@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
@@ -164,5 +179,7 @@ volumes:
     external: true
 
 networks:
+  coolify:
+    external: true
   imporgas_prod_network:
     external: true
