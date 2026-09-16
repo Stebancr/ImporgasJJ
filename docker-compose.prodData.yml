@@ -6,9 +6,9 @@ services:
     container_name: imporgas-prod-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: imporgas_db
-      POSTGRES_USER: ImporgasJJ
-      POSTGRES_PASSWORD: pn$[5/qH"O%kJL_Z~vM4\NWX7
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB es obligatorio}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER es obligatorio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
     volumes:
       - imporgas_prod_postgres_data:/var/lib/postgresql/data
     healthcheck:
