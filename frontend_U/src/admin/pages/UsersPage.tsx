@@ -259,7 +259,7 @@ export default function UsersPage() {
       </div>
 
       {/* ── Tabs ──────────────────────────────────────────────────────────── */}
-      <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit">
+      <div className="flex flex-wrap gap-1 p-1 bg-muted rounded-lg w-fit max-w-full">
         <button
           onClick={() => { setActiveTab('trabajadores'); setPage(1); setSearch('') }}
           className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -343,7 +343,7 @@ export default function UsersPage() {
             <Label className="text-xs">Nombre del cargo *</Label>
             <Input className="mt-1" placeholder="Ej: Asesor comercial"
               value={cargoNameInput} onChange={(e) => setCargoNameInput(e.target.value)}
-              onKeyDown={async (e) => { if (e.key === 'Enter') { /* handled by button */ } }} />
+              onKeyDown={async (e) => { if (e.key === 'Enter') { /* handled by button */ } }}  aria-label="Ej: Asesor comercial" />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCargoDialog(false)}>Cancelar</Button>
@@ -411,9 +411,9 @@ export default function UsersPage() {
                   placeholder="Buscar por nombre, cedula..."
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-                />
+                 aria-label="Buscar por nombre, cedula..." />
               </div>
-              <Button variant="ghost" size="icon" onClick={load}>
+              <Button variant="ghost" size="icon" onClick={load} aria-label="Actualizar">
                 <RefreshCw className="h-4 w-4" />
               </Button>
             </div>
@@ -532,11 +532,11 @@ export default function UsersPage() {
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex items-center justify-end gap-2 px-4 py-3 border-t">
-              <Button variant="ghost" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              <Button variant="ghost" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Anterior">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
-              <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+              <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Siguiente">
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -565,16 +565,16 @@ export default function UsersPage() {
             {!editingId && (
               <div className="rounded-lg border p-4 space-y-3 bg-muted/30">
                 <p className="text-sm font-semibold text-foreground">Credenciales de acceso</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs">Usuario *</Label>
                     <Input className="mt-1 h-8 text-sm" placeholder="nombre.usuario"
-                      value={form.usuario} onChange={(e) => setForm((f) => ({ ...f, usuario: e.target.value }))} />
+                      value={form.usuario} onChange={(e) => setForm((f) => ({ ...f, usuario: e.target.value }))}  aria-label="nombre.usuario" />
                   </div>
                   <div>
                     <Label className="text-xs">Contrasena *</Label>
                     <Input className="mt-1 h-8 text-sm" type="password" placeholder="••••••••"
-                      value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+                      value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}  aria-label="••••••••" />
                   </div>
                 </div>
                 <div>
@@ -601,27 +601,27 @@ export default function UsersPage() {
             {/* Datos personales */}
             <div className="rounded-lg border p-4 space-y-3">
               <p className="text-sm font-semibold text-foreground">Datos personales</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Nombre completo *</Label>
                   <Input className="mt-1 h-8 text-sm" placeholder="Juan Perez"
-                    value={form.nombre_completo} onChange={(e) => setForm((f) => ({ ...f, nombre_completo: e.target.value }))} />
+                    value={form.nombre_completo} onChange={(e) => setForm((f) => ({ ...f, nombre_completo: e.target.value }))}  aria-label="Juan Perez" />
                 </div>
                 <div>
                   <Label className="text-xs">Cedula *</Label>
                   <Input className="mt-1 h-8 text-sm" placeholder="12345678"
                     value={form.cedula} onChange={(e) => setForm((f) => ({ ...f, cedula: e.target.value }))}
-                    disabled={!!editingId} />
+                    disabled={!!editingId}  aria-label="12345678" />
                 </div>
                 <div>
                   <Label className="text-xs">Correo electronico</Label>
                   <Input type="email" className="mt-1 h-8 text-sm" placeholder="juan@empresa.com"
-                    value={form.correo} onChange={(e) => setForm((f) => ({ ...f, correo: e.target.value }))} />
+                    value={form.correo} onChange={(e) => setForm((f) => ({ ...f, correo: e.target.value }))}  aria-label="juan@empresa.com" />
                 </div>
                 <div>
                   <Label className="text-xs">Telefono</Label>
                   <Input className="mt-1 h-8 text-sm" placeholder="+57 300 123 4567"
-                    value={form.telefono} onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))} />
+                    value={form.telefono} onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))}  aria-label="+57 300 123 4567" />
                 </div>
               </div>
             </div>
@@ -630,7 +630,7 @@ export default function UsersPage() {
             {isTrabajadores && (
               <div className="rounded-lg border p-4 space-y-3">
                 <p className="text-sm font-semibold text-foreground">Cargo y sede</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs">Cargo</Label>
                     <Select value={form.cargo || '__none__'} onValueChange={(v) => setForm((f) => ({ ...f, cargo: v === '__none__' ? '' : v }))}>

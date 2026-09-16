@@ -10,8 +10,9 @@ interface LayoutProps {
 function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen flex flex-col">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:p-3 focus:bg-white focus:text-primary">Saltar al contenido</a>
       <Header />
-      <main className="flex-1">
+      <main id="main-content" className="min-w-0 flex-1">
         {children}
       </main>
       <Footer />

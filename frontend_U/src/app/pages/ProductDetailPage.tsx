@@ -138,13 +138,13 @@ function ProductDetailPage() {
                 <button
                   onClick={prevImage}
                   className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center hover:bg-white transition-colors"
-                >
+                 aria-label="Anterior">
                   <ChevronLeft className="w-6 h-6" />
                 </button>
                 <button
                   onClick={nextImage}
                   className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center hover:bg-white transition-colors"
-                >
+                 aria-label="Siguiente">
                   <ChevronRight className="w-6 h-6" />
                 </button>
               </div>
@@ -227,14 +227,14 @@ function ProductDetailPage() {
                   <button
                     onClick={() => setQuantity(Math.max(1, quantity - 1))}
                     className="p-3 hover:bg-gray-50 transition-colors"
-                  >
+                   aria-label="Reducir cantidad">
                     <Minus className="w-5 h-5" />
                   </button>
                   <span className="w-16 text-center font-medium">{quantity}</span>
                   <button
                     onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
                     className="p-3 hover:bg-gray-50 transition-colors"
-                  >
+                   aria-label="Agregar">
                     <Plus className="w-5 h-5" />
                   </button>
                 </div>

@@ -49,6 +49,7 @@ export interface BackendOrder {
 }
 
 export interface WompiCheckoutIntent {
+  wompi_public_key?: string
   tracking_code: string
   wompi_reference: string
   wompi_signature: string

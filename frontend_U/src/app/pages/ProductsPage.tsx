@@ -1,5 +1,7 @@
 import './styles/ProductsPage.css'
-import { useState, useEffect } from 'react'
+import api from '../../services/api'
+import { useMobileDrawer } from '../../hooks/useMobileDrawer'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { SlidersHorizontal, X, ChevronDown, Grid3X3, LayoutList, Search } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
@@ -31,6 +33,7 @@ const sortOptions = [
 function ProductsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const filterRef = useMobileDrawer(isFilterOpen, () => setIsFilterOpen(false))
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<CategoryData[]>([])
@@ -38,6 +41,9 @@ function ProductsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [totalProducts, setTotalProducts] = useState(0)
   
+  const [loadError, setLoadError] = useState('')
+  const requestId = useRef(0)
+
   // Filtros
   const [categoryId, setCategoryId] = useState(searchParams.get('category_id') || '')
   const [brandId, setBrandId] = useState(searchParams.get('brand_id') || '')
@@ -49,12 +55,14 @@ function ProductsPage() {
 
   // Cargar productos con filtros
   useEffect(() => {
-    loadProducts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const timer = setTimeout(() => { void loadProducts() }, 250)
+    return () => { clearTimeout(timer); requestId.current += 1 }
   }, [categoryId, brandId, minPrice, maxPrice, searchQuery, sortBy, onlyAvailable])
 
   const loadProducts = async () => {
+    const id = ++requestId.current
     setIsLoading(true)
+    setLoadError('')
     try {
       const response = await productsService.getAll({
         categoryId: categoryId ? parseInt(categoryId) : undefined,
@@ -66,24 +74,31 @@ function ProductsPage() {
         inStock: onlyAvailable,
       })
       
+      if (id !== requestId.current) return
       setProducts(response)
-      // En la primera carga, obtener metadata
-      if (categories.length === 0 || brands.length === 0) {
-        // Forzar una llamada sin filtros para obtener metadata completa
-        fetch(`${import.meta.env.VITE_API_URL || '/api'}/products?per_page=1`)
-          .then(res => res.json())
-          .then(data => {
-            if (data.categories) setCategories(data.categories)
-            if (data.brands) setBrands(data.brands)
-          })
-          .catch(() => {})
-      }
-    } catch (error) {
-      console.error('Error loading products:', error)
+    } catch {
+      if (id === requestId.current) setLoadError('No pudimos cargar los productos. Intenta de nuevo.')
     } finally {
-      setIsLoading(false)
+      if (id === requestId.current) setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    let active = true
+    api.get<{ categories: CategoryData[]; brands: BrandData[] }>('/products?per_page=1')
+      .then(data => { if (active) { setCategories(data.categories || []); setBrands(data.brands || []) } })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    setCategoryId(searchParams.get('category_id') || '')
+    setBrandId(searchParams.get('brand_id') || '')
+    setMinPrice(searchParams.get('min_price') || '')
+    setMaxPrice(searchParams.get('max_price') || '')
+    setSearchQuery(searchParams.get('search') || '')
+    setSortBy(searchParams.get('sort') || '')
+  }, [searchParams])
 
   const updateFilter = (key: string, value: string) => {
     // Actualizar URL params
@@ -138,6 +153,7 @@ function ProductsPage() {
 
   return (
     <div className="min-h-screen bg-[#FAFBFC]">
+      {loadError && <div role="alert" className="max-w-7xl mx-auto p-4 text-red-700">{loadError} <button className="underline min-h-11" onClick={() => void loadProducts()}>Reintentar</button></div>}
       {/* Header */}
       <div className="bg-white border-b border-[#E5E7EB]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -151,7 +167,7 @@ function ProductsPage() {
               </p>
             </div>
             
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap min-w-0 items-center gap-3">
               {/* Mobile Filter Button */}
               <button
                 onClick={() => setIsFilterOpen(true)}
@@ -169,7 +185,7 @@ function ProductsPage() {
               {/* View Mode Toggle */}
               <div className="hidden sm:flex items-center bg-[#F3F4F6] rounded-xl p-1">
                 <button
-                  onClick={() => setViewMode('grid')}
+                  aria-label="Vista de cuadrícula" onClick={() => setViewMode('grid')}
                   className={`p-2 rounded-lg transition-all ${
                     viewMode === 'grid' 
                       ? 'bg-white text-[#001575] shadow-sm' 
@@ -179,7 +195,7 @@ function ProductsPage() {
                   <Grid3X3 className="w-5 h-5" />
                 </button>
                 <button
-                  onClick={() => setViewMode('list')}
+                  aria-label="Vista de lista" onClick={() => setViewMode('list')}
                   className={`p-2 rounded-lg transition-all ${
                     viewMode === 'list' 
                       ? 'bg-white text-[#001575] shadow-sm' 
@@ -191,11 +207,12 @@ function ProductsPage() {
               </div>
               
               {/* Sort Dropdown */}
-              <div className="relative">
+              <div className="relative min-w-0 max-w-full flex-1 sm:flex-none">
                 <select
+                  aria-label="Ordenar productos"
                   value={sortBy}
                   onChange={(e) => updateFilter('sort', e.target.value)}
-                  className="appearance-none px-4 py-2.5 pr-10 bg-white border border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-colors cursor-pointer"
+                  className="w-full min-w-0 appearance-none px-4 py-2.5 pr-10 bg-white border border-[#E5E7EB] rounded-xl focus:outline-none focus:border-[#001575] transition-colors cursor-pointer"
                 >
                   {sortOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -236,7 +253,7 @@ function ProductsPage() {
                     value={searchQuery}
                     onChange={(e) => updateFilter('search', e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:border-[#001575] focus:bg-white transition-all text-sm"
-                  />
+                   aria-label="Buscar en esta categoria..." />
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
                 </div>
               </div>
@@ -321,7 +338,7 @@ function ProductsPage() {
                       value={minPrice}
                       onChange={(e) => updateFilter('min_price', e.target.value)}
                       className="w-full px-3 py-2.5 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:border-[#001575] focus:bg-white transition-all text-sm"
-                    />
+                     aria-label="Min" />
                   </div>
                   <span className="text-[#9CA3AF] self-center">-</span>
                   <div className="flex-1">
@@ -331,7 +348,7 @@ function ProductsPage() {
                       value={maxPrice}
                       onChange={(e) => updateFilter('max_price', e.target.value)}
                       className="w-full px-3 py-2.5 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:border-[#001575] focus:bg-white transition-all text-sm"
-                    />
+                     aria-label="Max" />
                   </div>
                 </div>
               </div>
@@ -356,7 +373,7 @@ function ProductsPage() {
           </aside>
 
           {/* Products Grid */}
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             {isLoading ? (
               <div className="text-center py-20">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-[#001575] border-t-transparent" />
@@ -402,12 +419,13 @@ function ProductsPage() {
             className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
             onClick={() => setIsFilterOpen(false)} 
           />
-          <div className="absolute right-0 top-0 bottom-0 w-full max-w-sm bg-white shadow-2xl overflow-y-auto">
+          <div ref={filterRef as React.RefObject<HTMLDivElement>} role="dialog" aria-modal="true" aria-label="Filtros de productos" className="absolute right-0 top-0 bottom-0 w-full max-w-sm bg-white shadow-2xl overflow-y-auto">
             {/* Modal Header */}
             <div className="sticky top-0 bg-white border-b border-[#E5E7EB] px-6 py-4 flex items-center justify-between z-10">
               <h2 className="text-lg font-semibold text-[#1A1D21]">Filtros</h2>
               <button 
                 onClick={() => setIsFilterOpen(false)}
+                aria-label="Cerrar filtros"
                 className="w-10 h-10 hover:bg-[#F3F4F6] rounded-xl flex items-center justify-center transition-colors"
               >
                 <X className="w-6 h-6" />
@@ -488,15 +506,15 @@ function ProductsPage() {
                     placeholder="Min"
                     value={minPrice}
                     onChange={(e) => updateFilter('min_price', e.target.value)}
-                    className="flex-1 px-4 py-3 bg-[#F3F4F6] rounded-xl text-sm"
-                  />
+                    className="min-w-0 w-full flex-1 px-4 py-3 bg-[#F3F4F6] rounded-xl text-sm"
+                   aria-label="Min" />
                   <input
                     type="number"
                     placeholder="Max"
                     value={maxPrice}
                     onChange={(e) => updateFilter('max_price', e.target.value)}
-                    className="flex-1 px-4 py-3 bg-[#F3F4F6] rounded-xl text-sm"
-                  />
+                    className="min-w-0 w-full flex-1 px-4 py-3 bg-[#F3F4F6] rounded-xl text-sm"
+                   aria-label="Max" />
                 </div>
               </div>
 
@@ -516,4 +534,3 @@ function ProductsPage() {
 }
 
 export default ProductsPage
-

@@ -68,7 +68,7 @@ export default function NosotrosPage() {
             <AnimSection>
               <div className="relative rounded-3xl overflow-hidden shadow-2xl">
                 <img
-                  src="https://imporgasjj.com/wp-content/uploads/2024/05/western-chinese-business-hong-kong-893x1024.jpg"
+                  src="/image.png"
                   alt="Equipo ImporGas JJ S.A.S"
                   className="w-full h-full object-cover"
                   loading="lazy"

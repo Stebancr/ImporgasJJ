@@ -31,7 +31,7 @@ services:
       - EMAIL_PORT=${EMAIL_PORT:-587}
       - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
       - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
-      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-no-reply@gasstore.com}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-no-reply@IMPORGASJJ.com}
     depends_on:
       redis:
         condition: service_healthy

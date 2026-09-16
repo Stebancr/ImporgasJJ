@@ -58,7 +58,7 @@ export default function EditProfilePage() {
                 onChange={(e) => setForm({ ...form, nombre_completo: e.target.value })}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#001575] focus:border-transparent"
                 placeholder="Tu nombre completo"
-              />
+               aria-label="Tu nombre completo" />
             </div>
 
             <div>
@@ -71,7 +71,7 @@ export default function EditProfilePage() {
                 onChange={(e) => setForm({ ...form, correo: e.target.value })}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#001575] focus:border-transparent"
                 placeholder="tu@email.com"
-              />
+               aria-label="tu@email.com" />
             </div>
 
             <div>
@@ -84,7 +84,7 @@ export default function EditProfilePage() {
                 onChange={(e) => setForm({ ...form, telefono: e.target.value })}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#001575] focus:border-transparent"
                 placeholder="3001234567"
-              />
+               aria-label="3001234567" />
             </div>
 
             <div>
@@ -97,7 +97,7 @@ export default function EditProfilePage() {
                 onChange={(e) => setForm({ ...form, sede: e.target.value })}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#001575] focus:border-transparent"
                 placeholder="Sede de trabajo"
-              />
+               aria-label="Sede de trabajo" />
             </div>
 
             <div className="pt-4">

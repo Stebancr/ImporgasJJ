@@ -162,7 +162,7 @@ export const visitsService = {
     if (!response.ok) {
       if (response.status === 401) {
         localStorage.removeItem('token')
-        localStorage.removeItem('user')
+        localStorage.removeItem('adminUser')
         window.location.href = '/admin/login'
       }
       throw new Error(`Error ${response.status}: ${response.statusText}`)

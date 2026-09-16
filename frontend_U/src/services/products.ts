@@ -78,6 +78,15 @@ function toProduct(p: ApiProduct): Product {
 
 // ── Service ────────────────────────────────────────────────────────────────
 
+const pending = new Map<string, Promise<unknown>>()
+function productGet<T>(endpoint: string): Promise<T> {
+  const existing = pending.get(endpoint)
+  if (existing) return existing as Promise<T>
+  const promise = api.get<T>(endpoint).finally(() => pending.delete(endpoint))
+  pending.set(endpoint, promise)
+  return promise
+}
+
 export const productsService = {
   getAll: async (filters?: FilterOptions): Promise<Product[]> => {
     const params = new URLSearchParams()
@@ -91,44 +100,44 @@ export const productsService = {
     if (filters?.inStock !== undefined) params.append('is_available', 'true')
 
     const query = params.toString()
-    const res = await api.get<PaginatedResponse>(`/products${query ? `?${query}` : ''}`)
+    const res = await productGet<PaginatedResponse>(`/products${query ? `?${query}` : ''}`)
     return res.data.map(toProduct)
   },
 
   getById: async (id: string): Promise<Product> => {
-    const res = await api.get<{ data: ApiProduct }>(`/products/${id}`)
+    const res = await productGet<{ data: ApiProduct }>(`/products/${id}`)
     return toProduct(res.data)
   },
 
   getBySlug: async (slug: string): Promise<Product> => {
-    const res = await api.get<{ data: ApiProduct }>(`/products/slug/${slug}`)
+    const res = await productGet<{ data: ApiProduct }>(`/products/slug/${slug}`)
     return toProduct(res.data)
   },
 
   getFeatured: async (): Promise<Product[]> => {
-    const res = await api.get<PaginatedResponse>('/products?is_featured=true&per_page=8')
+    const res = await productGet<PaginatedResponse>('/products?is_featured=true&per_page=8')
     if (res.data.length > 0) return res.data.map(toProduct)
     // Fall back to best available products (sorted by rating desc)
-    const fallback = await api.get<PaginatedResponse>('/products?is_available=true&per_page=8')
+    const fallback = await productGet<PaginatedResponse>('/products?is_available=true&per_page=8')
     return fallback.data.map(toProduct)
   },
 
   getRelated: async (productId: string): Promise<Product[]> => {
     // Fetch products from same category — simplified approach
-    const product = await api.get<{ data: ApiProduct }>(`/products/${productId}`)
-    const res = await api.get<PaginatedResponse>(
+    const product = await productGet<{ data: ApiProduct }>(`/products/${productId}`)
+    const res = await productGet<PaginatedResponse>(
       `/products?category_id=${product.data.category_id}&per_page=4`
     )
     return res.data.filter(p => String(p.id) !== productId).map(toProduct)
   },
 
   getBestSellers: async (): Promise<Product[]> => {
-    const res = await api.get<PaginatedResponse>('/products?is_available=true&per_page=8')
+    const res = await productGet<PaginatedResponse>('/products?is_available=true&per_page=8')
     return res.data.map(toProduct)
   },
 
   search: async (query: string): Promise<Product[]> => {
-    const res = await api.get<PaginatedResponse>(`/products?search=${encodeURIComponent(query)}`)
+    const res = await productGet<PaginatedResponse>(`/products?search=${encodeURIComponent(query)}`)
     return res.data.map(toProduct)
   },
 }

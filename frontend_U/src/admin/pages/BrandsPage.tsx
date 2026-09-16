@@ -151,7 +151,7 @@ export default function BrandsPage() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
-              />
+               aria-label="Buscar marcas..." />
             </div>
           </div>
         </CardHeader>
@@ -217,7 +217,7 @@ export default function BrandsPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleOpenDialog(brand)}
-                            >
+                             aria-label="Editar">
                               <Edit className="h-4 w-4" />
                             </Button>
                             <Button
@@ -225,7 +225,7 @@ export default function BrandsPage() {
                               size="icon"
                               className="text-destructive hover:text-destructive"
                               onClick={() => handleDelete(brand.id)}
-                            >
+                             aria-label="Eliminar">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>

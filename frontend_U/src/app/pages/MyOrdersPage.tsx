@@ -93,7 +93,7 @@ export default function MyOrdersPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar por número de pedido o nombre..."
                 className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#001575] focus:border-transparent"
-              />
+               aria-label="Buscar por número de pedido o nombre..." />
             </div>
           </div>
         )}

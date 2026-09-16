@@ -22,6 +22,7 @@ export default function CheckoutResultPage() {
   const transactionId = params.get('id') || params.get('transaction_id') || ''
 
   const verify = useCallback(async () => {
+    setError('')
     if (!tracking) { setError('No se recibió el código de seguimiento de la compra.'); setLoading(false); return }
     try {
       const data = await paymentsService.getPaymentStatus(tracking, transactionId || undefined)
@@ -40,7 +41,7 @@ export default function CheckoutResultPage() {
   }, [result, verify])
 
   if (loading) return <div className="flex min-h-[60vh] items-center justify-center"><Loader2 className="h-12 w-12 animate-spin text-blue-700" /></div>
-  if (error || !result) return <div className="mx-auto max-w-2xl px-4 py-16 text-center"><AlertCircle className="mx-auto mb-4 h-16 w-16 text-red-500" /><h1 className="text-2xl font-bold">No fue posible verificar el pago</h1><p className="my-4 text-gray-600">{error}</p><Link to="/" className="font-semibold text-blue-700">Volver al inicio</Link></div>
+  if (error || !result) return <div className="mx-auto max-w-2xl px-4 py-16 text-center"><AlertCircle className="mx-auto mb-4 h-16 w-16 text-red-500" /><h1 className="text-2xl font-bold">No fue posible verificar el pago</h1><p className="my-4 text-gray-600">{error}</p><button className="mr-4 rounded-lg bg-blue-700 px-5 py-3 text-white" onClick={() => { setLoading(true); void verify() }}>Volver a verificar</button><Link to="/" className="font-semibold text-blue-700">Volver al inicio</Link></div>
   const info = presentation[result.payment_status]
   const Icon = result.payment_status === 'APPROVED' ? CheckCircle2 : result.payment_status === 'PENDING' ? Clock3 : XCircle
   const canRetry = ['DECLINED', 'VOIDED', 'ERROR'].includes(result.payment_status)

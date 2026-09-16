@@ -132,7 +132,21 @@ def graph_request(integration, method, path, *, json_body=None, params=None, bas
         data = response.json() if response.content else {}
         if not response.ok:
             error = data.get('error', {}) if isinstance(data, dict) else {}
-            raise MetaAPIError(f"Graph API rechazó la solicitud ({response.status_code}, código {error.get('code', 'desconocido')}).")
+            code = error.get('code', 'desconocido')
+            subcode = error.get('error_subcode')
+            details = error.get('error_data', {}).get('details') if isinstance(error.get('error_data'), dict) else ''
+            detail = details or error.get('message') or 'Meta no proporcionó más detalles.'
+            # Graph puede devolver saltos de línea y textos extensos. Se conserva el
+            # motivo útil, sin registrar URL, cabeceras ni el token de acceso.
+            detail = ' '.join(str(detail).split())[:500]
+            logger.warning(
+                'Meta Graph API rechazó una solicitud: status=%s code=%s subcode=%s detail=%s',
+                response.status_code, code, subcode or '-', detail,
+            )
+            subcode_text = f', subcódigo {subcode}' if subcode else ''
+            raise MetaAPIError(
+                f'Graph API rechazó la solicitud ({response.status_code}, código {code}{subcode_text}): {detail}'
+            )
         return data
     except requests.RequestException as exc:
         raise MetaAPIError('No fue posible conectar con Meta Graph API.') from exc
@@ -268,6 +282,13 @@ def persist_normalized_message(event):
             'status': 'bot',
         },
     )
+    if session.status == 'closed':
+        session.status = 'bot'
+        session.assigned_to = None
+        session.agent_id_ref = None
+        session.agent_name = ''
+        session.inactivity_warning_at = None
+        session.save(update_fields=['status', 'assigned_to', 'agent_id_ref', 'agent_name', 'inactivity_warning_at', 'updated_at'])
     if session.assigned_to_id is None:
         from crmChat.assignment import assign_session_automatically
         assign_session_automatically(session)
@@ -288,6 +309,12 @@ def persist_normalized_message(event):
         metadata=event.metadata,
         status='received',
     )
+    # Cierra la ventana de carrera con el barrido de inactividad: el mensaje
+    # entrante siempre tiene precedencia y vuelve a abrir la misma sesión.
+    ChatSession.objects.filter(pk=session.pk, status='closed').update(
+        status='bot', assigned_to=None, agent_id_ref=None, agent_name='', inactivity_warning_at=None,
+    )
+    session.refresh_from_db()
     for attachment in event.attachments:
         ChatAttachment.objects.create(
             message=message,
@@ -297,8 +324,9 @@ def persist_normalized_message(event):
             metadata={key: value for key, value in attachment.items() if key not in {'token'}},
         )
     session.last_customer_message_at = message.created_at
+    session.inactivity_warning_at = None
     session.unread_by_agent += 1
-    session.save(update_fields=['last_customer_message_at', 'unread_by_agent', 'updated_at'])
+    session.save(update_fields=['last_customer_message_at', 'inactivity_warning_at', 'unread_by_agent', 'updated_at'])
     return message
 
 
@@ -311,6 +339,11 @@ def dispatch_outbound_message(message):
         message.status = 'sent'
         message.save(update_fields=['direction', 'status'])
         return message
+    if not session.messages.filter(sender_type='user', direction='inbound', external_message_id__isnull=False).exists():
+        message.status = 'failed'
+        message.metadata = {**message.metadata, 'error': 'No existe un mensaje entrante previo de Meta.'}
+        message.save(update_fields=['status', 'metadata'])
+        raise MetaAPIError('No se permite enviar mensajes sin un mensaje entrante previo de Meta.')
     if not session.integration or not session.integration.active:
         message.status = 'failed'
         message.metadata = {'error': 'Integración inactiva o inexistente.'}
@@ -318,6 +351,17 @@ def dispatch_outbound_message(message):
         raise MetaAPIError('La conversación no tiene una integración activa.')
 
     recipient = session.external_thread_id
+    if not recipient:
+        message.status = 'failed'
+        message.metadata = {
+            **message.metadata,
+            'error': 'La conversación no tiene identificador del destinatario en Meta.',
+        }
+        message.save(update_fields=['status', 'metadata'])
+        raise MetaAPIError(
+            'La conversación no tiene identificador del destinatario. '
+            'Es necesario recibir nuevamente el mensaje de Meta antes de responder.'
+        )
     try:
         outbound_payload = message.metadata.get('outbound_payload', {})
         if session.channel == ChannelIntegration.CHANNEL_WHATSAPP:

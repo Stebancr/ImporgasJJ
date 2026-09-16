@@ -3,7 +3,6 @@
    ========================================== */
 
 .checkout-page {
-  overflow-x: hidden;
   animation: pageFadeIn 0.4s ease-out;
 }
 
@@ -16,12 +15,12 @@
 .checkout-layout {
   display: grid;
   gap: 2rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 1024px) {
   .checkout-layout {
-    grid-template-columns: 1fr 20rem;
+    grid-template-columns: minmax(0, 1fr) 20rem;
     align-items: flex-start;
   }
 }
@@ -122,11 +121,11 @@
 .checkout-location-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 640px) {
-  .checkout-location-grid { grid-template-columns: repeat(3, 1fr); }
+  .checkout-location-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* --- Payment methods --- */

@@ -3,7 +3,6 @@
    ========================================== */
 
 .cart-page {
-  overflow-x: hidden;
   animation: pageFadeIn 0.4s ease-out;
 }
 
@@ -16,12 +15,12 @@
 .cart-layout {
   display: grid;
   gap: 2rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 1024px) {
   .cart-layout {
-    grid-template-columns: 1fr 20rem;
+    grid-template-columns: minmax(0, 1fr) 20rem;
     align-items: flex-start;
   }
 }
@@ -30,7 +29,7 @@
 .cart-item {
   display: flex;
   gap: 1rem;
-  overflow: hidden; /* prevent any child overflow */
+  min-width: 0;
 }
 
 @media (min-width: 640px) {
@@ -105,6 +104,7 @@
 .cart-coupon {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .cart-coupon input {

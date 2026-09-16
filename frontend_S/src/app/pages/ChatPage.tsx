@@ -213,10 +213,10 @@ export default function ChatPage() {
         <p className="text-muted-foreground text-sm">Conversaciones de clientes en tiempo real</p>
       </div>
 
-      <div className="flex-1 flex gap-4 min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0">
 
         {/* ── Sessions panel ──────────────────────────────────────────────── */}
-        <div className="w-72 flex-shrink-0 flex flex-col border rounded-xl bg-card overflow-hidden">
+        <div className="w-full lg:w-72 max-h-80 lg:max-h-none flex-shrink-0 flex flex-col border rounded-xl bg-card overflow-hidden">
 
           {/* Filter + refresh */}
           <div className="p-3 border-b flex items-center gap-2">
@@ -230,7 +230,7 @@ export default function ChatPage() {
               <option value="active">Activos</option>
               <option value="closed">Cerrados</option>
             </select>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadSessions}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadSessions} aria-label="Actualizar">
               <RefreshCw className={`h-4 w-4 ${loadingSessions ? 'animate-spin' : ''}`} />
             </Button>
           </div>
@@ -286,7 +286,7 @@ export default function ChatPage() {
             <p>Selecciona una conversacion para responder</p>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col border rounded-xl bg-card overflow-hidden min-w-0">
+          <div className="min-h-96 lg:min-h-0 flex-1 flex flex-col border rounded-xl bg-card overflow-hidden min-w-0">
 
             {/* Session header */}
             <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
@@ -333,7 +333,7 @@ export default function ChatPage() {
                         <User className="h-3.5 w-3.5 text-primary" />
                       </div>
                     )}
-                    <div className={`max-w-[70%] px-3 py-2 rounded-2xl text-sm ${
+                    <div className={`max-w-[85%] break-words px-3 py-2 rounded-2xl text-sm ${
                       isUser
                         ? 'bg-white border rounded-tl-none shadow-sm'
                         : isAgent
@@ -384,7 +384,7 @@ export default function ChatPage() {
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                     placeholder="Escribe tu respuesta..."
                     className="flex-1 h-10"
-                  />
+                   aria-label="Escribe tu respuesta..." />
                   <Button onClick={handleSend} disabled={!inputText.trim() || sendingMsg} size="icon" className="h-10 w-10">
                     {sendingMsg ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </Button>

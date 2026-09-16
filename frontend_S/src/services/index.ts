@@ -15,7 +15,7 @@ export type { PublicRegisterData } from './auth'
 export type { BrandFilters, CreateBrandData } from './brands'
 export type { CategoryFilters, CreateCategoryData } from './categories'
 export type { LocationFilters, CreateLocationData } from './locations'
-export type { OrderFilters, CreateOrderData } from './orders'
+export type { OrderFilters } from './orders'
 export type { StockEntry, Cotizacion, Factura, DocumentoItem, CotizacionPayload, FacturaPayload } from './gestion'
 export type {
   ClienteVisita, Tecnico, VisitaItem, VisitaDetalle, CreateVisitaData, UpdateVisitaData,

@@ -15,7 +15,6 @@ function ProductCard({ product }: ProductCardProps) {
   const { isAuthenticated } = useAuth()
   const { addToCart } = useCart()
   const { isFavorite, addToFavorites, removeByProduct } = useFavorites()
-  const [isHovered, setIsHovered] = useState(false)
   const [favLoading, setFavLoading] = useState(false)
 
   const isWishlisted = isFavorite(parseInt(product.id))
@@ -55,17 +54,15 @@ function ProductCard({ product }: ProductCardProps) {
 
   return (
     <div 
-      className="group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-[#E5E7EB] hover:border-[#001575]/20"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      className="group min-w-0 bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-[#E5E7EB] hover:border-[#001575]/20"
     >
       {/* Image Container */}
       <div className="relative aspect-square overflow-hidden bg-[#F9FAFB]">
         <Link to={`/producto/${product.id}`}>
           <img
             src={product.images[0] || 'https://placehold.co/400x400/f3f4f6/9ca3af?text=Producto'}
-            alt={product.name}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+            alt={product.name} loading="lazy" decoding="async" width={400} height={400}
+            className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-500"
           />
         </Link>
         
@@ -86,13 +83,14 @@ function ProductCard({ product }: ProductCardProps) {
         {/* Quick Actions */}
         <div 
           className={`absolute top-3 right-3 flex flex-col gap-2 transition-all duration-300 ${
-            isHovered || isWishlisted ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'
+            'opacity-100 translate-x-0'
           }`}
         >
           <button
+            aria-label={isWishlisted ? "Quitar de favoritos" : "Agregar a favoritos"} aria-pressed={isWishlisted}
             onClick={handleToggleFavorite}
             disabled={favLoading}
-            className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all duration-200 ${
+            className={`w-11 h-11 rounded-full flex items-center justify-center shadow-lg transition-all duration-200 ${
               isWishlisted
                 ? 'bg-[#EF4444] text-white hover:bg-[#DC2626]'
                 : 'bg-white text-[#6B7280] hover:text-[#EF4444] hover:bg-red-50'
@@ -106,32 +104,7 @@ function ProductCard({ product }: ProductCardProps) {
           </button>
           <Link
             to={`/producto/${product.id}`}
-            className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-lg text-[#6B7280] hover:text-[#001575] transition-colors"
-          >
-            <Eye className="w-4 h-4" />
-          </Link>
-        </div>
-
-        {/* Add to Cart Overlay (Desktop) */}
-        <div
-          className={`hidden sm:block absolute bottom-0 left-0 right-0 p-4 transition-all duration-300 ${
-            isHovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
-          }`}
-        >
-          <button
-            onClick={handleToggleFavorite}
-            disabled={favLoading}
-            className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all duration-200 ${
-              isWishlisted 
-                ? 'bg-[#EF4444] text-white' 
-                : 'bg-white text-[#6B7280] hover:text-[#EF4444]'
-            } ${favLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-current' : ''}`} />
-          </button>
-          <Link
-            to={`/producto/${product.id}`}
-            className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-lg text-[#6B7280] hover:text-[#001575] transition-colors"
+            aria-label={`Ver ${product.name}`} className="w-11 h-11 bg-white rounded-full flex items-center justify-center shadow-lg text-[#6B7280] hover:text-[#001575] transition-colors"
           >
             <Eye className="w-4 h-4" />
           </Link>
@@ -146,21 +119,6 @@ function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
 
-        {/* Add to Cart - Hover (desktop only) */}
-        <div 
-          className={`hidden sm:block absolute bottom-0 left-0 right-0 p-4 transition-all duration-300 ${
-            isHovered && product.isAvailable ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
-          }`}
-        >
-          <button
-            onClick={handleAddToCart}
-            disabled={!product.isAvailable || product.stock < 1}
-            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:shadow-[#001575]/25 transition-all disabled:opacity-50"
-          >
-            <ShoppingCart className="w-5 h-5" />
-            <span>Agregar al carrito</span>
-          </button>
-        </div>
       </div>
 
       {/* Content */}
@@ -202,7 +160,7 @@ function ProductCard({ product }: ProductCardProps) {
         </div>
 
         {/* Price */}
-        <div className="flex items-baseline gap-2 mb-4">
+        <div className="flex flex-wrap items-baseline gap-2 mb-4">
           <span className="text-xl font-bold text-[#1A1D21]">
             {formatPrice(product.price)}
           </span>
@@ -217,7 +175,7 @@ function ProductCard({ product }: ProductCardProps) {
         <button
           onClick={handleAddToCart}
           disabled={!product.isAvailable || product.stock < 1}
-          className="sm:hidden w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
+          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
         >
           <ShoppingCart className="w-4 h-4" />
           <span>{product.isAvailable ? 'Agregar al carrito' : 'Agotado'}</span>

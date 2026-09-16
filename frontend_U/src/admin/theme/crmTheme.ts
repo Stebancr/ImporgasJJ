@@ -9,7 +9,9 @@ import { createTheme } from '@mui/material/styles'
 
 export const crmTheme = createTheme({
   palette: {
-    primary: { main: '#b45309' },
+    primary: { main: '#001575', contrastText: '#ffffff' },
+    warning: { main: '#a64300', contrastText: '#ffffff' },
+    success: { main: '#087f5b', contrastText: '#ffffff' },
     secondary: { main: '#475569' },
     background: { default: '#f8fafc', paper: '#ffffff' },
   },

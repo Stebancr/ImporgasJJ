@@ -1,116 +1,36 @@
 import './styles/HomePage.css'
 import { Link } from 'react-router-dom'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ThermometerSun, Gauge, PenToolIcon as Tool, ChevronLeft, ChevronRight, Flame, Utensils, WashingMachine } from 'lucide-react'
+import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ThermometerSun, Gauge, PenToolIcon as Tool, ChevronLeft, ChevronRight, Flame, Utensils } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import GoogleMap from '../../components/GoogleMap'
 import { Product } from '../../types'
 import { productsService } from '../../services/products'
 import { locationsService, ApiLocation } from '../../services/locations'
 
-// Fallback featured products (shown while loading)
-const mockFeaturedProducts: Product[] = [
-  {
-    id: '1',
-    name: 'Calentador de Agua a Gas 13L Premium',
-    description: 'Calentador de paso de alta eficiencia con encendido electronico',
-    price: 650000,
-    originalPrice: 750000,
-    category: 'calentadores',
-    brand: 'Haceb',
-    images: ['https://placehold.co/400x400/F58634/white?text=Calentador+13L'],
-    rating: 5,
-    reviewsCount: 128,
-    stock: 15,
-    specifications: {},
-    isAvailable: true,
-    isFeatured: true,
-    discount: 13,
-  },
-  {
-    id: '2',
-    name: 'Aire Acondicionado Split Inverter 12000 BTU',
-    description: 'Aire inverter con tecnologia de ahorro energetico A++',
-    price: 1850000,
-    originalPrice: 2100000,
-    category: 'aires',
-    brand: 'Samsung',
-    images: ['https://placehold.co/400x400/001575/white?text=Aire+Inverter'],
-    rating: 4,
-    reviewsCount: 89,
-    stock: 8,
-    specifications: {},
-    isAvailable: true,
-    isFeatured: true,
-    discount: 12,
-  },
-  {
-    id: '3',
-    name: 'Regulador de Gas Alta Presion Industrial',
-    description: 'Regulador industrial certificado con valvula de seguridad',
-    price: 85000,
-    category: 'reguladores',
-    brand: 'Fisher',
-    images: ['https://placehold.co/400x400/10B981/white?text=Regulador+Pro'],
-    rating: 5,
-    reviewsCount: 234,
-    stock: 50,
-    specifications: {},
-    isAvailable: true,
-    isFeatured: true,
-  },
-  {
-    id: '4',
-    name: 'Kit Profesional de Instalacion de Gas',
-    description: 'Kit completo con herramientas certificadas',
-    price: 320000,
-    originalPrice: 380000,
-    category: 'herramientas',
-    brand: 'Stanley',
-    images: ['https://placehold.co/400x400/F59E0B/white?text=Kit+Pro'],
-    rating: 4,
-    reviewsCount: 67,
-    stock: 12,
-    specifications: {},
-    isAvailable: true,
-    isFeatured: true,
-    discount: 16,
-  },
-]
+
 
 const categories = [
-  { 
-    name: 'Calentadores', 
-    icon: ThermometerSun, 
-    slug: 'calentadores', 
-    count: 45,
+  {
+    name: 'Calentadores',
+    icon: ThermometerSun,
+    slug: 'calentadores',
     color: 'from-[#F58634] to-[#d4711e]',
     bgColor: 'bg-[#fff3e8]',
     textColor: 'text-[#F58634]',
   },
-  { 
-    name: 'Aires Acondicionados', 
-    icon: Zap, 
-    slug: 'aires', 
-    count: 32,
-    color: 'from-[#001575] to-[#00104f]',
-    bgColor: 'bg-[#e8ecff]',
-    textColor: 'text-[#001575]',
-  },
-  { 
-    name: 'Reguladores', 
-    icon: Gauge, 
-    slug: 'reguladores', 
-    count: 28,
+  {
+    name: 'Reguladores',
+    icon: Gauge,
+    slug: 'reguladores',
     color: 'from-[#10B981] to-[#059669]',
     bgColor: 'bg-[#D1FAE5]',
     textColor: 'text-[#10B981]',
   },
-  { 
-    name: 'Herramientas', 
-    icon: Tool, 
-    slug: 'herramientas', 
-    count: 56,
+  {
+    name: 'Herramientas',
+    icon: Tool,
+    slug: 'herramientas',
     color: 'from-[#F59E0B] to-[#D97706]',
     bgColor: 'bg-[#FEF3C7]',
     textColor: 'text-[#F59E0B]',
@@ -156,7 +76,7 @@ const heroSlides = [
     cta: 'Ver Servicios',
     ctaHref: '/productos',
     bg: 'from-[#001575] via-[#0022b3] to-[#001575]',
-    image: 'https://imporgasjj.com/wp-content/uploads/2024/05/tecnico-calentadores-1.jpg',
+    image: '/tecnicos calentador.jpg',
   },
   {
     title: 'Estufas, Hornos y Campanas',
@@ -164,15 +84,7 @@ const heroSlides = [
     cta: 'Solicitar Servicio',
     ctaHref: '/contacto',
     bg: 'from-[#8B3A00] via-[#b34a00] to-[#8B3A00]',
-    image: 'https://imporgasjj.com/wp-content/uploads/2024/05/tecnico-hornos-1.jpg',
-  },
-  {
-    title: 'Lavadoras, Neveras y Secadoras',
-    subtitle: 'Diagnóstico, instalación y mantenimiento de electrodomésticos. Técnicos especializados.',
-    cta: 'Conocer Más',
-    ctaHref: '/nosotros',
-    bg: 'from-[#1a4a1a] via-[#226622] to-[#1a4a1a]',
-    image: 'https://imporgasjj.com/wp-content/uploads/2024/04/therm_5600_f_v2_1600x900original-1-150x150.png',
+    image: '/estufas tecnicos.jpg',
   },
 ]
 
@@ -181,7 +93,7 @@ const services = [
   {
     icon: Flame,
     title: 'Calentadores',
-    image: 'https://imporgasjj.com/wp-content/uploads/2024/05/tecnico-calentadores-1.jpg',
+    image: '/calentadores.jpg',
     items: [
       'Instalación de calentadores de agua a gas',
       'Instalación de calentadores eléctricos',
@@ -192,7 +104,7 @@ const services = [
   {
     icon: Utensils,
     title: 'Estufas, Hornos y Campanas',
-    image: 'https://imporgasjj.com/wp-content/uploads/2024/05/tecnico-hornos-1.jpg',
+    image: '/estufa-horno.jpg',
     items: [
       'Instalación de estufas empotrables',
       'Instalación de hornos',
@@ -200,21 +112,12 @@ const services = [
       'Reparación de hornos',
     ],
   },
-  {
-    icon: WashingMachine,
-    title: 'Lavadoras, Neveras y Secadoras',
-    image: 'https://imporgasjj.com/wp-content/uploads/2024/04/therm_5600_f_v2_1600x900original-1-150x150.png',
-    items: [
-      'Instalación',
-      'Reparación',
-      'Diagnóstico',
-      'Mantenimiento',
-    ],
-  },
 ]
 
 function HomePage() {
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([])
+  const [productsError, setProductsError] = useState(false)
+  const [reloadProducts, setReloadProducts] = useState(0)
   const [isLoadingProducts, setIsLoadingProducts] = useState(true)
   const [storeLocations, setStoreLocations] = useState<ApiLocation[]>([])
   const [currentSlide, setCurrentSlide]   = useState(0)
@@ -234,6 +137,7 @@ function HomePage() {
 
   const resetAutoPlay = useCallback(() => {
     if (autoPlayRef.current) clearInterval(autoPlayRef.current)
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     autoPlayRef.current = setInterval(nextSlide, 5000)
   }, [nextSlide])
 
@@ -250,11 +154,12 @@ function HomePage() {
 
   useEffect(() => {
     setIsLoadingProducts(true)
+    setProductsError(false)
     productsService.getFeatured()
       .then(products => setFeaturedProducts(products))
-      .catch(() => setFeaturedProducts(mockFeaturedProducts))
+      .catch(() => setProductsError(true))
       .finally(() => setIsLoadingProducts(false))
-  }, [])
+  }, [reloadProducts])
 
   useEffect(() => {
     locationsService.getActive()
@@ -266,8 +171,8 @@ function HomePage() {
     <div className="min-h-screen bg-[#FAFBFC]">
       {/* ── Hero Carousel ──────────────────────────────────────────────── */}
       <section
-        className="relative overflow-hidden select-none"
-        style={{ height: 'clamp(340px, 56vw, 680px)' }}
+        className="relative grid overflow-hidden select-none"
+        style={{ minHeight: 'clamp(420px, 56vw, 680px)' }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         aria-label="Carrusel principal"
@@ -276,8 +181,9 @@ function HomePage() {
         {heroSlides.map((slide, i) => (
           <div
             key={i}
-            className={`absolute inset-0 transition-all duration-700 ease-in-out ${i === currentSlide ? 'opacity-100 z-10' : 'opacity-0 z-0'}`}
+            className={`relative col-start-1 row-start-1 py-16 transition-opacity duration-300 ease-in-out ${i === currentSlide ? 'opacity-100 z-10' : 'opacity-0 z-0 invisible'}`}
             aria-hidden={i !== currentSlide}
+            inert={i !== currentSlide}
           >
             {/* Background image */}
             <img
@@ -295,7 +201,7 @@ function HomePage() {
               <div className="max-w-7xl w-full mx-auto px-6 sm:px-8 lg:px-12">
                 <div className="max-w-2xl">
                   <div className={`transition-all duration-700 delay-100 ${i === currentSlide ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-                    <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#F58634] text-white text-sm font-semibold rounded-full mb-5">
+                    <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#F58634] text-[#00104f] text-sm font-semibold rounded-full mb-5">
                       <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
                       ImporGas JJ S.A.S
                     </span>
@@ -307,7 +213,7 @@ function HomePage() {
                     </p>
                     <div className="flex flex-wrap gap-4">
                       <Link to={slide.ctaHref}
-                        className="group inline-flex items-center gap-2 bg-[#F58634] hover:bg-[#d4711e] text-white px-8 py-3.5 rounded-xl font-semibold shadow-xl shadow-[#F58634]/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200">
+                        className="group inline-flex items-center gap-2 bg-[#F58634] hover:bg-[#d4711e] text-[#00104f] px-8 py-3.5 rounded-xl font-semibold shadow-xl shadow-[#F58634]/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200">
                         {slide.cta}
                         <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                       </Link>
@@ -326,13 +232,13 @@ function HomePage() {
         {/* Arrows */}
         <button
           onClick={() => { resetAutoPlay(); prevSlide() }}
-          className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-11 h-11 bg-white/20 hover:bg-white/40 backdrop-blur rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+          className="absolute left-4 bottom-3 z-20 w-11 h-11 bg-white/20 hover:bg-white/40 backdrop-blur rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
           aria-label="Anterior">
           <ChevronLeft className="w-6 h-6" />
         </button>
         <button
           onClick={() => { resetAutoPlay(); nextSlide() }}
-          className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-11 h-11 bg-white/20 hover:bg-white/40 backdrop-blur rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+          className="absolute right-4 bottom-3 z-20 w-11 h-11 bg-white/20 hover:bg-white/40 backdrop-blur rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
           aria-label="Siguiente">
           <ChevronRight className="w-6 h-6" />
         </button>
@@ -385,26 +291,23 @@ function HomePage() {
             </p>
           </div>
           
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+          <div className="home-categories__grid">
             {categories.map((category) => (
               <Link
                 key={category.slug}
                 to={`/productos?category=${category.slug}`}
-                className="group relative bg-white rounded-2xl p-6 lg:p-8 border border-[#E5E7EB] hover:border-transparent hover:shadow-xl transition-all duration-300 overflow-hidden"
+                className="home-category-card group relative bg-white rounded-2xl p-6 lg:p-8 border border-[#E5E7EB] hover:border-transparent hover:shadow-xl transition-all duration-300 overflow-hidden"
               >
                 {/* Background gradient on hover */}
                 <div className={`absolute inset-0 bg-gradient-to-br ${category.color} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
                 
-                <div className="relative z-10">
+                <div className="relative z-10 flex flex-col items-center text-center">
                   <div className={`w-14 h-14 lg:w-16 lg:h-16 ${category.bgColor} group-hover:bg-white/20 rounded-2xl flex items-center justify-center mb-4 transition-colors`}>
                     <category.icon className={`w-7 h-7 lg:w-8 lg:h-8 ${category.textColor} group-hover:text-white transition-colors`} />
                   </div>
-                  <h3 className="font-semibold text-[#1A1D21] group-hover:text-white text-lg mb-1 transition-colors">
+                  <h3 className="font-semibold text-[#1A1D21] group-hover:text-white text-lg transition-colors">
                     {category.name}
                   </h3>
-                  <p className="text-sm text-[#6B7280] group-hover:text-white/80 transition-colors">
-                    {category.count} productos
-                  </p>
                 </div>
 
                 {/* Arrow */}
@@ -430,14 +333,14 @@ function HomePage() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="home-services__grid">
             {services.map((service) => (
               <div
                 key={service.title}
-                className="group bg-white rounded-3xl overflow-hidden shadow-md border border-gray-100 hover:shadow-xl hover:-translate-y-2 transition-all duration-300"
+                className="home-service-card group bg-white rounded-3xl overflow-hidden shadow-md border border-gray-100 hover:shadow-xl hover:-translate-y-2 transition-all duration-300"
               >
                 {/* Image */}
-                <div className="relative overflow-hidden h-52">
+                <div className="relative overflow-hidden h-82">
                   <img
                     src={service.image}
                     alt={service.title}
@@ -498,11 +401,12 @@ function HomePage() {
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {productsError && <div role="alert" className="col-span-full p-4 rounded-xl bg-red-50 text-red-800">No pudimos cargar los productos. <button className="underline min-h-11" onClick={() => setReloadProducts(value => value + 1)}>Reintentar</button></div>}
             {isLoadingProducts
               ? Array.from({ length: 8 }).map((_, i) => (
                   <div key={i} className="rounded-xl bg-gray-100 animate-pulse h-72" />
                 ))
-              : featuredProducts.length > 0
+              : productsError ? null : featuredProducts.length > 0
                 ? featuredProducts.map((product) => (
                     <ProductCard key={product.id} product={product} />
                   ))
@@ -534,7 +438,7 @@ function HomePage() {
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <Link
                   to="/contacto"
-                  className="group inline-flex items-center justify-center gap-2 bg-[#F58634] hover:bg-[#d4711e] text-white px-8 py-4 rounded-xl font-semibold shadow-xl shadow-[#F58634]/30 hover:-translate-y-1 active:translate-y-0 transition-all"
+                  className="group inline-flex items-center justify-center gap-2 bg-[#F58634] hover:bg-[#d4711e] text-[#00104f] px-8 py-4 rounded-xl font-semibold shadow-xl shadow-[#F58634]/30 hover:-translate-y-1 active:translate-y-0 transition-all"
                 >
                   Hablar con un Asesor
                   <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />

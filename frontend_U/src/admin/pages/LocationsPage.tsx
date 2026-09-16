@@ -161,7 +161,7 @@ export default function LocationsPage() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
-              />
+               aria-label="Buscar ubicaciones..." />
             </div>
           </div>
         </CardHeader>
@@ -211,7 +211,7 @@ export default function LocationsPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(location)}>
+                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(location)} aria-label="Editar">
                               <Edit className="h-4 w-4" />
                             </Button>
                             <Button
@@ -219,7 +219,7 @@ export default function LocationsPage() {
                               size="icon"
                               className="text-destructive hover:text-destructive"
                               onClick={() => handleDelete(location.id)}
-                            >
+                             aria-label="Eliminar">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
@@ -266,7 +266,7 @@ export default function LocationsPage() {
                 placeholder="Ej: Calle 45 #23-56"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="city">Ciudad *</Label>
                 <Input
@@ -294,7 +294,7 @@ export default function LocationsPage() {
                     value={formData.hours_weekday}
                     onChange={(e) => setFormData({ ...formData, hours_weekday: e.target.value })}
                     placeholder="Ej: 8:00 AM - 6:00 PM"
-                  />
+                   aria-label="Ej: 8:00 AM - 6:00 PM" />
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground w-20 shrink-0">Sábado</span>
@@ -302,7 +302,7 @@ export default function LocationsPage() {
                     value={formData.hours_saturday}
                     onChange={(e) => setFormData({ ...formData, hours_saturday: e.target.value })}
                     placeholder="Ej: 9:00 AM - 2:00 PM"
-                  />
+                   aria-label="Ej: 9:00 AM - 2:00 PM" />
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground w-20 shrink-0">Domingo</span>
@@ -310,7 +310,7 @@ export default function LocationsPage() {
                     value={formData.hours_sunday}
                     onChange={(e) => setFormData({ ...formData, hours_sunday: e.target.value })}
                     placeholder="Ej: Cerrado"
-                  />
+                   aria-label="Ej: Cerrado" />
                 </div>
               </div>
             </div>            <div className="flex items-center gap-2">

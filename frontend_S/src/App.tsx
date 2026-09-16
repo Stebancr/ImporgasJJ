@@ -1,26 +1,28 @@
+import { lazy } from 'react'
+import { PageBoundary } from '@/components/PageBoundary'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from '@/context/AuthContext'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 
 // Pages
-import LoginPage from '@/app/pages/LoginPage'
-import DashboardPage from '@/app/pages/DashboardPage'
-import ProductsPage from '@/app/pages/ProductsPage'
-import CategoriesPage from '@/app/pages/CategoriesPage'
-import BrandsPage from '@/app/pages/BrandsPage'
-import LocationsPage from '@/app/pages/LocationsPage'
-import OrdersPage from '@/app/pages/OrdersPage'
-import UsersPage from '@/app/pages/UsersPage'
-import ProfilePage from '@/app/pages/ProfilePage'
-import GestionPage from '@/app/pages/GestionPage'
-import ChatPage from '@/app/pages/ChatPage'
-import VisitsPage from '@/app/pages/VisitsPage'
+const LoginPage = lazy(() => import('@/app/pages/LoginPage'))
+const DashboardPage = lazy(() => import('@/app/pages/DashboardPage'))
+const ProductsPage = lazy(() => import('@/app/pages/ProductsPage'))
+const CategoriesPage = lazy(() => import('@/app/pages/CategoriesPage'))
+const BrandsPage = lazy(() => import('@/app/pages/BrandsPage'))
+const LocationsPage = lazy(() => import('@/app/pages/LocationsPage'))
+const OrdersPage = lazy(() => import('@/app/pages/OrdersPage'))
+const UsersPage = lazy(() => import('@/app/pages/UsersPage'))
+const ProfilePage = lazy(() => import('@/app/pages/ProfilePage'))
+const GestionPage = lazy(() => import('@/app/pages/GestionPage'))
+const ChatPage = lazy(() => import('@/app/pages/ChatPage'))
+const VisitsPage = lazy(() => import('@/app/pages/VisitsPage'))
 
 export default function App() {
   return (
     <AuthProvider>
-      <Routes>
+      <PageBoundary><Routes>
         {/* Public Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<Navigate to="/login" replace />} />
@@ -29,7 +31,7 @@ export default function App() {
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute allowedRoles={['admin']}>
               <DashboardLayout />
             </ProtectedRoute>
           }
@@ -77,7 +79,7 @@ export default function App() {
         
         {/* 404 - Redirect to dashboard */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+      </Routes></PageBoundary>
     </AuthProvider>
   )
 }

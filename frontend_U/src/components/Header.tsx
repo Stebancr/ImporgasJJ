@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useRef } from 'react'
+﻿import { useMobileDrawer } from '../hooks/useMobileDrawer'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Menu, X, ShoppingCart, Search, ChevronDown, LogOut,
@@ -17,13 +18,13 @@ const navigation = [
 
 const userMenuItems = [
   { icon: User,       label: 'Mi perfil',          href: '/perfil' },
-  { icon: Edit,       label: 'Editar información',  href: '/perfil' },
-  { icon: Package,    label: 'Mis pedidos',          href: '/perfil' },
+  { icon: Edit,       label: 'Editar información', href: '/perfil/editar' },
+  { icon: Package,    label: 'Mis pedidos', href: '/mis-pedidos' },
   { icon: Truck,      label: 'Rastrear pedidos',    href: '/seguimiento' },
-  { icon: Heart,      label: 'Lista de favoritos',  href: '/perfil' },
-  { icon: MapPin,     label: 'Direcciones',         href: '/perfil' },
+  { icon: Heart,      label: 'Lista de favoritos', href: '/favoritos' },
+  { icon: MapPin,     label: 'Direcciones', href: '/direcciones' },
   { icon: CreditCard, label: 'Métodos de pago',     href: '/perfil' },
-  { icon: Bell,       label: 'Notificaciones',      href: '/perfil' },
+  { icon: Bell,       label: 'Notificaciones', href: '/notificaciones' },
   { icon: Settings,   label: 'Configuración',       href: '/perfil' },
 ]
 
@@ -56,10 +57,7 @@ export default function Header() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  useEffect(() => {
-    document.body.style.overflow = isDrawerOpen ? 'hidden' : ''
-    return () => { document.body.style.overflow = '' }
-  }, [isDrawerOpen])
+  const drawerRef = useMobileDrawer(isDrawerOpen, () => setIsDrawerOpen(false))
 
   const isActive = (href: string) =>
     href === '/' ? location.pathname === '/' : location.pathname.startsWith(href)
@@ -127,17 +125,17 @@ export default function Header() {
         {/* Main header */}
         <div className={`bg-white transition-all duration-300 ${isScrolled ? 'bg-white/97 backdrop-blur-lg' : ''}`}>
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-4 h-16 lg:h-20">
+            <div className="flex items-center gap-2 sm:gap-4 h-16 lg:h-20">
 
               {/* Logo */}
-              <Link to="/" className="flex-shrink-0 flex items-center group" aria-label="ImporGas JJ - Inicio">
+              <Link to="/" className="min-w-0 max-w-[40%] sm:max-w-none flex items-center group" aria-label="ImporGas JJ - Inicio">
                 <img src="/logo_imporgas.svg" alt="ImporGas JJ S.A.S"
-                  className="object-contain transition-transform duration-300 group-hover:scale-105"
+                  className="max-w-full object-contain transition-transform duration-300 group-hover:scale-105"
                   style={{ height: '40px', width: 'auto' }} />
               </Link>
 
               {/* Search desktop */}
-              <form onSubmit={handleSearch} className="hidden md:flex flex-1 max-w-xl mx-4 lg:mx-8">
+              <form onSubmit={handleSearch} className="hidden md:flex flex-1 min-w-0 max-w-xl mx-4 lg:mx-8">
                 <div className="relative w-full">
                   <input
                     type="search"
@@ -156,10 +154,10 @@ export default function Header() {
               </form>
 
               {/* Desktop nav */}
-              <nav className="hidden lg:flex items-center gap-1" aria-label="Navegación principal">
+              <nav className="hidden lg:flex items-center gap-0" aria-label="Navegación principal">
                 {navigation.map(item => (
-                  <Link key={item.name} to={item.href}
-                    className={`px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200 ${
+                  <Link key={item.name} to={item.href} aria-current={isActive(item.href) ? "page" : undefined}
+                    className={`px-2 py-2 rounded-xl font-medium text-sm transition-all duration-200 ${
                       isActive(item.href)
                         ? 'text-[#001575] bg-[#e8ecff]'
                         : 'text-[#4B5563] hover:text-[#001575] hover:bg-[#f5f7fa]'
@@ -178,7 +176,7 @@ export default function Header() {
                   aria-label={`Carrito (${totalItems} productos)`}>
                   <ShoppingCart className="w-6 h-6" />
                   {totalItems > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#F58634] text-white text-xs font-bold rounded-full flex items-center justify-center animate-scale-in">
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#F58634] text-[#00104f] text-xs font-bold rounded-full flex items-center justify-center animate-scale-in">
                       {totalItems > 99 ? '99+' : totalItems}
                     </span>
                   )}
@@ -241,15 +239,17 @@ export default function Header() {
         </div>
       </header>
 
-      {/* Overlay */}
-      <div
-        className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-50 lg:hidden transition-opacity duration-300 ${isDrawerOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        onClick={() => setIsDrawerOpen(false)} aria-hidden="true" />
+      {isDrawerOpen && (
+        <>
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 lg:hidden"
+            onClick={() => setIsDrawerOpen(false)} aria-hidden="true" />
 
-      {/* Drawer */}
-      <aside
-        className={`fixed top-0 right-0 h-full w-[85vw] max-w-sm bg-white z-50 lg:hidden shadow-2xl flex flex-col transition-transform duration-300 ${isDrawerOpen ? 'translate-x-0' : 'translate-x-full'}`}
-        role="dialog" aria-modal="true" aria-label="Menú lateral">
+          {/* Drawer */}
+          <aside ref={drawerRef}
+            className="fixed top-0 right-0 h-full w-[85vw] max-w-sm bg-white z-50 lg:hidden shadow-2xl flex flex-col"
+            role="dialog" aria-modal="true" aria-label="Menú lateral">
 
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-[#001575]">
           <img src="/logo_imporgas.svg" alt="ImporGas JJ S.A.S" style={{ height: '32px', width: 'auto', filter: 'brightness(0) invert(1)' }} />
@@ -265,7 +265,7 @@ export default function Header() {
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full pl-4 pr-12 py-3 bg-[#f5f7fa] border-2 border-transparent rounded-xl text-sm focus:outline-none focus:border-[#001575] transition-all"
                 aria-label="Buscar" />
-              <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-[#F58634] rounded-lg flex items-center justify-center">
+              <button type="submit" aria-label="Buscar productos" className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-[#F58634] rounded-lg flex items-center justify-center">
                 <Search className="w-4 h-4 text-white" />
               </button>
             </div>
@@ -315,11 +315,13 @@ export default function Header() {
             </Link>
           )}
         </div>
-      </aside>
+          </aside>
+        </>
+      )}
 
       {/* Floating call button mobile */}
       <a href="tel:+573165266734"
-        className="fixed bottom-24 right-4 z-40 lg:hidden w-14 h-14 bg-[#F58634] hover:bg-[#d4711e] text-white rounded-full shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95"
+        className="fixed bottom-24 right-4 z-40 lg:hidden w-14 h-14 bg-[#F58634] hover:bg-[#d4711e] text-[#00104f] rounded-full shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95"
         aria-label="Llamar a ImporGas JJ">
         <Phone className="w-6 h-6" />
       </a>

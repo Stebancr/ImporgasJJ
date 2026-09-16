@@ -40,11 +40,13 @@ def parse_webhook(payload):
             value = change.get('value', {})
             phone_number_id = str(value.get('metadata', {}).get('phone_number_id', '') or waba_id)
             names = {
-                str(contact.get('wa_id', '')): contact.get('profile', {}).get('name', '')
+                str(contact.get('wa_id') or contact.get('user_id') or ''): contact.get('profile', {}).get('name', '')
                 for contact in value.get('contacts', [])
             }
             for message in value.get('messages', []):
-                sender_id = str(message.get('from', ''))
+                # Meta puede entregar el número tradicional en ``from`` o el
+                # identificador de usuario protegido en ``from_user_id``.
+                sender_id = str(message.get('from') or message.get('from_user_id') or '')
                 text, message_type, attachments = _message_content(message)
                 result.append(NormalizedMessage(
                     channel='whatsapp',

@@ -881,6 +881,7 @@ class OrderListView(APIView):
             return Response({'data': {
                 'tracking_code': str(intent.tracking_code),
                 'wompi_reference': intent.reference,
+                'wompi_public_key': settings.WOMPI_PUBLIC_KEY,
                 'wompi_signature': hashlib.sha256(signature_string.encode()).hexdigest(),
                 'total': str(intent.total),
                 'payment_status': intent.wompi_status,

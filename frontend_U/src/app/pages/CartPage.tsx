@@ -58,7 +58,7 @@ function CartPage() {
                 key={item.product.id} 
                 className="bg-white rounded-2xl border border-[#E5E7EB] p-4 sm:p-6 hover:border-[#001575]/20 hover:shadow-lg transition-all"
               >
-                <div className="flex gap-4 sm:gap-6">
+                <div className="flex flex-col min-[400px]:flex-row gap-4 sm:gap-6">
                   <Link to={`/producto/${item.product.id}`} className="flex-shrink-0">
                     <div className="relative">
                       <img
@@ -74,14 +74,14 @@ function CartPage() {
                     </div>
                   </Link>
                   <div className="flex-1 min-w-0">
-                    <div className="flex justify-between gap-4">
+                    <div className="flex justify-between gap-3 [&>div]:min-w-0">
                       <div>
                         <span className="inline-block text-xs font-medium text-[#001575] bg-[#e8ecff] px-2 py-0.5 rounded-md mb-2">
                           {item.product.brand}
                         </span>
                         <Link
                           to={`/producto/${item.product.id}`}
-                          className="block font-semibold text-[#1A1D21] hover:text-[#001575] transition-colors line-clamp-2 text-lg"
+                          className="font-semibold text-[#1A1D21] hover:text-[#001575] transition-colors line-clamp-2 text-lg"
                         >
                           {item.product.name}
                         </Link>
@@ -90,7 +90,7 @@ function CartPage() {
                       <button
                         onClick={() => removeFromCart(item.product.id)}
                         className="w-10 h-10 flex items-center justify-center text-[#9CA3AF] hover:text-[#EF4444] hover:bg-[#FEE2E2] rounded-xl transition-all flex-shrink-0"
-                      >
+                       aria-label="Eliminar">
                         <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
@@ -101,14 +101,14 @@ function CartPage() {
                         <button
                           onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
                           className="w-10 h-10 flex items-center justify-center hover:bg-white rounded-lg transition-colors"
-                        >
+                         aria-label="Reducir cantidad">
                           <Minus className="w-4 h-4 text-[#4B5563]" />
                         </button>
                         <span className="w-12 text-center font-semibold text-[#1A1D21]">{item.quantity}</span>
                         <button
                           onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
                           className="w-10 h-10 flex items-center justify-center hover:bg-white rounded-lg transition-colors"
-                        >
+                         aria-label="Agregar">
                           <Plus className="w-4 h-4 text-[#4B5563]" />
                         </button>
                       </div>
@@ -171,7 +171,7 @@ function CartPage() {
                       onChange={(e) => setCouponCode(e.target.value)}
                       placeholder="Ingresa tu codigo"
                       className="w-full pl-10 pr-4 py-3 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:border-[#001575] focus:bg-white transition-all text-sm"
-                    />
+                     aria-label="Ingresa tu codigo" />
                     <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9CA3AF]" />
                   </div>
                   <button className="px-4 py-3 bg-[#F3F4F6] text-[#4B5563] rounded-xl font-medium hover:bg-[#E5E7EB] transition-colors">

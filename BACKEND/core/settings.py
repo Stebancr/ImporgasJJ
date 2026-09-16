@@ -187,6 +187,10 @@ CELERY_TASK_SOFT_TIME_LIMIT = config('CELERY_TASK_SOFT_TIME_LIMIT', default=110,
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_TIMEZONE = 'America/Bogota'
 CELERY_BEAT_SCHEDULE = {
+    'close-inactive-bot-sessions': {
+        'task': 'crmChat.tasks.close_inactive_bot_sessions',
+        'schedule': timedelta(seconds=30),
+    },
     # Meta no tiene un mecanismo único de refresh para los tres productos. Se
     # auditan vencimientos y la rotación se realiza de forma segura en el panel.
     'audit-meta-token-expiration-daily': {

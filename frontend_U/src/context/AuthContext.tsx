@@ -16,10 +16,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const token = localStorage.getItem('authToken')
-    setState({ user: authService.getStoredUser(), isAuthenticated: Boolean(token), isLoading: false, token })
+    let active = true
+    if (token) {
+      authService.getCurrentUser().then(user => {
+        if (active) setState({ user, isAuthenticated: true, isLoading: false, token: localStorage.getItem('authToken') })
+      }).catch(() => {
+        if (active) { authService.logout(); setState({ user: null, isAuthenticated: false, isLoading: false, token: null }) }
+      })
+    } else setState({ user: null, isAuthenticated: false, isLoading: false, token: null })
     const handleForceLogout = () => setState({ user: null, isAuthenticated: false, isLoading: false, token: null })
     window.addEventListener('auth:logout', handleForceLogout)
-    return () => window.removeEventListener('auth:logout', handleForceLogout)
+    return () => { active = false; window.removeEventListener('auth:logout', handleForceLogout) }
   }, [])
 
   const login = useCallback(async (identifier: string, password: string) => {

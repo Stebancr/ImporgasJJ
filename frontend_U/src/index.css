@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -28,6 +28,7 @@
   --color-muted-foreground: #6B7280;
   --color-accent-foreground: #1A1D21;
   --color-destructive: #DC2626;
+  --color-destructive-foreground: #FFFFFF;
   --color-input: #D1D5DB;
   --color-ring: #001575;
   
@@ -41,9 +42,9 @@
 }
 
 
+@layer base {
 html {
   scroll-behavior: smooth;
-  overflow-x: hidden;
 }
 
 body {
@@ -53,8 +54,6 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
-  min-width: 320px;
 }
 
 a {
@@ -79,6 +78,8 @@ button {
 
 input, select, textarea {
   font-family: inherit;
+}
+
 }
 
 /* Custom scrollbar */
@@ -205,9 +206,8 @@ input, select, textarea {
 /* Focus styles */
 .focus-ring {
   outline: none;
-  ring: 2px;
-  ring-offset: 2px;
-  ring-color: var(--color-primary);
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
 }
 
 /* Gradient text */
@@ -216,4 +216,19 @@ input, select, textarea {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+@layer base {
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid #001575;
+    outline-offset: 3px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

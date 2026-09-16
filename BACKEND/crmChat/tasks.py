@@ -35,11 +35,14 @@ from .realtime import publish_crm_event
 
 logger = logging.getLogger(__name__)
 
+INACTIVITY_WARNING_TEXT = 'Este chat se cerrará por inactividad en 1 minuto. Si necesitas continuar, envía un mensaje.'
+
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=5)
 def process_meta_webhook_task(self, event_id):
     """Procesa un envelope Meta una sola vez y programa respuestas del bot."""
 
+    logger.info('Procesando webhook Meta event_id=%s.', event_id)
     event = WebhookEvent.objects.get(pk=event_id)
     if event.status == 'processed':
         return {'duplicate': True}
@@ -54,6 +57,7 @@ def process_meta_webhook_task(self, event_id):
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
             generate_omnichannel_bot_reply.delay(message.id)
+            logger.info('Respuesta bot programada para message_id=%s session_id=%s.', message.id, message.session_id)
     return {'processed': len(messages)}
 
 
@@ -246,18 +250,47 @@ def _typing(session, enabled):
 def generate_omnichannel_bot_reply(self, user_message_id):
     """Usa la misma memoria estructurada de Ollama en cualquier canal."""
 
+    logger.info('Iniciando respuesta omnicanal para message_id=%s.', user_message_id)
+
+    retry_reply_id = None
     with transaction.atomic():
         user_message = ChatMessage.objects.select_for_update().select_related('session').get(pk=user_message_id)
         session = ChatSession.objects.select_for_update().get(pk=user_message.session_id)
         stale_before = timezone.now() - timedelta(minutes=5)
+        if user_message.sender_type != 'user' or user_message.direction != 'inbound':
+            return {'skipped': 'not_a_customer_message'}
+        if session.channel != 'ecommerce' and not user_message.external_message_id:
+            return {'skipped': 'missing_meta_message_id'}
         if session.status != 'bot':
             return {'skipped': 'conversation_not_in_bot_mode'}
-        if hasattr(user_message, 'bot_reply'):
-            return {'duplicate': True}
+        existing_reply = getattr(user_message, 'bot_reply', None)
+        if existing_reply:
+            if existing_reply.status != 'failed':
+                return {'duplicate': True}
+            # La respuesta ya fue generada: reintenta exactamente el mismo
+            # mensaje sin volver a consultar Ollama ni crear duplicados.
+            existing_reply.status = 'queued'
+            existing_reply.save(update_fields=['status'])
+            user_message.bot_processing_at = timezone.now()
+            user_message.save(update_fields=['bot_processing_at'])
+            retry_reply_id = existing_reply.id
         if user_message.bot_processing_at and user_message.bot_processing_at > stale_before:
-            return {'skipped': 'already_processing'}
-        user_message.bot_processing_at = timezone.now()
-        user_message.save(update_fields=['bot_processing_at'])
+            if retry_reply_id is None:
+                return {'skipped': 'already_processing'}
+        elif retry_reply_id is None:
+            user_message.bot_processing_at = timezone.now()
+            user_message.save(update_fields=['bot_processing_at'])
+
+    if retry_reply_id is not None:
+        reply = ChatMessage.objects.select_related('session__integration').get(pk=retry_reply_id)
+        try:
+            dispatch_outbound_message(reply)
+        except Exception:
+            ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
+            raise
+        ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
+        publish_crm_event('message.created', session_id=reply.session_id, message_id=reply.id)
+        return {'message_id': reply.id, 'retried': True}
 
     previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8])
     history = [
@@ -276,6 +309,7 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             summary=session.conversation_summary,
         )
     except Exception:
+        logger.exception('Falló Ollama para message_id=%s; Celery reintentará según la política configurada.', user_message_id)
         ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
         raise
     finally:
@@ -296,6 +330,74 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             sender_type='bot', direction='outbound', status='queued',
             metadata={'reply_to_message_id': user_message.id},
         )
-    dispatch_outbound_message(reply)
+        session.last_bot_message_at = reply.created_at
+        session.inactivity_warning_at = None
+        session.save(update_fields=['last_bot_message_at', 'inactivity_warning_at', 'updated_at'])
+        if result.get('needs_agent'):
+            publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
+    try:
+        dispatch_outbound_message(reply)
+    except Exception:
+        ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
+        raise
+    ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
+    logger.info('Respuesta omnicanal enviada message_id=%s reply_id=%s session_id=%s.', user_message_id, reply.id, session.id)
     publish_crm_event('message.created', session_id=session.id, message_id=reply.id)
     return {'message_id': reply.id}
+
+
+@shared_task
+def close_inactive_bot_sessions():
+    """Advierte una sola vez a los 2 minutos y cierra al minuto siguiente."""
+    now = timezone.now()
+    warned = closed = 0
+    candidates = ChatSession.objects.filter(status__in=('bot', 'waiting'), last_bot_message_at__isnull=False)
+    for session in candidates.iterator():
+        # Una respuesta posterior del cliente cancela cualquier cierre pendiente.
+        if session.last_customer_message_at and session.last_customer_message_at > session.last_bot_message_at:
+            if session.inactivity_warning_at:
+                ChatSession.objects.filter(pk=session.pk).update(inactivity_warning_at=None)
+            continue
+        if session.inactivity_warning_at:
+            if session.inactivity_warning_at <= now - timedelta(minutes=1):
+                updated = ChatSession.objects.filter(
+                    pk=session.pk, status__in=('bot', 'waiting'),
+                    inactivity_warning_at=session.inactivity_warning_at,
+                ).update(status='closed')
+                if updated:
+                    closed += 1
+                    publish_crm_event('session.closed', session_id=session.id)
+            continue
+        if session.last_bot_message_at > now - timedelta(minutes=2):
+            continue
+        message = session.messages.filter(
+            metadata__system_event='inactivity_warning',
+            created_at__gte=session.last_bot_message_at,
+            status__in=('queued', 'failed'),
+        ).order_by('-created_at').first()
+        if message is None:
+            message = ChatMessage.objects.create(
+                session=session, text=INACTIVITY_WARNING_TEXT, sender_type='bot',
+                direction='outbound', status='queued', metadata={'system_event': 'inactivity_warning'},
+            )
+        elif message.status == 'failed':
+            message.status = 'queued'
+            message.save(update_fields=['status'])
+        try:
+            dispatch_outbound_message(message)
+        except Exception:
+            logger.exception('No se pudo enviar aviso de inactividad de la sesión %s.', session.id)
+            continue
+        # El minuto para cerrar empieza solamente cuando el aviso sí se envió.
+        updated = ChatSession.objects.filter(
+            pk=session.pk,
+            status__in=('bot', 'waiting'),
+            inactivity_warning_at__isnull=True,
+            last_bot_message_at=session.last_bot_message_at,
+        ).update(inactivity_warning_at=timezone.now())
+        if not updated:
+            continue
+        warned += 1
+        publish_crm_event('message.created', session_id=session.id, message_id=message.id)
+    logger.info('Barrido de inactividad finalizado: avisos=%s cierres=%s.', warned, closed)
+    return {'warned': warned, 'closed': closed}

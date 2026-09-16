@@ -47,13 +47,15 @@ function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (isLoading) return
     setError('')
     setIsLoading(true)
     try {
       if (mode === 'login') {
         await login(form.email, form.password)
         await restorePendingCartItem()
-        const redirect = searchParams.get('redirect') || '/'
+        const requested = searchParams.get('redirect') || '/'
+        const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
         navigate(redirect)
       } else if (mode === 'register') {
         if (form.password !== form.confirmPassword) {
@@ -68,7 +70,6 @@ function LoginPage() {
           cc: form.cc,
           phone: form.phone,
         })
-        // Auto-login after successful registration
         await login(form.email, form.password)
         await restorePendingCartItem()
         const redirect = searchParams.get('redirect') || '/'
@@ -88,11 +89,8 @@ function LoginPage() {
       <div className="flex-1 flex items-center justify-center p-6 sm:p-8 lg:p-12">
         <div className="w-full max-w-md">
           {/* Logo */}
-          <Link to="/" className="inline-flex items-center gap-2.5 mb-10 group">
-            <div className="w-11 h-11 bg-gradient-to-br from-[#F58634] to-[#d4711e] rounded-xl flex items-center justify-center shadow-lg shadow-[#F58634]/25 group-hover:shadow-xl group-hover:shadow-[#F58634]/30 transition-all">
-              <Flame className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-[#1A1D21]">GasStore</span>
+          <Link to="/" className="inline-flex items-center mb-10 group" aria-label="Ir al inicio de ImporGas JJ">
+            <img src="/logo_imporgas.svg" alt="ImporGas JJ S.A.S" className="h-16 w-auto max-w-[12rem] object-contain" />
           </Link>
 
           {/* Title */}
@@ -118,11 +116,12 @@ function LoginPage() {
             )}
             {mode === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-[#4B5563] mb-2">
+                <label htmlFor="customer-name" className="block text-sm font-medium text-[#4B5563] mb-2">
                   Nombre Completo
                 </label>
                 <div className="relative">
                   <input
+                    id="customer-name"
                     type="text"
                     name="name"
                     value={form.name}
@@ -140,11 +139,12 @@ function LoginPage() {
 
             {mode === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-[#4B5563] mb-2">
+                <label htmlFor="customer-id" className="block text-sm font-medium text-[#4B5563] mb-2">
                   Numero de cedula
                 </label>
                 <div className="relative">
                   <input
+                    id="customer-id"
                     type="text"
                     name="cc"
                     value={form.cc}
@@ -159,11 +159,12 @@ function LoginPage() {
             )}
 
             <div>
-              <label className="block text-sm font-medium text-[#4B5563] mb-2">
+              <label htmlFor="customer-email" className="block text-sm font-medium text-[#4B5563] mb-2">
                 Correo Electronico
               </label>
               <div className="relative">
                 <input
+                  id="customer-email"
                   type="email"
                   name="email"
                   value={form.email}
@@ -178,11 +179,12 @@ function LoginPage() {
 
             {mode === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-[#4B5563] mb-2">
+                <label htmlFor="customer-phone" className="block text-sm font-medium text-[#4B5563] mb-2">
                   Telefono
                 </label>
                 <div className="relative">
                   <input
+                    id="customer-phone"
                     type="tel"
                     name="phone"
                     value={form.phone}
@@ -198,7 +200,7 @@ function LoginPage() {
             {mode !== 'forgot' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-[#4B5563]">
+                  <label htmlFor="customer-password" className="block text-sm font-medium text-[#4B5563]">
                     Contrasena
                   </label>
                   {mode === 'login' && (
@@ -213,6 +215,7 @@ function LoginPage() {
                 </div>
                 <div className="relative">
                   <input
+                    id="customer-password"
                     type={showPassword ? 'text' : 'password'}
                     name="password"
                     value={form.password}
@@ -225,6 +228,7 @@ function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                     className="absolute right-4 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#4B5563] transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -235,11 +239,12 @@ function LoginPage() {
 
             {mode === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-[#4B5563] mb-2">
+                <label htmlFor="customer-password-confirmation" className="block text-sm font-medium text-[#4B5563] mb-2">
                   Confirmar Contrasena
                 </label>
                 <div className="relative">
                   <input
+                    id="customer-password-confirmation"
                     type={showPassword ? 'text' : 'password'}
                     name="confirmPassword"
                     value={form.confirmPassword}

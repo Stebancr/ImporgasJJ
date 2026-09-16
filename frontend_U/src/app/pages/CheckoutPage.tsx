@@ -1,10 +1,11 @@
 import './styles/CheckoutPage.css'
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CreditCard, Truck, Shield, ChevronLeft, Check, MapPin } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
 import { useAuth } from '../../context/AuthContext'
 import ordersService from '../../services/orders'
+import { getWompiOptions, loadWompiWidget } from '../../services/wompiCheckout'
 import addressesService, { UserAddress } from '../../services/addresses'
 
 // Replace with your real Wompi public key from https://comercios.wompi.co
@@ -27,7 +28,7 @@ function CheckoutPage() {
   const navigate = useNavigate()
   const [step, setStep] = useState<'info' | 'payment'>('info')
   const [submitting, setSubmitting] = useState(false)
-  const [isProcessingWompi, setIsProcessingWompi] = useState(false)
+  const paymentLock = useRef(false)
   const [addresses, setAddresses] = useState<UserAddress[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
   const [form, setForm] = useState<CheckoutForm>({
@@ -63,7 +64,10 @@ function CheckoutPage() {
       // Auto-select default address
       const defaultAddr = data.find((addr) => addr.is_default)
       if (defaultAddr) {
-        handleSelectAddress(defaultAddr.id)
+        setSelectedAddressId(defaultAddr.id)
+        setForm(prev => ({ ...prev, name: defaultAddr.recipient_name, phone: defaultAddr.phone,
+          address: defaultAddr.address, city: defaultAddr.city, department: defaultAddr.department,
+          postalCode: defaultAddr.postal_code || '' }))
       }
     } catch (error) {
       console.error('Error loading addresses:', error)
@@ -92,7 +96,7 @@ function CheckoutPage() {
   )
   const shipping = subtotal >= 500000 ? 0 : 25000
   const total = subtotal + shipping
-  const amountInCents = Math.round(total * 100)
+
 
   // Unique reference per session
   const reference = useMemo(
@@ -122,6 +126,7 @@ function CheckoutPage() {
 
   const handleCashConfirm = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (submitting) return
     setSubmitting(true)
     try {
       const order = await ordersService.create({
@@ -149,6 +154,8 @@ function CheckoutPage() {
   }
 
   const handleWompiConfirm = async () => {
+    if (paymentLock.current) return
+    paymentLock.current = true
     setSubmitting(true)
     try {
       const paymentIntent = await ordersService.createWompiIntent({
@@ -167,77 +174,25 @@ function CheckoutPage() {
         })),
       })
       
-      // Store order info for after redirect
+      const options = getWompiOptions(paymentIntent, WOMPI_PUBLIC_KEY, form.email, form.name)
+      const Widget = await loadWompiWidget()
       sessionStorage.setItem('pendingWompiOrder', JSON.stringify({
-        tracking_code: paymentIntent.tracking_code,
-        reference,
+        tracking_code: paymentIntent.tracking_code, reference: paymentIntent.wompi_reference,
       }))
-      
-      // Mark that we're processing Wompi payment (don't show empty cart message)
-      setIsProcessingWompi(true)
-
-      // Build Wompi checkout URL using URLSearchParams so all values are properly encoded.
-      // NOTE: Wompi's WAF blocks requests with `localhost` in redirect-url.
-      // Only set redirect-url when running on a real (non-local) domain.
-      const origin = window.location.hostname
-      const isLocalhost = origin === 'localhost' || origin === '127.0.0.1'
-
-      // Validate public key
-      if (!WOMPI_PUBLIC_KEY || WOMPI_PUBLIC_KEY === 'pub_test_YOUR_KEY_HERE') {
-        alert('Error: Llave pública de Wompi no configurada. Verifica el archivo .env')
-        setIsProcessingWompi(false)
-        setSubmitting(false)
-        return null
-      }
-
-      console.log('Wompi Config:', {
-        publicKey: WOMPI_PUBLIC_KEY,
-        amount: amountInCents,
-        reference,
-        email: form.email,
+      new Widget(options).open((result) => {
+        if (!result.transaction?.id) return
+        const query = new URLSearchParams({ tracking: paymentIntent.tracking_code, id: result.transaction.id })
+        navigate('/checkout/resultado?' + query.toString())
       })
-
-      const params = new URLSearchParams({
-        'public-key': WOMPI_PUBLIC_KEY,
-        'currency': 'COP',
-        'amount-in-cents': String(amountInCents),
-        'reference': reference,
-      })
-
-      // Customer email is required for Wompi checkout
-      if (form.email) {
-        params.set('customer-email', form.email)
-      }
-
-      // Customer data (optional but recommended)
-      if (form.name) {
-        params.set('customer-data:full-name', form.name)
-      }
-      if (form.phone) {
-        params.set('customer-data:phone-number', form.phone)
-      }
-
-      // ✨ Agregar signature de integridad (requerida por Wompi)
-      if (paymentIntent.wompi_signature) {
-        params.set('signature:integrity', paymentIntent.wompi_signature)
-        console.log('✅ Wompi signature agregada:', paymentIntent.wompi_signature)
-      } else {
-        console.warn('⚠️ No se recibió signature de Wompi. El pago puede fallar.')
-      }
-
-      if (!isLocalhost) {
-        const redirectUrl = `${window.location.origin}/checkout/resultado?tracking=${paymentIntent.tracking_code}`
-        params.set('redirect-url', redirectUrl)
-      }
-
-      window.location.href = `https://checkout.wompi.co/p/?${params.toString()}`
+      setSubmitting(false)
+      paymentLock.current = false
 
       return paymentIntent
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
       alert(message)
-      setIsProcessingWompi(false)
       setSubmitting(false)
+      paymentLock.current = false
       return null
     }
   }
@@ -250,7 +205,7 @@ function CheckoutPage() {
     'Sucre', 'Tolima', 'Valle del Cauca', 'Vaupés', 'Vichada',
   ]
 
-  if (items.length === 0 && !isProcessingWompi) {
+  if (items.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -346,7 +301,7 @@ function CheckoutPage() {
                       ))}
                     </div>
                     <Link
-                      to="/perfil/direcciones"
+                      to="/direcciones"
                       className="mt-3 inline-block text-sm text-blue-600 hover:text-blue-700 font-medium"
                     >
                       Administrar direcciones →
@@ -357,74 +312,69 @@ function CheckoutPage() {
                 <div className="space-y-4">
                   <div className="grid md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Nombre Completo</label>
+                      <label htmlFor="checkout-name" className="block text-sm font-medium text-gray-700 mb-1">Nombre Completo</label>
                       <input
                         type="text"
-                        name="name"
+                        name="name" id="checkout-name" autoComplete="name"
                         value={form.name}
                         onChange={handleInputChange}
                         required
-                        className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Juan Pérez"
-                      />
+                        className="min-w-0 min-h-11 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Juan Pérez" />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico</label>
+                      <label htmlFor="checkout-email" className="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico</label>
                       <input
                         type="email"
-                        name="email"
+                        name="email" id="checkout-email" autoComplete="email"
                         value={form.email}
                         onChange={handleInputChange}
                         required
                         className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="juan@email.com"
-                      />
+                        placeholder="juan@email.com" />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                    <label htmlFor="checkout-phone" className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
                     <input
                       type="tel"
-                      name="phone"
+                      name="phone" id="checkout-phone" autoComplete="tel"
                       value={form.phone}
                       onChange={handleInputChange}
                       required
                       className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="+57 300 123 4567"
-                    />
+                      placeholder="+57 300 123 4567" />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                    <label htmlFor="checkout-address" className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
                     <input
                       type="text"
-                      name="address"
+                      name="address" id="checkout-address" autoComplete="street-address"
                       value={form.address}
                       onChange={handleInputChange}
                       required
                       className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Calle 123 #45-67, Apto 101"
-                    />
+                      placeholder="Calle 123 #45-67, Apto 101" />
                   </div>
 
                   <div className="grid md:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ciudad</label>
+                      <label htmlFor="checkout-city" className="block text-sm font-medium text-gray-700 mb-1">Ciudad</label>
                       <input
                         type="text"
-                        name="city"
+                        name="city" id="checkout-city" autoComplete="address-level2"
                         value={form.city}
                         onChange={handleInputChange}
                         required
                         className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Bogotá"
-                      />
+                        placeholder="Bogotá" />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Departamento</label>
+                      <label htmlFor="checkout-department" className="block text-sm font-medium text-gray-700 mb-1">Departamento</label>
                       <select
-                        name="department"
+                        name="department" id="checkout-department" autoComplete="address-level1"
                         value={form.department}
                         onChange={handleInputChange}
                         required
@@ -437,15 +387,14 @@ function CheckoutPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Código Postal</label>
+                      <label htmlFor="checkout-postalCode" className="block text-sm font-medium text-gray-700 mb-1">Código Postal</label>
                       <input
                         type="text"
-                        name="postalCode"
+                        name="postalCode" id="checkout-postalCode" autoComplete="postal-code"
                         value={form.postalCode}
                         onChange={handleInputChange}
                         className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="110111"
-                      />
+                        placeholder="110111" />
                     </div>
                   </div>
                 </div>
@@ -514,7 +463,7 @@ function CheckoutPage() {
                 {form.paymentMethod === 'wompi' && (
                   <div className="mb-4 p-4 bg-blue-50 rounded-xl">
                     <p className="text-sm text-blue-800">
-                      Al hacer clic en <strong>"Pagar con Wompi"</strong> te redirigiremos al checkout seguro de Wompi
+                      Al hacer clic en <strong>"Pagar con Wompi"</strong> abriremos el checkout seguro de Wompi
                       para completar el pago de <strong>{formatPrice(total)}</strong>. La orden se creará cuando Wompi confirme el pago.
                     </p>
                     <p className="text-xs text-blue-600 mt-2">

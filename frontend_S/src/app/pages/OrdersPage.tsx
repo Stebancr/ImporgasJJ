@@ -148,7 +148,7 @@ export default function OrdersPage() {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-9"
-                />
+                 aria-label="Buscar ordenes..." />
               </div>
             </div>
           </div>
@@ -225,7 +225,7 @@ export default function OrdersPage() {
                         variant="ghost"
                         size="icon"
                         onClick={() => handleViewOrder(order)}
-                      >
+                       aria-label="Ver detalle">
                         <Eye className="h-4 w-4" />
                       </Button>
                     </TableCell>
@@ -247,7 +247,7 @@ export default function OrdersPage() {
           </DialogHeader>
           {selectedOrder && (
             <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Cliente</p>
                   <p className="font-medium">{selectedOrder.customer_name}</p>

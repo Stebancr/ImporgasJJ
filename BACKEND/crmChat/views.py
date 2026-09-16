@@ -510,6 +510,15 @@ class BotChatView(APIView):
             )
             logger.info(f"Nueva sesión de chat creada: {session.id} para {user_name}")
 
+        if session.status == 'closed':
+            session.status = 'bot'
+            session.agent_id_ref = None
+            session.agent_name = ''
+            session.assigned_to = None
+            session.inactivity_warning_at = None
+            session.save(update_fields=['status', 'agent_id_ref', 'agent_name', 'assigned_to', 'inactivity_warning_at', 'updated_at'])
+            logger.info('Sesión ecommerce %s reabierta por mensaje entrante.', session.id)
+
         # Guardar mensaje del usuario
         user_message = ChatMessage.objects.create(
             session=session,
@@ -519,6 +528,13 @@ class BotChatView(APIView):
             direction='inbound',
             status='received',
         )
+        ChatSession.objects.filter(pk=session.pk, status='closed').update(
+            status='bot', assigned_to=None, agent_id_ref=None, agent_name='', inactivity_warning_at=None,
+        )
+        session.refresh_from_db()
+        session.last_customer_message_at = user_message.created_at
+        session.inactivity_warning_at = None
+        session.save(update_fields=['last_customer_message_at', 'inactivity_warning_at', 'updated_at'])
 
         # Cuando un asesor ya tomó la conversación, el mensaje queda en el CRM
         # y Ollama no interviene. También admite apagar el bot del ecommerce.
@@ -545,12 +561,15 @@ class BotChatView(APIView):
             })
 
         # Obtener respuesta del bot
-        bot_result = ollama_service.get_bot_response(
-            message_text,
-            conversation_history=conversation_history,
-            conversation_state=session.conversation_state,
-            summary=session.conversation_summary,
-        )
+        try:
+            bot_result = ollama_service.get_bot_response(
+                message_text, conversation_history=conversation_history,
+                conversation_state=session.conversation_state,
+                summary=session.conversation_summary,
+            )
+        except Exception:
+            logger.exception('Fallo de Ollama para sesión ecommerce %s, mensaje %s.', session.id, user_message.id)
+            return Response({'error': 'No fue posible procesar el mensaje en este momento.', 'session_id': session.id}, status=503)
 
         bot_response_text = bot_result.get('response', 'Lo siento, no pude procesar tu mensaje.')
         needs_agent = bot_result.get('needs_agent', False)
@@ -575,6 +594,11 @@ class BotChatView(APIView):
                 session=session, reply_to_message=user_message, text=bot_response_text,
                 sender_type='bot', sender_name='', direction='outbound', status='sent',
             )
+            session.last_bot_message_at = bot_message.created_at
+            session.inactivity_warning_at = None
+            session.save(update_fields=['last_bot_message_at', 'inactivity_warning_at', 'updated_at'])
+            if needs_agent:
+                publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
         needs_login = False
 
         return Response({

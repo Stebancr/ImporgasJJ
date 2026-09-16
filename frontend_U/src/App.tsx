@@ -1,37 +1,45 @@
 import { lazy, Suspense } from 'react'
+import { PageBoundary } from './components/PageBoundary'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
+import StoreProtectedRoute from './components/StoreProtectedRoute'
 import HomePage from './app/pages/HomePage'
-import ProductsPage from './app/pages/ProductsPage'
-import ProductDetailPage from './app/pages/ProductDetailPage'
-import CartPage from './app/pages/CartPage'
-import CheckoutPage from './app/pages/CheckoutPage'
-import OrderConfirmationPage from './app/pages/OrderConfirmationPage'
-import CheckoutResultPage from './app/pages/CheckoutResultPage'
-import OrderTrackingPage from './app/pages/OrderTrackingPage'
-import OrderDetailPage from './app/pages/OrderDetailPage'
-import ProfilePage from './app/pages/ProfilePage'
-import ContactPage from './app/pages/ContactPage'
-import LoginPage from './app/pages/LoginPage'
-import NosotrosPage from './app/pages/NosotrosPage'
+const ProductsPage = lazy(() => import('./app/pages/ProductsPage'))
+const ProductDetailPage = lazy(() => import('./app/pages/ProductDetailPage'))
+const CartPage = lazy(() => import('./app/pages/CartPage'))
+const CheckoutPage = lazy(() => import('./app/pages/CheckoutPage'))
+const OrderConfirmationPage = lazy(() => import('./app/pages/OrderConfirmationPage'))
+const CheckoutResultPage = lazy(() => import('./app/pages/CheckoutResultPage'))
+const OrderTrackingPage = lazy(() => import('./app/pages/OrderTrackingPage'))
+const OrderDetailPage = lazy(() => import('./app/pages/OrderDetailPage'))
+const ProfilePage = lazy(() => import('./app/pages/ProfilePage'))
+const ContactPage = lazy(() => import('./app/pages/ContactPage'))
+const LoginPage = lazy(() => import('./app/pages/LoginPage'))
+const NosotrosPage = lazy(() => import('./app/pages/NosotrosPage'))
+const DataPolicyPage = lazy(() => import('./app/pages/DataPolicyPage'))
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
 import { FavoritesProvider } from './context/FavoritesContext'
 import { AuthProvider as AdminAuthProvider } from './admin/context/AuthContext'
 import './admin/pages/styles/globals.css'
 import AdminProtectedRoute from './admin/components/AdminProtectedRoute'
-import DashboardLayout from './admin/components/DashboardLayout'
-import AdminLoginPage from './admin/pages/LoginPage'
-import AdminDashboardPage from './admin/pages/DashboardPage'
-import AdminProductsPage from './admin/pages/ProductsPage'
-import AdminCategoriesPage from './admin/pages/CategoriesPage'
-import AdminBrandsPage from './admin/pages/BrandsPage'
-import AdminLocationsPage from './admin/pages/LocationsPage'
-import AdminOrdersPage from './admin/pages/OrdersPage'
-import AdminUsersPage from './admin/pages/UsersPage'
-import AdminProfilePage from './admin/pages/ProfilePage'
-import AdminGestionPage from './admin/pages/GestionPage'
-import AdminVisitsPage from './admin/pages/VisitsPage'
+const EditProfilePage = lazy(() => import('./app/pages/EditProfilePage'))
+const MyOrdersPage = lazy(() => import('./app/pages/MyOrdersPage'))
+const FavoritesPage = lazy(() => import('./app/pages/FavoritesPage'))
+const AddressesPage = lazy(() => import('./app/pages/AddressesPage'))
+const NotificationsPage = lazy(() => import('./app/pages/NotificationsPage'))
+const DashboardLayout = lazy(() => import('./admin/components/DashboardLayout'))
+const AdminLoginPage = lazy(() => import('./admin/pages/LoginPage'))
+const AdminDashboardPage = lazy(() => import('./admin/pages/DashboardPage'))
+const AdminProductsPage = lazy(() => import('./admin/pages/ProductsPage'))
+const AdminCategoriesPage = lazy(() => import('./admin/pages/CategoriesPage'))
+const AdminBrandsPage = lazy(() => import('./admin/pages/BrandsPage'))
+const AdminLocationsPage = lazy(() => import('./admin/pages/LocationsPage'))
+const AdminOrdersPage = lazy(() => import('./admin/pages/OrdersPage'))
+const AdminUsersPage = lazy(() => import('./admin/pages/UsersPage'))
+const AdminProfilePage = lazy(() => import('./admin/pages/ProfilePage'))
+const AdminGestionPage = lazy(() => import('./admin/pages/GestionPage'))
+const AdminVisitsPage = lazy(() => import('./admin/pages/VisitsPage'))
 
 // Material UI y React Query solo se descargan al entrar al módulo CRM; el
 // ecommerce conserva un bundle inicial más pequeño y sus rutas no cambian.
@@ -44,7 +52,8 @@ function CRMPageFallback() {
 
 function StoreRoutes() {
   return (
-    <Layout>
+    <AuthProvider><CartProvider><FavoritesProvider><Layout>
+      <PageBoundary>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/productos" element={<ProductsPage />} />
@@ -55,19 +64,27 @@ function StoreRoutes() {
         <Route path="/orden-confirmada" element={<OrderConfirmationPage />} />
         <Route path="/seguimiento" element={<OrderTrackingPage />} />
         <Route path="/pedido/:trackingCode" element={<OrderDetailPage />} />
-        <Route path="/perfil" element={<ProfilePage />} />
+        <Route path="/perfil" element={<StoreProtectedRoute><ProfilePage /></StoreProtectedRoute>} />
+        <Route path="/perfil/editar" element={<StoreProtectedRoute><EditProfilePage /></StoreProtectedRoute>} />
+        <Route path="/mis-pedidos" element={<StoreProtectedRoute><MyOrdersPage /></StoreProtectedRoute>} />
+        <Route path="/favoritos" element={<StoreProtectedRoute><FavoritesPage /></StoreProtectedRoute>} />
+        <Route path="/direcciones" element={<StoreProtectedRoute><AddressesPage /></StoreProtectedRoute>} />
+        <Route path="/notificaciones" element={<StoreProtectedRoute><NotificationsPage /></StoreProtectedRoute>} />
         <Route path="/contacto" element={<ContactPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/nosotros" element={<NosotrosPage />} />
+        <Route path="/politica-tratamiento-datos" element={<DataPolicyPage />} />
+        <Route path="*" element={<section className="max-w-xl mx-auto p-6"><h1 className="text-2xl font-bold">Página no encontrada</h1><a className="underline text-primary" href="/">Volver al inicio</a></section>} />
       </Routes>
-    </Layout>
+      </PageBoundary>
+    </Layout></FavoritesProvider></CartProvider></AuthProvider>
   )
 }
 
 function AdminRoutes() {
   return (
     <AdminAuthProvider>
-      <Routes>
+      <PageBoundary><Routes>
       <Route path="login" element={<AdminLoginPage />} />
       <Route
         element={
@@ -93,16 +110,13 @@ function AdminRoutes() {
       </Route>
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="*" element={<Navigate to="dashboard" replace />} />
-      </Routes>
+      </Routes></PageBoundary>
     </AdminAuthProvider>
   )
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <CartProvider>
-        <FavoritesProvider>
           <BrowserRouter>
             <Routes>
               <Route path="/admin/*" element={<div className="admin-theme"><AdminRoutes /></div>} />
@@ -122,9 +136,6 @@ function App() {
               <Route path="/*" element={<StoreRoutes />} />
             </Routes>
           </BrowserRouter>
-        </FavoritesProvider>
-      </CartProvider>
-    </AuthProvider>
   )
 }
 

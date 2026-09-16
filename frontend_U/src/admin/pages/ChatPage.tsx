@@ -1,5 +1,5 @@
 /** Bandeja omnicanal del CRM con React Query y actualización WebSocket. */
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Avatar, Box, Button, Chip, CircularProgress, FormControlLabel,
@@ -7,7 +7,7 @@ import {
   ThemeProvider, Tooltip, Typography,
 } from '@mui/material'
 import {
-  Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
+  ArrowDown, Bell, BellOff, Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
   UserCheck, XCircle,
 } from 'lucide-react'
 
@@ -156,6 +156,15 @@ export default function ChatPage() {
   const [search, setSearch] = useState('')
   const [unanswered, setUnanswered] = useState(false)
   const [text, setText] = useState('')
+  const messagesBoxRef = useRef<HTMLDivElement | null>(null)
+  const forceScrollRef = useRef(true)
+  const lastMessageIdRef = useRef<number | null>(null)
+  const [nearBottom, setNearBottom] = useState(true)
+  const [hasNewMessage, setHasNewMessage] = useState(false)
+  const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => notificationsSupported && Notification.permission === 'granted' && localStorage.getItem('crm-notifications') === 'enabled',
+  )
 
   const filters: SessionFilters = useMemo(
     () => ({ status, channel, search: search.trim(), unanswered }),
@@ -182,7 +191,55 @@ export default function ChatPage() {
   const connected = useCRMWebSocket((event) => {
     queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
     if (event.session_id === selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', selectedId] })
+    if (event.type === 'session.pending' && notificationsEnabled && Notification.permission === 'granted') {
+      const notification = new Notification('Nuevo chat pendiente', { body: 'Un usuario ha iniciado una nueva conversación.', tag: `crm-session-${event.session_id}` })
+      notification.onclick = () => { window.focus(); window.location.href = '/admin/chat'; notification.close() }
+    }
   })
+
+  const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const box = messagesBoxRef.current
+    if (!box) return
+    box.scrollTo({ top: box.scrollHeight, behavior })
+    setHasNewMessage(false)
+  }, [])
+
+  useEffect(() => {
+    forceScrollRef.current = true
+    lastMessageIdRef.current = null
+    setNearBottom(true)
+    setHasNewMessage(false)
+  }, [selectedId])
+
+  useLayoutEffect(() => {
+    if (!messages.data?.messages.length) return
+    const lastId = messages.data.messages.at(-1)!.id
+    if (lastMessageIdRef.current === lastId) return
+    lastMessageIdRef.current = lastId
+    if (forceScrollRef.current || nearBottom) {
+      scrollToLatest(forceScrollRef.current ? 'auto' : 'smooth')
+      forceScrollRef.current = false
+    } else {
+      setHasNewMessage(true)
+    }
+  }, [messages.data?.messages, nearBottom, scrollToLatest])
+
+  const toggleNotifications = async () => {
+    if (!notificationsSupported) return
+    if (notificationsEnabled) {
+      localStorage.setItem('crm-notifications', 'disabled')
+      setNotificationsEnabled(false)
+      return
+    }
+    const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
+    if (permission === 'granted') {
+      localStorage.setItem('crm-notifications', 'enabled')
+      setNotificationsEnabled(true)
+    } else {
+      localStorage.setItem('crm-notifications', 'disabled')
+      setNotificationsEnabled(false)
+    }
+  }
 
   const send = useMutation({
     mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim()),
@@ -201,17 +258,22 @@ export default function ChatPage() {
 
   return (
     <ThemeProvider theme={crmTheme}>
-      <Stack spacing={2} sx={{ height: 'calc(100vh - 8rem)', color: '#0f172a' }}>
+      <Stack spacing={2} sx={{ minHeight: 'calc(100dvh - 8rem)', height: { xs: 'auto', lg: 'calc(100dvh - 8rem)' }, minWidth: 0, color: '#0f172a' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, gap: 1 }}>
           <Box>
             <Typography variant="h5" sx={{ fontWeight: 800 }}>Bandeja omnicanal</Typography>
             <Typography variant="body2" color="text.secondary">Ecommerce, WhatsApp, Facebook e Instagram en una sola conversación.</Typography>
           </Box>
-          <Chip size="small" color={connected ? 'success' : 'warning'} label={connected ? 'Tiempo real conectado' : 'Reconectando tiempo real'} />
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Button size="small" variant="outlined" startIcon={notificationsEnabled ? <BellOff size={16} /> : <Bell size={16} />} disabled={!notificationsSupported || Notification.permission === 'denied'} onClick={toggleNotifications}>
+              {!notificationsSupported ? 'Notificaciones no disponibles' : Notification.permission === 'denied' ? 'Notificaciones bloqueadas' : notificationsEnabled ? 'Desactivar notificaciones' : 'Activar notificaciones'}
+            </Button>
+            <Chip size="small" color={connected ? 'success' : 'warning'} label={connected ? 'Tiempo real conectado' : 'Reconectando tiempo real'} />
+          </Stack>
         </Stack>
 
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 360 }, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 320 }, maxHeight: { xs: 400, lg: 'none' }, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <Stack spacing={1} sx={{ p: 1.5, borderBottom: '1px solid #e2e8f0' }}>
               <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => setSearch(event.target.value)} />
               <Stack direction="row" spacing={1}>
@@ -242,7 +304,7 @@ export default function ChatPage() {
                 >
                   <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between' }}>
                     <Box sx={{ minWidth: 0 }}>
-                      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>{session.user_name}</Typography>{session.unread_by_agent > 0 && <Chip size="small" color="primary" label={session.unread_by_agent} />}</Stack>
+                      <Stack direction="row" useFlexGap spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}><Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>{session.user_name}</Typography>{session.unread_by_agent > 0 && <Chip size="small" color="primary" label={session.unread_by_agent} />}</Stack>
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{session.last_message || 'Sin mensajes'}</Typography>
                     </Box>
                     <Stack spacing={0.5} sx={{ alignItems: 'flex-end' }}><ChannelBadge channel={session.channel} compact /><Chip size="small" label={statusLabel[session.status]} color={statusColor[session.status]} /></Stack>
@@ -255,7 +317,7 @@ export default function ChatPage() {
           {!selected ? (
             <Paper variant="outlined" sx={{ flex: 1, display: 'grid', placeItems: 'center', color: '#64748b' }}><Stack sx={{ alignItems: 'center' }}><Inbox size={48} /><Typography>Selecciona una conversación</Typography></Stack></Paper>
           ) : (
-            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, minHeight: { xs: 480, lg: 0 }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
                 <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box><Typography sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -272,19 +334,20 @@ export default function ChatPage() {
                     ))}
                   </TextField>
                   <TextField select size="small" label="Prioridad" value={selected.priority} onChange={(event) => priority.mutate(event.target.value as ChatSession['priority'])}><MenuItem value="low">Baja</MenuItem><MenuItem value="normal">Normal</MenuItem><MenuItem value="high">Alta</MenuItem><MenuItem value="urgent">Urgente</MenuItem></TextField>
-                  {(selected.status === 'waiting' || selected.status === 'bot') && <Button size="small" variant="outlined" startIcon={<UserCheck size={16} />} onClick={() => take.mutate()}>Tomar</Button>}
-                  {selected.status !== 'closed' && <Button size="small" color="error" variant="outlined" onClick={() => close.mutate()}>Cerrar</Button>}
+                  {(selected.status === 'waiting' || selected.status === 'bot') && <Button size="small" variant="outlined" startIcon={<UserCheck size={16} />} disabled={take.isPending} onClick={() => take.mutate()}>Tomar</Button>}
+                  {selected.status !== 'closed' && <Button size="small" color="error" variant="outlined" disabled={close.isPending} onClick={() => close.mutate()}>Cerrar</Button>}
                 </Stack>
               </Stack>
-              <Stack spacing={1.5} sx={{ flex: 1, overflowY: 'auto', p: 2, bgcolor: '#f8fafc' }}>
+              <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
                 {messages.data?.messages.map((message) => <ConversationMessage key={message.id} message={message} />)}
               </Stack>
+              {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
               <Box sx={{ p: 1.5, borderTop: '1px solid #e2e8f0' }}>
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
                 <Stack direction="row" spacing={1}>
-                  <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim()) send.mutate() } }} />
-                  <IconButton color="primary" disabled={!text.trim() || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
+                  <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim() && !send.isPending && selected.status !== 'closed') send.mutate() } }} />
+                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={!text.trim() || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
                 </Stack>
               </Box>
             </Paper>

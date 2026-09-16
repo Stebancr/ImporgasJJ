@@ -14,6 +14,9 @@ export default defineConfig({
     port: 3000,
     watch: {
       usePolling: true,
+      interval: 1000,
+      ignored: ['**/dist/**', '**/.git/**', '**/*.tsbuildinfo'],
     },
+    warmup: { clientFiles: ['./src/admin/pages/{Dashboard,Products,Users,Orders,Categories,Brands,Locations}Page.tsx'] },
   },
 })

@@ -49,19 +49,19 @@ function ContactPage() {
     {
       icon: Phone,
       title: 'Teléfono',
-      details: ['+57 300 123 4567', '+57 1 234 5678'],
+      details: ['+57 315 2213577 ', '+57 316 5173277'],
       color: 'bg-blue-100 text-blue-600',
     },
     {
       icon: Mail,
       title: 'Correo Electrónico',
-      details: ['info@gasstore.com', 'ventas@gasstore.com'],
+      details: ['gerenciaimporgasjj213@gmail.com', 'marketingimporgasjj@gmail.com'],
       color: 'bg-green-100 text-green-600',
     },
     {
       icon: MapPin,
       title: 'Dirección',
-      details: ['Calle 123 #45-67', 'Bogotá, Colombia'],
+      details: ['Av 6 N #30N 46, San Vicente', 'Cali, Colombia'],
       color: 'bg-orange-100 text-orange-600',
     },
     {
@@ -163,7 +163,7 @@ function ContactPage() {
                           required
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="Tu nombre"
-                        />
+                         aria-label="Tu nombre" />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -177,7 +177,7 @@ function ContactPage() {
                           required
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="tu@email.com"
-                        />
+                         aria-label="tu@email.com" />
                       </div>
                     </div>
 
@@ -193,7 +193,7 @@ function ContactPage() {
                           onChange={handleChange}
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                           placeholder="+57 300 123 4567"
-                        />
+                         aria-label="+57 300 123 4567" />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">

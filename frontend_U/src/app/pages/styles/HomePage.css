@@ -3,7 +3,6 @@
    ========================================== */
 
 .home-page {
-  overflow-x: hidden;
   animation: pageFadeIn 0.4s ease-out;
 }
 
@@ -55,7 +54,7 @@
 /* Hero stats row — prevent squish on xs phones */
 .home-hero__stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
 
@@ -98,37 +97,69 @@
 
 /* --- Categories grid --- */
 .home-categories__grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 1rem;
-}
-
-@media (min-width: 1024px) {
-  .home-categories__grid {
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1.5rem;
-  }
 }
 
 /* Category card — prevent text overflow */
 .home-category-card {
+  box-sizing: border-box;
+  flex: 0 1 100%;
+  max-width: 22rem;
   overflow: hidden;
   word-break: break-word;
+}
+
+@media (min-width: 640px) {
+  .home-category-card {
+    flex-basis: calc(50% - 0.5rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  .home-categories__grid { gap: 1.5rem; }
+
+  .home-category-card {
+    flex-basis: calc((100% - 3rem) / 3);
+  }
+}
+
+/* --- Services grid --- */
+.home-services__grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2rem;
+}
+
+.home-service-card {
+  box-sizing: border-box;
+  flex: 0 1 100%;
+  max-width: 36rem;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .home-service-card {
+    flex-basis: calc(50% - 1rem);
+  }
 }
 
 /* --- Featured products grid --- */
 .home-products__grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.5rem;
 }
 
 @media (min-width: 640px) {
-  .home-products__grid { grid-template-columns: repeat(2, 1fr); }
+  .home-products__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (min-width: 1024px) {
-  .home-products__grid { grid-template-columns: repeat(4, 1fr); }
+  .home-products__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 /* --- CTA Banner --- */

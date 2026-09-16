@@ -4,6 +4,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 20000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -27,10 +28,11 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/token/')) {
       localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/admin/login'
+      localStorage.removeItem('adminUser')
+      localStorage.removeItem('refresh')
+      window.dispatchEvent(new Event('admin:logout'))
     }
     return Promise.reject(error)
   }

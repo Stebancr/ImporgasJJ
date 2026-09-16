@@ -312,7 +312,7 @@ export default function ProductsPage() {
                 value={searchTerm}
                 onChange={(e) => { setSearchTerm(e.target.value); setPage(1) }}
                 className="pl-9"
-              />
+               aria-label="Buscar productos..." />
             </div>
           </div>
         </CardHeader>
@@ -375,7 +375,7 @@ export default function ProductsPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(product)}>
+                            <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(product)} aria-label="Editar">
                               <Edit className="h-4 w-4" />
                             </Button>
                             <Button
@@ -383,7 +383,7 @@ export default function ProductsPage() {
                               size="icon"
                               className="text-destructive hover:text-destructive"
                               onClick={() => handleDelete(product.id)}
-                            >
+                             aria-label="Eliminar">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
@@ -447,7 +447,7 @@ export default function ProductsPage() {
                 rows={3}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="price">Precio *</Label>
                 <Input
@@ -469,7 +469,7 @@ export default function ProductsPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Categoría *</Label>
                 <Select
@@ -544,7 +544,7 @@ export default function ProductsPage() {
                               type="button"
                               onClick={() => handleDeleteSpec(spec.id)}
                               className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                            >
+                             aria-label="Cerrar">
                               <X className="h-3 w-3" />
                             </button>
                           </td>
@@ -561,18 +561,18 @@ export default function ProductsPage() {
                     value={row.name}
                     onChange={e => setNewSpecRows(prev => prev.map((r, j) => j === i ? { ...r, name: e.target.value } : r))}
                     className="flex-1"
-                  />
+                   aria-label="Característica (ej: Capacidad)" />
                   <Input
                     placeholder="Valor (ej: 13 litros)"
                     value={row.value}
                     onChange={e => setNewSpecRows(prev => prev.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}
                     className="flex-1"
-                  />
+                   aria-label="Valor (ej: 13 litros)" />
                   <button
                     type="button"
                     onClick={() => setNewSpecRows(prev => prev.filter((_, j) => j !== i))}
                     className="h-8 w-8 rounded flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0"
-                  >
+                   aria-label="Cerrar">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -610,7 +610,7 @@ export default function ProductsPage() {
                               placeholder="0"
                               value={stockValues[loc.id] ?? ''}
                               onChange={e => setStockValues(prev => ({ ...prev, [loc.id]: e.target.value }))}
-                            />
+                             aria-label="0" />
                           </td>
                         </tr>
                       ))}
@@ -658,7 +658,7 @@ export default function ProductsPage() {
                         type="button"
                         onClick={() => removeImage(index)}
                         className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
-                      >
+                       aria-label="Cerrar">
                         <X className="h-3 w-3" />
                       </button>
                     </div>
@@ -685,7 +685,7 @@ export default function ProductsPage() {
                           type="button"
                           onClick={() => handleDeleteExistingImage(img.id)}
                           className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
-                        >
+                         aria-label="Cerrar">
                           <X className="h-3 w-3" />
                         </button>
                       </div>

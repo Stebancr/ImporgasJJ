@@ -115,7 +115,7 @@ export default function Footer() {
                     <Mail className="w-5 h-5 text-[#F58634] group-hover:text-white transition-colors" />
                   </div>
                   <div>
-                    <p className="text-white font-medium">info@imporgasjj.com</p>
+                    <p className="text-white font-medium">gerenciaimporgasjj213@gmail.com</p>
                     <p className="text-xs">Respuesta en 24h</p>
                   </div>
                 </a>
@@ -141,7 +141,7 @@ export default function Footer() {
             <p>© {new Date().getFullYear()} ImporGas JJ S.A.S — NIT 900739269-1. Todos los derechos reservados.</p>
             <div className="flex gap-4">
               <a href="#" className="hover:text-[#F58634] transition-colors">Términos y Condiciones</a>
-              <a href="#" className="hover:text-[#F58634] transition-colors">Política de Privacidad</a>
+              <Link to="/politica-tratamiento-datos" className="hover:text-[#F58634] transition-colors">Política de Tratamiento de Datos</Link>
             </div>
           </div>
         </div>

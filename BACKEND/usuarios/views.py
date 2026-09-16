@@ -47,6 +47,11 @@ class Perfil(APIView):
             "nombre_nivel": usuario.nivel.nombrenivel if usuario.nivel else None,
             "nombre_regional": usuario.regional.nombreregional if usuario.regional else None,
         }
+        if id is None:
+            data["tipo_usuario"] = int(getattr(request.user, "tipo_usuario", 0) or 0)
+            location = getattr(request.user, "location", None)
+            data["location_id"] = location.id if location else None
+            data["location_name"] = location.name if location else None
         return Response(data)
 
     def patch(self, request, id=None):

@@ -24,6 +24,9 @@ interface TokenResponse {
 }
 
 interface PerfilResponse {
+  tipo_usuario: number
+  location_id: number | null
+  location_name: string | null
   id: number
   cedula: string
   nombre_completo: string
@@ -54,13 +57,13 @@ function mapPerfilToUser(
     name: perfil.nombre_completo,
     phone: perfil.telefono ?? '',
     address: '',
-    role: isAdmin > 0 ? 'admin' : 'operator',
+    role: [1, 4].includes(isAdmin) ? 'admin' : 'operator',
     tipo_usuario: isAdmin,
     location_id: locationId,
     location_name: locationName,
     is_active: perfil.estado === 1,
-    is_staff: isAdmin > 0,
-    is_superuser: isAdmin > 1,
+    is_staff: [1, 4].includes(isAdmin),
+    is_superuser: isAdmin === 4,
     last_login: null,
     created_at: '',
     updated_at: '',
@@ -79,6 +82,10 @@ export const authService = {
     const perfilRes = await api.get<PerfilResponse>('/user/perfil')
     const user = mapPerfilToUser(perfilRes.data, credentials.usuario, is_admin, location_id ?? null, location_name ?? null)
 
+    if (!user.is_active || user.role !== 'admin') {
+      this.clearAuth()
+      throw new Error('Esta cuenta no tiene acceso administrativo.')
+    }
     return { user, token: access }
   },
 
@@ -102,15 +109,15 @@ export const authService = {
   },
 
   async getProfile(): Promise<User> {
-    const perfilRes = await api.get<PerfilResponse>('/user/perfil/')
+    const perfilRes = await api.get<PerfilResponse>('/user/perfil')
     const storedUser = this.getStoredUser()
-    return mapPerfilToUser(perfilRes.data, storedUser?.email ?? '', 0)
+    return mapPerfilToUser(perfilRes.data, storedUser?.email ?? '', perfilRes.data.tipo_usuario, perfilRes.data.location_id, perfilRes.data.location_name)
   },
 
   async updateProfile(data: Partial<User>): Promise<User> {
-    const response = await api.put<PerfilResponse>('/user/perfil/', data)
+    const perfilRes = await api.put<PerfilResponse>('/user/perfil', data)
     const storedUser = this.getStoredUser()
-    return mapPerfilToUser(response.data, storedUser?.email ?? '', 0)
+    return mapPerfilToUser(perfilRes.data, storedUser?.email ?? '', perfilRes.data.tipo_usuario, perfilRes.data.location_id, perfilRes.data.location_name)
   },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
@@ -119,7 +126,7 @@ export const authService = {
 
   getStoredUser(): User | null {
     const user = localStorage.getItem('user')
-    return user ? JSON.parse(user) : null
+    try { return user ? JSON.parse(user) : null } catch { return null }
   },
 
   getStoredToken(): string | null {
@@ -132,6 +139,7 @@ export const authService = {
   },
 
   clearAuth(): void {
+    localStorage.removeItem('refresh')
     localStorage.removeItem('user')
     localStorage.removeItem('token')
   },

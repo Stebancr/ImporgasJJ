@@ -23,9 +23,9 @@ function errorMessage(value: unknown): string {
 
 // Flag to prevent multiple simultaneous refresh attempts
 let isRefreshing = false
-let refreshSubscribers: Array<(token: string) => void> = []
+let refreshSubscribers: Array<(token: string | null) => void> = []
 
-function onRefreshed(token: string) {
+function onRefreshed(token: string | null) {
   refreshSubscribers.forEach(cb => cb(token))
   refreshSubscribers = []
 }
@@ -37,6 +37,7 @@ async function tryRefreshToken(): Promise<string | null> {
   try {
     const response = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
       method: 'POST',
+      signal: AbortSignal.timeout(20000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh: refreshToken }),
     })
@@ -62,6 +63,7 @@ async function tryRefreshToken(): Promise<string | null> {
 function buildConfig(method: string, body: unknown, headers: Record<string, string>, token: string | null): RequestInit {
   const config: RequestInit = {
     method,
+    signal: AbortSignal.timeout(20000),
     headers: {
       'Content-Type': 'application/json',
       ...headers,
@@ -90,7 +92,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
       isRefreshing = true
       newToken = await tryRefreshToken()
       isRefreshing = false
-      if (newToken) onRefreshed(newToken)
+      onRefreshed(newToken)
     } else {
       // Wait for the ongoing refresh to finish
       newToken = await new Promise<string | null>(resolve => {
@@ -109,11 +111,22 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     throw new Error(errorMessage(error) || 'Error en la solicitud')
   }
 
+  if (response.status === 204) return undefined as T
   return response.json()
 }
 
+const pendingReads = new Map<string, Promise<unknown>>()
+function read<T>(endpoint: string): Promise<T> {
+  const key = (localStorage.getItem('authToken') || '') + ':' + endpoint
+  const existing = pendingReads.get(key)
+  if (existing) return existing as Promise<T>
+  const promise = request<T>(endpoint).finally(() => pendingReads.delete(key))
+  pendingReads.set(key, promise)
+  return promise
+}
+
 export const api = {
-  get: <T>(endpoint: string) => request<T>(endpoint),
+  get: <T>(endpoint: string) => read<T>(endpoint),
   post: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: 'POST', body }),
   put: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: 'PUT', body }),
   patch: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: 'PATCH', body }),

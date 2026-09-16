@@ -1,3 +1,5 @@
+import { useMobileDrawer } from '@/hooks/useMobileDrawer'
+import { PageBoundary } from '@/components/PageBoundary'
 import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom'
 import { useAuth } from '@/admin/context/AuthContext'
@@ -5,7 +7,6 @@ import { adminChatService } from '@/admin/services/admin_chat'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
-  Flame,
   LayoutDashboard,
   Package,
   Users,
@@ -20,7 +21,6 @@ import {
   ChevronRight,
   User,
   Receipt,
-  Boxes,
   FileText,
   ClipboardList,
   MessageSquare,
@@ -69,6 +69,8 @@ export default function DashboardLayout() {
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
   const [pendingChats, setPendingChats] = useState(0)
 
+  const sidebarRef = useMobileDrawer(sidebarOpen, () => setSidebarOpen(false))
+
   // Poll for pending chat sessions every 5 s
   useEffect(() => {
     if (!user || user.role !== 'admin') return
@@ -80,6 +82,8 @@ export default function DashboardLayout() {
 
   // Auto-open groups whose children match the current path
   useEffect(() => {
+    setSidebarOpen(false)
+    setUserMenuOpen(false)
     const toOpen = new Set<string>()
     navigation.forEach((item) => {
       if (item.children?.some((c) => location.pathname.startsWith(c.href))) {
@@ -117,22 +121,20 @@ export default function DashboardLayout() {
       )}
 
       {/* Sidebar */}
-      <aside
+      <aside ref={sidebarRef} id="admin-navigation" aria-label="Navegación administrativa"
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-64 bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          'fixed inset-y-0 left-0 z-50 w-64 max-w-[calc(100vw-1rem)] bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0',
+          sidebarOpen ? 'translate-x-0 visible' : '-translate-x-full invisible lg:visible'
         )}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center gap-2 px-4 py-5 border-b">
-            <div className="p-1.5 bg-primary rounded-lg">
-              <Flame className="h-6 w-6 text-primary-foreground" />
-            </div>
-            <span className="text-lg font-bold text-foreground">ImporgasJJ</span>
+          <div className="flex flex-col items-center justify-center px-4 py-8 border-b">
+            <Link to="/" aria-label="ImporGas JJ, inicio"><img src="/logo_imporgas.svg" alt="ImporGas JJ" className="w-56 h-24 object-contain" /></Link>
             <button
               onClick={() => setSidebarOpen(false)}
-              className="ml-auto lg:hidden text-muted-foreground hover:text-foreground"
+              aria-label="Cerrar navegación"
+              className="absolute top-2 right-2 h-11 w-11 shrink-0 flex items-center justify-center lg:hidden text-muted-foreground hover:text-foreground"
             >
               <X className="h-5 w-5" />
             </button>
@@ -150,16 +152,17 @@ export default function DashboardLayout() {
                   <div key={item.name}>
                     {/* Group toggle button */}
                     <button
+                      aria-expanded={isGroupOpen}
                       onClick={() => toggleGroup(item.name)}
                       className={cn(
-                        'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                        'w-full flex items-center gap-3 px-3 py-3 rounded-md text-sm font-medium transition-colors',
                         isGroupActive
                           ? 'text-primary bg-primary/10'
                           : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                       )}
                     >
                       <item.icon className="h-5 w-5 shrink-0" />
-                      <span className="flex-1 text-left">{item.name}</span>
+                      <span className="flex-1 min-w-0 text-left">{item.name}</span>
                       <ChevronRight
                         className={cn(
                           'h-4 w-4 transition-transform duration-200',
@@ -172,7 +175,7 @@ export default function DashboardLayout() {
                     <div
                       className={cn(
                         'overflow-hidden transition-all duration-200',
-                        isGroupOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+                        isGroupOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0 invisible'
                       )}
                     >
                       <div className="ml-4 mt-1 space-y-0.5 border-l border-border pl-3">
@@ -185,10 +188,11 @@ export default function DashboardLayout() {
                             return (
                               <Link
                                 key={child.name}
+                                aria-current={isChildActive ? "page" : undefined}
                                 to={child.href}
                                 onClick={() => setSidebarOpen(false)}
                                 className={cn(
-                                  'flex items-center gap-2.5 px-3 py-1.5 rounded-md text-sm transition-colors',
+                                  'flex items-center gap-2.5 px-3 py-3 rounded-md text-sm transition-colors',
                                   isChildActive
                                     ? 'bg-primary text-primary-foreground font-medium'
                                     : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
@@ -210,6 +214,7 @@ export default function DashboardLayout() {
               return (
                 <Link
                   key={item.name}
+                  aria-current={isActive ? "page" : undefined}
                   to={item.href}
                   onClick={() => setSidebarOpen(false)}
                   className={cn(
@@ -273,13 +278,14 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main content */}
-      <div className="lg:pl-64">
+      <div className="min-w-0 lg:pl-64">
         {/* Top bar */}
         <header className="sticky top-0 z-30 flex items-center gap-4 px-4 py-3 bg-background/95 backdrop-blur border-b lg:px-6">
           <Button
             variant="ghost"
             size="icon"
             className="lg:hidden"
+            aria-label="Abrir navegación" aria-expanded={sidebarOpen} aria-controls="admin-navigation"
             onClick={() => setSidebarOpen(true)}
           >
             <Menu className="h-5 w-5" />
@@ -288,8 +294,8 @@ export default function DashboardLayout() {
         </header>
 
         {/* Page content */}
-        <main className="p-4 lg:p-6">
-          <Outlet />
+        <main id="main-content" className="min-w-0 p-4 lg:p-6">
+          <PageBoundary key={location.pathname}><Outlet /></PageBoundary>
         </main>
       </div>
     </div>

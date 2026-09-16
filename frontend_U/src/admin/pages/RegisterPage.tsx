@@ -132,7 +132,7 @@ export default function RegisterPage() {
                 <div className="p-3 text-sm text-green-700 bg-green-100 rounded-md">{success}</div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="usuario">Usuario *</Label>
                   <Input id="usuario" name="usuario" placeholder="nombre.usuario" value={formData.usuario} onChange={handleChange} required disabled={isLoading} />
@@ -148,7 +148,7 @@ export default function RegisterPage() {
                 <Input id="nombre_completo" name="nombre_completo" placeholder="Juan Perez" value={formData.nombre_completo} onChange={handleChange} required disabled={isLoading} />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="correo">Correo electronico</Label>
                   <Input id="correo" name="correo" type="email" placeholder="juan@empresa.com" value={formData.correo} onChange={handleChange} disabled={isLoading} />
@@ -164,7 +164,7 @@ export default function RegisterPage() {
                 <Input id="sede" name="sede" placeholder="Bogota" value={formData.sede} onChange={handleChange} disabled={isLoading} />
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="cargo">Cargo</Label>
                   <select id="cargo" name="cargo" value={formData.cargo} onChange={handleChange} disabled={isLoading} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50">
@@ -199,7 +199,7 @@ export default function RegisterPage() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="password">Contrasena *</Label>
                   <Input id="password" name="password" type="password" placeholder="••••••••" value={formData.password} onChange={handleChange} required disabled={isLoading} />

@@ -53,7 +53,7 @@ export const authService = {
     localStorage.setItem('user', JSON.stringify(user))
     return { user, token: token.access }
   },
-  register: async (data: RegisterData): Promise<AuthResponse> => {
+  register: async (data: RegisterData): Promise<void> => {
     await api.post('/user/registerUsers', {
       usuario: data.email,
       password: data.password,
@@ -62,7 +62,6 @@ export const authService = {
       correo: data.email,
       telefono: data.phone || '',
     })
-    return authService.login({ email: data.email, password: data.password })
   },
   logout: () => {
     localStorage.removeItem('authToken')
@@ -76,7 +75,13 @@ export const authService = {
   },
   getCurrentUser: async (): Promise<User> => {
     const stored = authService.getStoredUser()
-    if (stored) return stored
+    if (stored) {
+      const profile = await api.get<ProfileResponse>('/user/perfil')
+      if (profile.estado !== 1) throw new Error('La cuenta no está activa')
+      const user = { ...stored, name: profile.nombre_completo, email: profile.correo || stored.email, phone: profile.telefono || '', is_active: true }
+      localStorage.setItem('user', JSON.stringify(user))
+      return user
+    }
     throw new Error('No hay una sesión autenticada')
   },
   updateProfile: async (data: Partial<User>): Promise<User> => api.put<User>('/user/perfil/', data),

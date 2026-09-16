@@ -35,8 +35,15 @@ from .apps.meta.webhooks import normalize_payload
 from .apps.meta.services import MetaAPIError, dispatch_outbound_message, secret_store
 from .apps.meta.oauth import REQUIRED_SCOPES
 from .ollama_service import ollama_service
-from .tasks import _assert_public_https, audit_meta_tokens
+from .tasks import (
+    _assert_public_https,
+    audit_meta_tokens,
+    close_inactive_bot_sessions,
+    generate_omnichannel_bot_reply,
+    INACTIVITY_WARNING_TEXT,
+)
 from core.asgi import application
+from ecommerce.models import Brand, Category, Product
 
 
 class ConversationStateTests(APITestCase):
@@ -68,6 +75,121 @@ class ConversationStateTests(APITestCase):
         self.assertTrue(ollama_service.needs_human_agent('Necesito cotizar 20 unidades'))
         self.assertTrue(ollama_service.needs_human_agent('Quiero hablar con un asesor'))
         self.assertTrue(ollama_service.needs_human_agent('No me estás entendiendo'))
+
+    def test_propano_is_not_confused_with_ropa(self):
+        self.assertFalse(ollama_service._is_out_of_scope('Quiero comprar el Regulador Gas Propano'))
+
+    def test_real_product_can_be_selected_by_name_pronoun_typo_and_position(self):
+        category = Category.objects.create(name='Reguladores')
+        brand = Brand.objects.create(name='Fisher')
+        product = Product.objects.create(
+            name='Regulador Gas Propano', description='Modelo R18', price=14900,
+            category=category, brand=brand, total_stock=3, is_available=True,
+        )
+        listed = ollama_service.get_bot_response('¿Qué reguladores tienen?')
+        self.assertEqual(listed['state']['recent_products'][0]['id'], product.id)
+        for phrase in ('Quiero comprar el Regulador Gas Propano', 'quiero comprarlo',
+                       'quiero comprar ese regulador', 'quiero comparlo Regulador Gas Propano',
+                       'quiero comprar el primero'):
+            result = ollama_service.get_bot_response(phrase, conversation_state=listed['state'])
+            self.assertTrue(result['needs_agent'], phrase)
+            self.assertEqual(result['state']['selected_product_id'], product.id)
+
+    def test_unavailable_product_reports_stock(self):
+        category = Category.objects.create(name='Reguladores')
+        brand = Brand.objects.create(name='Marca prueba')
+        product = Product.objects.create(
+            name='Regulador Agotado', description='', price=10000,
+            category=category, brand=brand, total_stock=0, is_available=True,
+        )
+        result = ollama_service.get_bot_response('Quiero comprar Regulador Agotado')
+        self.assertFalse(result['needs_agent'])
+        self.assertIn('no tiene stock', result['response'])
+
+    @patch('crmChat.views.ollama_service.get_bot_response')
+    def test_closed_ecommerce_chat_reopens_only_on_customer_message(self, bot):
+        bot.return_value = {'response': 'Hola de nuevo', 'needs_agent': False, 'state': {}, 'summary': ''}
+        session = ChatSession.objects.create(user_name='Cliente', status='closed')
+        response = self.client.post(reverse('bot-chat'), {'message': 'Necesito ayuda', 'session_id': session.id}, format='json')
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        self.assertEqual(session.status, 'bot')
+        self.assertEqual(session.messages.filter(sender_type='user').count(), 1)
+        self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
+
+
+class ChatInactivityTests(APITestCase):
+    def _session_after_bot_reply(self):
+        session = ChatSession.objects.create(user_name='Inactivo', status='bot')
+        inbound = ChatMessage.objects.create(session=session, text='Hola', sender_type='user', direction='inbound')
+        reply = ChatMessage.objects.create(session=session, text='¿Algo más?', sender_type='bot', direction='outbound', status='sent', reply_to_message=inbound)
+        old = timezone.now() - timedelta(minutes=2, seconds=5)
+        session.last_customer_message_at = old - timedelta(seconds=5)
+        session.last_bot_message_at = old
+        session.save(update_fields=['last_customer_message_at', 'last_bot_message_at'])
+        return session
+
+    def test_warning_is_unique_and_session_closes_one_minute_later(self):
+        session = self._session_after_bot_reply()
+        self.assertEqual(close_inactive_bot_sessions()['warned'], 1)
+        self.assertEqual(close_inactive_bot_sessions()['warned'], 0)
+        self.assertEqual(session.messages.filter(text=INACTIVITY_WARNING_TEXT).count(), 1)
+        session.refresh_from_db()
+        session.inactivity_warning_at = timezone.now() - timedelta(minutes=1, seconds=1)
+        session.save(update_fields=['inactivity_warning_at'])
+        self.assertEqual(close_inactive_bot_sessions()['closed'], 1)
+        session.refresh_from_db()
+        self.assertEqual(session.status, 'closed')
+
+    def test_customer_reply_cancels_pending_close(self):
+        session = self._session_after_bot_reply()
+        close_inactive_bot_sessions()
+        customer = ChatMessage.objects.create(session=session, text='Sí', sender_type='user', direction='inbound')
+        session.last_customer_message_at = customer.created_at
+        session.save(update_fields=['last_customer_message_at'])
+        close_inactive_bot_sessions()
+        session.refresh_from_db()
+        self.assertEqual(session.status, 'bot')
+        self.assertIsNone(session.inactivity_warning_at)
+
+    def test_empty_session_is_never_contacted(self):
+        session = ChatSession.objects.create(user_name='Sin mensajes', status='bot')
+        close_inactive_bot_sessions()
+        self.assertFalse(session.messages.exists())
+
+    @patch('crmChat.tasks.dispatch_outbound_message', side_effect=MetaAPIError('destinatario inválido'))
+    def test_failed_warning_does_not_start_close_timer_or_duplicate(self, _dispatch):
+        session = self._session_after_bot_reply()
+        self.assertEqual(close_inactive_bot_sessions()['warned'], 0)
+        self.assertEqual(close_inactive_bot_sessions()['warned'], 0)
+        session.refresh_from_db()
+        self.assertIsNone(session.inactivity_warning_at)
+        self.assertEqual(session.messages.filter(text=INACTIVITY_WARNING_TEXT).count(), 1)
+
+    @patch('crmChat.tasks.ollama_service.get_bot_response')
+    @patch('crmChat.tasks.dispatch_outbound_message')
+    def test_failed_bot_reply_retries_same_message_without_regeneration(self, dispatch, ollama):
+        session = ChatSession.objects.create(user_name='Reintento', status='bot')
+        inbound = ChatMessage.objects.create(
+            session=session, text='Hola', sender_type='user', direction='inbound',
+        )
+        reply = ChatMessage.objects.create(
+            session=session, text='Respuesta existente', sender_type='bot',
+            direction='outbound', status='failed', reply_to_message=inbound,
+        )
+
+        def mark_sent(message):
+            message.status = 'sent'
+            message.save(update_fields=['status'])
+
+        dispatch.side_effect = mark_sent
+        result = generate_omnichannel_bot_reply.run(inbound.id)
+        reply.refresh_from_db()
+        self.assertTrue(result['retried'])
+        self.assertEqual(result['message_id'], reply.id)
+        self.assertEqual(reply.status, 'sent')
+        ollama.assert_not_called()
+        self.assertEqual(ChatMessage.objects.filter(reply_to_message=inbound).count(), 1)
 
     @patch('crmChat.ollama_service.requests.post')
     def test_api_persists_structured_memory_across_turns(self, ollama_post):
@@ -291,6 +413,21 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(message.session.channel, 'whatsapp')
         read_receipt.assert_called_once_with(message.id)
 
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    def test_new_inbound_message_reopens_closed_whatsapp_session_and_keeps_history(self, _receipt):
+        self._signed_post()
+        session = ChatSession.objects.get(channel='whatsapp')
+        original_count = session.messages.count()
+        session.status = 'closed'
+        session.save(update_fields=['status'])
+        payload = json.loads(json.dumps(self.payload))
+        payload['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.webhook-2'
+        payload['entry'][0]['changes'][0]['value']['messages'][0]['text']['body'] = 'Necesito ayuda otra vez'
+        self.assertEqual(self._signed_post(payload).status_code, 200)
+        session.refresh_from_db()
+        self.assertEqual(session.status, 'bot')
+        self.assertEqual(session.messages.count(), original_count + 1)
+
 
 @override_settings(
     META_APP_ID='facebook-app-test',
@@ -474,6 +611,25 @@ class ChannelAdapterTests(APITestCase):
         self.assertEqual(instagram.channel, 'instagram')
         self.assertEqual(facebook.text, instagram.text)
         self.assertEqual(facebook.sender_id, 'customer-1')
+
+    def test_whatsapp_protected_user_id_is_normalized(self):
+        payload = {
+            'object': 'whatsapp_business_account',
+            'entry': [{'id': 'waba-1', 'changes': [{
+                'field': 'messages',
+                'value': {
+                    'metadata': {'phone_number_id': 'phone-1'},
+                    'contacts': [{'user_id': 'protected-user-1', 'profile': {'name': 'Cliente'}}],
+                    'messages': [{
+                        'from_user_id': 'protected-user-1', 'id': 'wamid.protected-1',
+                        'timestamp': '1700000000', 'type': 'text', 'text': {'body': 'Hola'},
+                    }],
+                },
+            }]}],
+        }
+        event = normalize_payload(payload)[0]
+        self.assertEqual(event.sender_id, 'protected-user-1')
+        self.assertEqual(event.sender_name, 'Cliente')
 
     def test_echo_is_status_not_new_customer_message(self):
         payload = {

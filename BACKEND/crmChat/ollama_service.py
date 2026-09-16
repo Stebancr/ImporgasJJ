@@ -101,7 +101,57 @@ REGLAS ESTRICTAS:
 
     def _is_out_of_scope(self, message):
         normalized = self._normalize(message)
-        return any(term in normalized for term in self.OUT_OF_SCOPE_TERMS)
+        return any(re.search(r'\b' + re.escape(term) + r'\b', normalized) for term in self.OUT_OF_SCOPE_TERMS)
+
+    def _purchase_requested(self, message):
+        normalized = self._normalize(message)
+        if re.search(r'\bno\b.{0,25}\b(?:compr|adquir|pedir)', normalized):
+            return False
+        return bool(re.search(
+            r'\b(?:comprar(?:lo|la)?|comparlo|conprarlo|compralo|adquirir(?:lo|la)?|pedir|me lo llevo)\b'
+            r'|\b(?:quiero|me interesa)\s+(?:ese|esa|el primero|el segundo|el tercero|ese producto)\b', normalized))
+
+    @staticmethod
+    def _product_context(products):
+        return [{'id': p.id, 'nombre': p.name, 'categoria': p.category.name,
+                 'precio': str(p.price), 'stock': p.total_stock, 'disponible': p.is_available,
+                 'posicion': index} for index, p in enumerate(products, 1)]
+
+    def _resolve_purchase(self, message, state, history):
+        from ecommerce.models import Product
+        normalized = self._normalize(message)
+        products = list(Product.objects.select_related('category', 'brand').prefetch_related('specifications__attribute'))
+        named = [p for p in products if self._normalize(p.name) in normalized]
+        if named:
+            return max(named, key=lambda p: len(p.name)), False
+        recent = state.get('recent_products') or []
+        if not recent:
+            for item in reversed(history or []):
+                if item.get('role') == 'assistant':
+                    ids = re.findall(r'/producto/(\d+)', item.get('content', ''))
+                    if ids:
+                        recent = [{'id': int(pk)} for pk in ids]
+                        break
+        by_id = {p.id: p for p in products}
+        candidates = [by_id[item['id']] for item in recent if item.get('id') in by_id]
+        ordinals = {'primero': 0, 'primer': 0, 'segundo': 1, 'tercero': 2, 'cuarto': 3, 'quinto': 4}
+        for ordinal, index in ordinals.items():
+            if re.search(r'\b' + ordinal + r'\b', normalized):
+                return (candidates[index] if index < len(candidates) else None), False
+        # Explicit unknown names must never silently select a previously shown product.
+        reference = bool(re.search(r'\b(?:comprarlo|comparlo|conprarlo|compralo|adquirirlo|ese|esa|producto)\b', normalized))
+        category = self._detect_category_filter(message)
+        if reference:
+            if category:
+                candidates = [p for p in candidates if self._normalize(p.category.name) == self._normalize(category)]
+            if state.get('selected_product_id') and not category:
+                selected = by_id.get(state['selected_product_id'])
+                if selected:
+                    return selected, False
+            if len(candidates) == 1:
+                return candidates[0], False
+            return None, bool(candidates)
+        return None, None
 
     def _detect_category_filter(self, message):
         if not message:
@@ -473,6 +523,22 @@ REGLAS ESTRICTAS:
         state = self.update_state(message, conversation_state)
         state_summary = self.summarize_state(state)
 
+        if self._purchase_requested(message) and not self._is_out_of_scope(message):
+            selected, ambiguous = self._resolve_purchase(message, state, conversation_history)
+            if selected:
+                state.update(product=selected.name, category=selected.category.name, selected_product_id=selected.id)
+                if not selected.is_available or selected.total_stock <= 0:
+                    state.update(needs_human=False, stage='recommendation')
+                    return self._result(f'Actualmente **{selected.name}** no tiene stock disponible.', state, self.summarize_state(state))
+                state.update(intent='purchase', needs_human=True, stage='human_handoff', topic='human_support')
+                return {'response': f'Has seleccionado **{selected.name}**. /producto/{selected.id}\n\nVoy a comunicarte con un asesor para continuar la compra.',
+                        'needs_agent': True, 'state': state, 'summary': self.summarize_state(state), 'error': None}
+            if ambiguous is not None:
+                state.update(needs_human=False, stage='recommendation')
+                return self._result('¿Cuál de los productos mostrados quieres comprar? Indica su nombre o posición.' if ambiguous
+                                    else 'No encontré el producto solicitado en el catálogo actual. ¿Puedes indicar su nombre?',
+                                    state, self.summarize_state(state))
+
         if state['needs_human']:
             return {
                 'response': 'Claro. Voy a comunicarte con un asesor humano para que continúe ayudándote.',
@@ -539,6 +605,8 @@ REGLAS ESTRICTAS:
                 product_label = f'{product_label} para {use_labels.get(use_case, use_case)}'
 
             if recommended:
+                state['recent_products'] = self._product_context(recommended)
+                state['selected_product_id'] = None
                 if budget:
                     header = f'Para tu presupuesto de ${budget:,.0f}, estas son las opciones disponibles:'
                 else:

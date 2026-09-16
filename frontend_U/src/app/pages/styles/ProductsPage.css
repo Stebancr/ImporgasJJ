@@ -3,7 +3,6 @@
    ========================================== */
 
 .products-page {
-  overflow-x: hidden;
   animation: pageFadeIn 0.4s ease-out;
 }
 
@@ -88,20 +87,20 @@
 .products-grid {
   display: grid;
   gap: 1.5rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 480px) {
-  .products-grid { grid-template-columns: repeat(2, 1fr); }
+  .products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (min-width: 1280px) {
-  .products-grid { grid-template-columns: repeat(3, 1fr); }
+  .products-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* List view */
 .products-grid--list {
-  grid-template-columns: 1fr !important;
+  grid-template-columns: minmax(0, 1fr) !important;
 }
 
 /* --- Mobile filter drawer --- */

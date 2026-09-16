@@ -135,8 +135,24 @@ function Chatbot() {
   const [agentName, setAgentName]   = useState('')
 
   const messagesEndRef  = useRef<HTMLDivElement>(null)
+  const launcherRef     = useRef<HTMLButtonElement>(null)
+  const dialogRef       = useRef<HTMLDivElement>(null)
   const lastMsgIdRef    = useRef<number | null>(null)
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const closeButton = dialogRef.current?.querySelector<HTMLButtonElement>('[aria-label="Cerrar chat"]')
+    closeButton?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      launcherRef.current?.focus()
+    }
+  }, [isOpen])
 
   // ── scroll ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -359,6 +375,8 @@ Fecha: ${result.created_at}
     <>
       {/* Float button */}
       <button
+        ref={launcherRef}
+        aria-label="Abrir chat de ayuda" aria-expanded={isOpen} tabIndex={isOpen ? -1 : 0}
         onClick={() => setIsOpen(true)}
         className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ${isOpen ? 'scale-0 opacity-0' : 'scale-100 opacity-100'}`}
       >
@@ -372,10 +390,9 @@ Fecha: ${result.created_at}
       </button>
 
       {/* Chat window */}
-      <div className={`fixed bottom-6 right-6 z-50 w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 ${
-        isOpen ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-4 scale-95 pointer-events-none'
-      }`}>
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-[#E5E7EB]">
+      {isOpen && (
+      <div ref={dialogRef} role="dialog" aria-label="Chat de ayuda" className="fixed bottom-4 right-4 z-50 w-[380px] max-w-[calc(100vw-2rem)] overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-2xl max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden border border-[#E5E7EB]">
 
           {/* Header */}
           <div className="bg-gradient-to-r from-[#001575] to-[#00104f] text-white p-4">
@@ -392,14 +409,14 @@ Fecha: ${result.created_at}
                   </div>
                 </div>
               </div>
-              <button onClick={handleClose} className="w-10 h-10 hover:bg-white/10 rounded-xl transition-colors flex items-center justify-center">
+              <button aria-label="Cerrar chat" onClick={handleClose} className="w-10 h-10 hover:bg-white/10 rounded-xl transition-colors flex items-center justify-center">
                 <X className="w-5 h-5" />
               </button>
             </div>
           </div>
 
           {/* Messages */}
-          <div className="h-80 overflow-y-auto p-4 bg-[#F9FAFB]">
+          <div className="h-80 min-h-0 overflow-y-auto p-4 bg-[#F9FAFB]">
             <div className="space-y-4">
               {messages.map((message) => (
                 <div key={message.id} className={`flex ${message.isBot ? 'justify-start' : 'justify-end'}`}>
@@ -525,6 +542,7 @@ Fecha: ${result.created_at}
           </div>
         </div>
       </div>
+      )}
     </>
   )
 }

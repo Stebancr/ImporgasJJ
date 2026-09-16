@@ -113,7 +113,7 @@ export default function AddressesPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
               <MapPin className="w-8 h-8 text-[#001575]" />
@@ -126,7 +126,7 @@ export default function AddressesPage() {
           {!showForm && (
             <button
               onClick={() => setShowForm(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-[#001575] text-white rounded-xl font-semibold hover:bg-[#00104f] transition-colors"
+              className="flex w-full items-center justify-center gap-2 px-4 py-2.5 bg-[#001575] text-white rounded-xl font-semibold hover:bg-[#00104f] transition-colors sm:w-auto"
             >
               <Plus className="w-5 h-5" />
               Nueva dirección
@@ -142,10 +142,11 @@ export default function AddressesPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="address-label" className="block text-sm font-medium text-gray-700 mb-1">
                     Etiqueta *
                   </label>
                   <input
+                    id="address-label"
                     type="text"
                     required
                     value={form.label}
@@ -155,10 +156,11 @@ export default function AddressesPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="recipient-name" className="block text-sm font-medium text-gray-700 mb-1">
                     Nombre del destinatario *
                   </label>
                   <input
+                    id="recipient-name"
                     type="text"
                     required
                     value={form.recipient_name}
@@ -169,10 +171,11 @@ export default function AddressesPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="address-phone" className="block text-sm font-medium text-gray-700 mb-1">
                   Teléfono *
                 </label>
                 <input
+                  id="address-phone"
                   type="tel"
                   required
                   value={form.phone}
@@ -182,10 +185,11 @@ export default function AddressesPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="street-address" className="block text-sm font-medium text-gray-700 mb-1">
                   Dirección completa *
                 </label>
                 <textarea
+                  id="street-address"
                   required
                   value={form.address}
                   onChange={(e) => setForm({ ...form, address: e.target.value })}
@@ -196,10 +200,11 @@ export default function AddressesPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="address-city" className="block text-sm font-medium text-gray-700 mb-1">
                     Ciudad *
                   </label>
                   <input
+                    id="address-city"
                     type="text"
                     required
                     value={form.city}
@@ -208,10 +213,11 @@ export default function AddressesPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="address-department" className="block text-sm font-medium text-gray-700 mb-1">
                     Departamento *
                   </label>
                   <select
+                    id="address-department"
                     required
                     value={form.department}
                     onChange={(e) => setForm({ ...form, department: e.target.value })}
@@ -226,10 +232,11 @@ export default function AddressesPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="postal-code" className="block text-sm font-medium text-gray-700 mb-1">
                     Código postal
                   </label>
                   <input
+                    id="postal-code"
                     type="text"
                     value={form.postal_code}
                     onChange={(e) => setForm({ ...form, postal_code: e.target.value })}
@@ -316,7 +323,7 @@ export default function AddressesPage() {
                   <button
                     onClick={() => handleDelete(address.id)}
                     className="px-4 py-2 bg-red-50 text-red-600 rounded-xl font-semibold hover:bg-red-100 transition-colors"
-                  >
+                   aria-label="Eliminar">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>

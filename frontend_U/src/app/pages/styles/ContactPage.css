@@ -3,7 +3,6 @@
    ========================================== */
 
 .contact-page {
-  overflow-x: hidden;
   animation: pageFadeIn 0.4s ease-out;
 }
 
@@ -42,16 +41,16 @@
 /* Info cards grid */
 .contact-cards-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
 }
 
 @media (min-width: 640px) {
-  .contact-cards-grid { grid-template-columns: repeat(2, 1fr); }
+  .contact-cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (min-width: 1024px) {
-  .contact-cards-grid { grid-template-columns: repeat(4, 1fr); }
+  .contact-cards-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 /* Card text — prevent overflow */
@@ -64,22 +63,22 @@
 .contact-main-grid {
   display: grid;
   gap: 3rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 1024px) {
-  .contact-main-grid { grid-template-columns: repeat(2, 1fr); }
+  .contact-main-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Form field grids */
 .contact-field-grid {
   display: grid;
   gap: 1.25rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 768px) {
-  .contact-field-grid { grid-template-columns: repeat(2, 1fr); }
+  .contact-field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Textarea — never overflow container */

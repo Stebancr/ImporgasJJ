@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -23,7 +22,7 @@ import { visitsService } from '@/services/visits'
 import type {
   VisitaItem, VisitaDetalle, CreateVisitaData, Tecnico, CalendarioData,
 } from '@/services/visits'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, parseISO } from 'date-fns'
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay } from 'date-fns'
 import { es } from 'date-fns/locale'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -267,14 +266,14 @@ export default function VisitsPage() {
         <div className="space-y-4">
           {/* Filters */}
           <div className="flex gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
+            <div className="relative flex-1 min-w-0 w-full sm:w-auto">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar por cliente, tarea o dirección..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"
-              />
+               aria-label="Buscar por cliente, tarea o dirección..." />
             </div>
             <Select value={estadoFilter} onValueChange={setEstadoFilter}>
               <SelectTrigger className="w-40">
@@ -299,7 +298,7 @@ export default function VisitsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon" onClick={loadVisits}>
+            <Button variant="outline" size="icon" onClick={loadVisits} aria-label="Actualizar">
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
@@ -368,10 +367,10 @@ export default function VisitsPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openDetail(v.id)}>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openDetail(v.id)} aria-label="Ver detalle">
                               <Eye className="h-3 w-3" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(v)}>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(v)} aria-label="Editar">
                               <Pencil className="h-3 w-3" />
                             </Button>
                             {v.tiene_reporte && (
@@ -397,7 +396,7 @@ export default function VisitsPage() {
                             <Button
                               size="icon" variant="ghost" className="h-7 w-7"
                               onClick={() => { setEditVisit(v); setDeleteOpen(true) }}
-                            >
+                             aria-label="Eliminar">
                               <Trash2 className="h-3 w-3 text-destructive" />
                             </Button>
                           </div>
@@ -417,13 +416,13 @@ export default function VisitsPage() {
         <div className="space-y-4">
           {/* Month nav */}
           <div className="flex items-center justify-between">
-            <Button variant="outline" size="icon" onClick={() => setCurrentMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>
+            <Button variant="outline" size="icon" onClick={() => setCurrentMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} aria-label="Anterior">
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <h2 className="font-semibold text-lg capitalize">
               {format(currentMonth, 'MMMM yyyy', { locale: es })}
             </h2>
-            <Button variant="outline" size="icon" onClick={() => setCurrentMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>
+            <Button variant="outline" size="icon" onClick={() => setCurrentMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} aria-label="Siguiente">
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
@@ -433,7 +432,7 @@ export default function VisitsPage() {
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="grid grid-cols-7 gap-1">
+            <div className="grid grid-cols-7 gap-1 min-w-0">
               {/* Day headers */}
               {DIAS_SEMANA.map((d) => (
                 <div key={d} className="text-center text-xs font-semibold text-muted-foreground py-2">
@@ -454,8 +453,10 @@ export default function VisitsPage() {
                 return (
                   <div
                     key={day.toISOString()}
+                    role="button" tabIndex={0} aria-pressed={Boolean(isSelected)} aria-label={format(day, 'dd MMMM yyyy', { locale: es })}
+                    onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedDay(isSelected ? null : day) } }}
                     onClick={() => setSelectedDay(isSelected ? null : day)}
-                    className={`min-h-[80px] p-1 rounded border cursor-pointer transition-colors ${
+                    className={`min-w-0 min-h-[80px] p-1 rounded border cursor-pointer transition-colors ${
                       isSelected ? 'bg-primary/10 border-primary' :
                       isToday ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30' :
                       'border-border hover:bg-muted/50'
@@ -534,7 +535,7 @@ export default function VisitsPage() {
           <DialogHeader>
             <DialogTitle>{editOpen ? 'Editar Visita' : 'Nueva Visita Técnica'}</DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 py-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
 
             {/* ── Client section (create only) ── */}
             {!editOpen && (
@@ -643,7 +644,7 @@ export default function VisitsPage() {
               </div>
 
               {/* Client */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Card><CardContent className="pt-3 pb-3 space-y-1">
                   <p className="text-xs text-muted-foreground font-semibold">CLIENTE</p>
                   <p className="font-medium">{selectedVisit.cliente.nombre}</p>
@@ -670,7 +671,7 @@ export default function VisitsPage() {
                 <Card>
                   <CardHeader className="py-3"><CardTitle className="text-sm">Reporte Técnico</CardTitle></CardHeader>
                   <CardContent className="pt-0 space-y-2 text-sm">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div><span className="text-muted-foreground">Persona que atendió:</span> {selectedVisit.reporte.persona_atiende}</div>
                       <div><span className="text-muted-foreground">Equipo:</span> {selectedVisit.reporte.equipo_display}</div>
                       <div><span className="text-muted-foreground">Ubicación:</span> {selectedVisit.reporte.ubicacion_display}</div>
@@ -698,7 +699,7 @@ export default function VisitsPage() {
                 <Card>
                   <CardHeader className="py-3"><CardTitle className="text-sm">Evidencias ({selectedVisit.evidencias.length})</CardTitle></CardHeader>
                   <CardContent className="pt-0">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {selectedVisit.evidencias.map((e) => (
                         <a key={e.id} href={e.imagen} target="_blank" rel="noopener noreferrer">
                           <img src={e.imagen} alt="" className="w-full h-28 object-cover rounded border hover:opacity-90 transition-opacity" />

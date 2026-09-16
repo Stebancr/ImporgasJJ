@@ -169,7 +169,7 @@ export default function FavoritesPage() {
                       onClick={() => handleRemove(favorite.id)}
                       disabled={removingIds.includes(favorite.id)}
                       className="px-4 py-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors disabled:opacity-50"
-                    >
+                     aria-label="Eliminar">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>

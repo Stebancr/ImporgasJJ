@@ -9,3 +9,6 @@ node_modules/
 **/.pnpm-store/
 
 frontend/src/services/axios.js
+
+**/.npm-cache/
+**/*.tsbuildinfo

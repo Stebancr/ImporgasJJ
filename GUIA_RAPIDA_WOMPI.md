@@ -131,7 +131,7 @@ http://localhost:81/checkout
 
 **Datos de prueba:**
 ```
-Email: test@gasstore.com
+Email: marketingimporgasjj@gmail.com
 Nombre: Test Usuario
 Teléfono: +57 300 123 4567
 Dirección: Calle 123 #45-67

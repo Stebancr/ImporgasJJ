@@ -179,7 +179,7 @@ export default function CategoriesPage() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9"
-              />
+               aria-label="Buscar categorias..." />
             </div>
           </div>
         </CardHeader>
@@ -233,7 +233,7 @@ export default function CategoriesPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleOpenDialog(category)}
-                            >
+                             aria-label="Editar">
                               <Edit className="h-4 w-4" />
                             </Button>
                             <Button
@@ -241,7 +241,7 @@ export default function CategoriesPage() {
                               size="icon"
                               className="text-destructive hover:text-destructive"
                               onClick={() => handleDelete(category.id)}
-                            >
+                             aria-label="Eliminar">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
@@ -287,7 +287,7 @@ export default function CategoriesPage() {
                 rows={3}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="icon">Icono</Label>
                 <select

@@ -20,20 +20,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })
 
   useEffect(() => {
-    const user = authService.getStoredUser()
-    const token = authService.getStoredToken()
-
-    if (user && token) {
-      setState({
-        user,
-        token,
-        isAuthenticated: true,
-        isLoading: false,
-      })
-    } else {
-      setState((prev) => ({ ...prev, isLoading: false }))
+    let active = true
+    const reset = () => {
+      authService.clearAuth()
+      if (active) setState({ user: null, token: null, isAuthenticated: false, isLoading: false })
+    }
+    const validate = async () => {
+      const token = authService.getStoredToken()
+      if (!token) { reset(); return }
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+        const remaining = Number(payload.exp) * 1000 - Date.now()
+        if (!Number.isFinite(remaining) || remaining <= 0) { reset(); return }
+        const user = await authService.getProfile()
+        if (!active || authService.getStoredToken() !== token) return
+        if (!user.is_active || user.role !== 'admin') { reset(); return }
+        authService.setAuth(user, token)
+        setState({ user, token, isAuthenticated: true, isLoading: false })
+      } catch { if (active) reset() }
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'token' || event.key === null) {
+        setState(previous => ({ ...previous, isLoading: true }))
+        void validate()
+      }
+    }
+    void validate()
+    window.addEventListener('admin:logout', reset)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      active = false
+      window.removeEventListener('admin:logout', reset)
+      window.removeEventListener('storage', onStorage)
     }
   }, [])
+
+  useEffect(() => {
+    if (!state.token) return
+    let timer: ReturnType<typeof setTimeout>
+    const check = () => {
+      clearTimeout(timer)
+      try {
+        const payload = JSON.parse(atob(state.token!.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+        const remaining = Number(payload.exp) * 1000 - Date.now()
+        if (Number.isFinite(remaining) && remaining > 0) {
+          timer = setTimeout(check, Math.min(remaining, 2147483647))
+          return
+        }
+      } catch { /* A malformed session must not grant access. */ }
+      window.dispatchEvent(new Event('admin:logout'))
+    }
+    check()
+    window.addEventListener('focus', check)
+    return () => { clearTimeout(timer); window.removeEventListener('focus', check) }
+  }, [state.token])
 
   const login = useCallback(async (credentials: LoginCredentials) => {
     const { user, token } = await authService.login(credentials)
@@ -74,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateUser = useCallback((user: User) => {
     setState((prev) => ({ ...prev, user }))
-    localStorage.setItem('user', JSON.stringify(user))
+    localStorage.setItem('adminUser', JSON.stringify(user))
   }, [])
 
   return (

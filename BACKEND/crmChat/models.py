@@ -342,6 +342,8 @@ class ChatSession(models.Model):
     )
     last_customer_message_at = models.DateTimeField(null=True, blank=True)
     last_agent_message_at = models.DateTimeField(null=True, blank=True)
+    last_bot_message_at = models.DateTimeField(null=True, blank=True)
+    inactivity_warning_at = models.DateTimeField(null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 

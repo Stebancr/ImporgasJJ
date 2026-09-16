@@ -51,7 +51,7 @@
   --card-foreground: oklch(0.15 0.02 240);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.15 0.02 240);
-  --primary: oklch(0.45 0.18 30);
+  --primary: #001575;
   --primary-foreground: oklch(0.98 0.01 30);
   --secondary: oklch(0.92 0.02 240);
   --secondary-foreground: oklch(0.25 0.02 240);
@@ -62,20 +62,20 @@
   --destructive: oklch(0.55 0.2 25);
   --border: oklch(0.88 0.01 240);
   --input: oklch(0.88 0.01 240);
-  --ring: oklch(0.45 0.18 30);
-  --chart-1: oklch(0.45 0.18 30);
+  --ring: #001575;
+  --chart-1: #001575;
   --chart-2: oklch(0.55 0.15 180);
   --chart-3: oklch(0.6 0.12 240);
   --chart-4: oklch(0.65 0.1 60);
   --chart-5: oklch(0.5 0.14 300);
   --sidebar: oklch(0.96 0.01 240);
   --sidebar-foreground: oklch(0.15 0.02 240);
-  --sidebar-primary: oklch(0.45 0.18 30);
+  --sidebar-primary: #001575;
   --sidebar-primary-foreground: oklch(0.98 0.01 30);
   --sidebar-accent: oklch(0.94 0.02 30);
   --sidebar-accent-foreground: oklch(0.35 0.15 30);
   --sidebar-border: oklch(0.88 0.01 240);
-  --sidebar-ring: oklch(0.45 0.18 30);
+  --sidebar-ring: #001575;
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
@@ -121,5 +121,20 @@
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
+  }
+}
+
+@layer base {
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid #001575;
+    outline-offset: 3px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

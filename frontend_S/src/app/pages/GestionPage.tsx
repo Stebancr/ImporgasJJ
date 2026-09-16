@@ -22,7 +22,7 @@ import {
 import {
   Search, Plus, Eye, Trash2, FileCheck, Ban, Pencil,
   FileText, Receipt, ChevronLeft, ChevronRight,
-  Loader2, AlertTriangle, RefreshCw, X, Boxes, ClipboardList,
+  Loader2, AlertTriangle, RefreshCw, X, ClipboardList,
 } from 'lucide-react'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -59,11 +59,11 @@ function Pagination({
 }: { page: number; totalPages: number; onPrev: () => void; onNext: () => void }) {
   return (
     <div className="flex items-center justify-end gap-2 mt-3">
-      <Button variant="ghost" size="icon" disabled={page <= 1} onClick={onPrev}>
+      <Button variant="ghost" size="icon" disabled={page <= 1} onClick={onPrev} aria-label="Anterior">
         <ChevronLeft className="h-4 w-4" />
       </Button>
       <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
-      <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={onNext}>
+      <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={onNext} aria-label="Siguiente">
         <ChevronRight className="h-4 w-4" />
       </Button>
     </div>
@@ -126,7 +126,7 @@ function ItemEditor({ items, onChange }: ItemEditorProps) {
             placeholder="Buscar producto..."
             value={productSearch}
             onChange={(e) => setProductSearch(e.target.value)}
-          />
+           aria-label="Buscar producto..." />
         </div>
         {loadingProducts && <Loader2 className="h-4 w-4 animate-spin self-center text-muted-foreground" />}
       </div>
@@ -202,7 +202,7 @@ function ItemEditor({ items, onChange }: ItemEditorProps) {
                     </td>
                     <td className="px-3 py-1 text-right font-medium text-xs">{fmt(subtotal)}</td>
                     <td className="px-1 py-1">
-                      <button type="button" onClick={() => removeItem(idx)} className="text-destructive hover:opacity-70">
+                      <button type="button" onClick={() => removeItem(idx)} className="text-destructive hover:opacity-70" aria-label="Cerrar">
                         <X className="h-4 w-4" />
                       </button>
                     </td>
@@ -295,7 +295,7 @@ function DocumentoDetailDialog({
           <DialogDescription className="sr-only">Detalle del documento</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><span className="text-muted-foreground">Sede:</span> {doc.location_name}</div>
             <div><span className="text-muted-foreground">Creado por:</span> {doc.creado_por_usuario}</div>
             <div><span className="text-muted-foreground">Cliente:</span> {doc.cliente_nombre}</div>
@@ -368,7 +368,7 @@ function DocumentoDetailDialog({
 //  TAB 1 — STOCK
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; locationId: number | null; locations: Location[] }) {
+export function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; locationId: number | null; locations: Location[] }) {
   const [entries, setEntries] = useState<StockEntry[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -427,7 +427,7 @@ function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; location
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="pl-8 h-9" placeholder="Buscar producto..." value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
+              onChange={(e) => { setSearch(e.target.value); setPage(1) }}  aria-label="Buscar producto..." />
           </div>
           {isSuperAdmin && (
             <Select value={filterLocation || '__all__'} onValueChange={(v) => { setFilterLocation(v === '__all__' ? '' : v); setPage(1) }}>
@@ -443,7 +443,7 @@ function StockTab({ isSuperAdmin, locations }: { isSuperAdmin: boolean; location
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{total} registros</span>
-          <Button variant="ghost" size="icon" onClick={load}><RefreshCw className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" onClick={load} aria-label="Actualizar"><RefreshCw className="h-4 w-4" /></Button>
         </div>
       </div>
 
@@ -702,7 +702,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input className="pl-8 h-9 w-52" placeholder="Buscar por cliente, número..." value={search}
-                    onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
+                    onChange={(e) => { setSearch(e.target.value); setPage(1) }}  aria-label="Buscar por cliente, número..." />
                 </div>
                 <Select value={estado} onValueChange={(v) => { setEstado(v); setPage(1) }}>
                   <SelectTrigger className="h-9 w-36"><SelectValue placeholder="Estado" /></SelectTrigger>
@@ -790,11 +790,11 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
           </div>
           {totalPages > 1 && (
             <div className="flex items-center justify-end gap-2 px-4 py-3 border-t">
-              <Button variant="ghost" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              <Button variant="ghost" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Anterior">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
-              <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+              <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Siguiente">
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -815,7 +815,7 @@ function CotizacionesTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin
           </DialogHeader>
           <div className="space-y-4">
             {/* Client data */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>Cliente *</Label>
                 <Input className="mt-1" value={formData.cliente_nombre}
@@ -1028,7 +1028,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input className="pl-8 h-9 w-52" placeholder="Buscar por cliente, número..." value={search}
-                    onChange={(e) => { setSearch(e.target.value); setPage(1) }} />
+                    onChange={(e) => { setSearch(e.target.value); setPage(1) }}  aria-label="Buscar por cliente, número..." />
                 </div>
                 <Select value={estado} onValueChange={(v) => { setEstado(v); setPage(1) }}>
                   <SelectTrigger className="h-9 w-36"><SelectValue placeholder="Estado" /></SelectTrigger>
@@ -1108,11 +1108,11 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
           </div>
           {totalPages > 1 && (
             <div className="flex items-center justify-end gap-2 px-4 py-3 border-t">
-              <Button variant="ghost" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              <Button variant="ghost" size="icon" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Anterior">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
-              <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+              <Button variant="ghost" size="icon" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Siguiente">
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -1131,7 +1131,7 @@ function FacturasTab({ isSuperAdmin, locationId, locations }: { isSuperAdmin: bo
             <DialogDescription className="sr-only">Formulario de factura</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>Cliente *</Label>
                 <Input className="mt-1" value={formData.cliente_nombre}
