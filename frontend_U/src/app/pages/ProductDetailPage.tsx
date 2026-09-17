@@ -89,11 +89,12 @@ function ProductDetailPage() {
     }).format(price)
   }
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (!product.isAvailable || product.stock < 1 || quantity < 1) return
-    addToCart(product, quantity)
-    setAddedToCart(true)
-    setTimeout(() => setAddedToCart(false), 2000)
+    if (await addToCart(product, quantity)) {
+      setAddedToCart(true)
+      setTimeout(() => setAddedToCart(false), 2000)
+    }
   }
 
   const nextImage = () => {

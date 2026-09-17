@@ -2,7 +2,7 @@ import type { User } from '../types'
 import api from './api'
 
 interface LoginCredentials { email: string; password: string }
-interface RegisterData { name: string; email: string; password: string; cc: string; phone?: string }
+interface RegisterData { name: string; email: string; password: string; cc: string; phone?: string; termsVersion: string; termsAccepted: boolean }
 interface TokenResponse {
   access: string
   refresh: string
@@ -16,6 +16,9 @@ interface ProfileResponse {
   correo: string | null
   telefono: string | null
   estado: number
+  terms_version: string
+  terms_accepted_at: string | null
+  current_terms_version: string
 }
 interface AuthResponse { user: User; token: string }
 
@@ -32,6 +35,9 @@ function mapUser(profile: ProfileResponse, username: string, token: TokenRespons
     is_active: profile.estado === 1,
     is_staff: token.is_admin > 0,
     is_superuser: token.is_admin === 4,
+    terms_version: profile.terms_version,
+    terms_accepted_at: profile.terms_accepted_at,
+    current_terms_version: profile.current_terms_version,
     usuario_rel: {
       nombre_completo: profile.nombre_completo,
       correo: profile.correo || username,
@@ -61,6 +67,8 @@ export const authService = {
       nombre_completo: data.name.trim(),
       correo: data.email,
       telefono: data.phone || '',
+      terms_accepted: data.termsAccepted,
+      terms_version: data.termsVersion,
     })
   },
   logout: () => {
@@ -78,7 +86,8 @@ export const authService = {
     if (stored) {
       const profile = await api.get<ProfileResponse>('/user/perfil')
       if (profile.estado !== 1) throw new Error('La cuenta no está activa')
-      const user = { ...stored, name: profile.nombre_completo, email: profile.correo || stored.email, phone: profile.telefono || '', is_active: true }
+      const user = { ...stored, name: profile.nombre_completo, email: profile.correo || stored.email, phone: profile.telefono || '', is_active: true,
+        terms_version: profile.terms_version, terms_accepted_at: profile.terms_accepted_at, current_terms_version: profile.current_terms_version }
       localStorage.setItem('user', JSON.stringify(user))
       return user
     }

@@ -16,6 +16,8 @@ ALLOWED_HOSTS = [
     'djsolutions.io',
     'www.djsolutions.io',
     '2.25.225.216',
+    'localhost',
+    '127.0.0.1',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False

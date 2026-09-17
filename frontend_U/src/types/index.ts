@@ -43,6 +43,9 @@ export interface User {
   is_active?: boolean
   is_staff?: boolean
   is_superuser?: boolean
+  terms_version?: string
+  terms_accepted_at?: string | null
+  current_terms_version?: string
   last_login?: string | null
   created_at?: string
   updated_at?: string

@@ -34,15 +34,15 @@ function OrderTrackingPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<StatusResult | null>(null)
+  const trackingCode = searchParams.get('code')
 
   // Auto-search when code is in URL
   useEffect(() => {
-    const code = searchParams.get('code')
-    if (code) {
-      setOrderNumber(code)
-      doSearch(code)
+    if (trackingCode) {
+      setOrderNumber(trackingCode)
+      doSearch(trackingCode)
     }
-  }, [])
+  }, [trackingCode])
 
   const currentStepIndex = result?.status
     ? statusSteps.findIndex((s) => s.key === result.status)

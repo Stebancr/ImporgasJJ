@@ -3,6 +3,8 @@ import { PageBoundary } from './components/PageBoundary'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import StoreProtectedRoute from './components/StoreProtectedRoute'
+import StoreTermsRoute from './components/StoreTermsRoute'
+import ScrollToTop from './components/ScrollToTop'
 import HomePage from './app/pages/HomePage'
 const ProductsPage = lazy(() => import('./app/pages/ProductsPage'))
 const ProductDetailPage = lazy(() => import('./app/pages/ProductDetailPage'))
@@ -17,6 +19,7 @@ const ContactPage = lazy(() => import('./app/pages/ContactPage'))
 const LoginPage = lazy(() => import('./app/pages/LoginPage'))
 const NosotrosPage = lazy(() => import('./app/pages/NosotrosPage'))
 const DataPolicyPage = lazy(() => import('./app/pages/DataPolicyPage'))
+const TermsPage = lazy(() => import('./app/pages/TermsPage'))
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
 import { FavoritesProvider } from './context/FavoritesContext'
@@ -58,12 +61,12 @@ function StoreRoutes() {
         <Route path="/" element={<HomePage />} />
         <Route path="/productos" element={<ProductsPage />} />
         <Route path="/producto/:id" element={<ProductDetailPage />} />
-        <Route path="/carrito" element={<CartPage />} />
-        <Route path="/checkout" element={<CheckoutPage />} />
-        <Route path="/checkout/resultado" element={<CheckoutResultPage />} />
-        <Route path="/orden-confirmada" element={<OrderConfirmationPage />} />
-        <Route path="/seguimiento" element={<OrderTrackingPage />} />
-        <Route path="/pedido/:trackingCode" element={<OrderDetailPage />} />
+        <Route path="/carrito" element={<StoreProtectedRoute><CartPage /></StoreProtectedRoute>} />
+        <Route path="/checkout" element={<StoreTermsRoute><CheckoutPage /></StoreTermsRoute>} />
+        <Route path="/checkout/resultado" element={<StoreProtectedRoute><CheckoutResultPage /></StoreProtectedRoute>} />
+        <Route path="/orden-confirmada" element={<StoreProtectedRoute><OrderConfirmationPage /></StoreProtectedRoute>} />
+        <Route path="/seguimiento" element={<StoreProtectedRoute><OrderTrackingPage /></StoreProtectedRoute>} />
+        <Route path="/pedido/:trackingCode" element={<StoreProtectedRoute><OrderDetailPage /></StoreProtectedRoute>} />
         <Route path="/perfil" element={<StoreProtectedRoute><ProfilePage /></StoreProtectedRoute>} />
         <Route path="/perfil/editar" element={<StoreProtectedRoute><EditProfilePage /></StoreProtectedRoute>} />
         <Route path="/mis-pedidos" element={<StoreProtectedRoute><MyOrdersPage /></StoreProtectedRoute>} />
@@ -74,6 +77,7 @@ function StoreRoutes() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/nosotros" element={<NosotrosPage />} />
         <Route path="/politica-tratamiento-datos" element={<DataPolicyPage />} />
+        <Route path="/terminos-y-condiciones" element={<TermsPage />} />
         <Route path="*" element={<section className="max-w-xl mx-auto p-6"><h1 className="text-2xl font-bold">Página no encontrada</h1><a className="underline text-primary" href="/">Volver al inicio</a></section>} />
       </Routes>
       </PageBoundary>
@@ -118,6 +122,7 @@ function AdminRoutes() {
 function App() {
   return (
           <BrowserRouter>
+            <ScrollToTop />
             <Routes>
               <Route path="/admin/*" element={<div className="admin-theme"><AdminRoutes /></div>} />
               {/* Compatibilidad temporal con enlaces administrativos existentes. */}

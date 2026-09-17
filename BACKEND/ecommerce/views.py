@@ -9,18 +9,20 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 import hashlib
 import hmac
 import logging
 import requests
 
 from usuarios.permissions import IsAdminUser, IsNormalUserOrAdmin, IsAuthenticatedUser
+from usuarios.terms import CURRENT_TERMS_VERSION
 
 from .models import (
     Brand, Location, Category, SpecAttribute,
     Product, ProductImage, ProductStock, ProductSpec,
     Review, Order, OrderItem, TrackingEvent, WompiPaymentIntent,
-    UserAddress, Favorite, Notification, FCMDeviceToken,
+    UserAddress, Favorite, Notification, FCMDeviceToken, CartItem,
 )
 from .serializers import (
     BrandSerializer, LocationSerializer, CategorySerializer, SpecAttributeSerializer,
@@ -38,11 +40,90 @@ from .email_service import send_order_payment_confirmation
 logger = logging.getLogger(__name__)
 
 
+def cart_response(user):
+    return {'items': list(CartItem.objects.filter(user=user).values('product_id', 'quantity'))}
+
+
+def cart_quantity(value):
+    if isinstance(value, bool) or not str(value).isdigit():
+        return None
+    quantity = int(value)
+    return quantity if 1 <= quantity <= 999 else None
+
+
+class CartView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(cart_response(request.user))
+
+    @transaction.atomic
+    def post(self, request):
+        quantity = cart_quantity(request.data.get('quantity'))
+        if quantity is None:
+            return Response({'quantity': 'Debe ser un entero entre 1 y 999.'}, status=400)
+        try:
+            product_id = int(request.data.get('product_id'))
+        except (TypeError, ValueError):
+            return Response({'product_id': 'Producto inválido.'}, status=400)
+        # Lock the owner to serialize concurrent additions of the same product.
+        get_user_model().objects.select_for_update().get(pk=request.user.pk)
+        product = Product.objects.filter(pk=product_id).first()
+        if not product:
+            return Response({'product_id': 'Producto no encontrado.'}, status=404)
+        existing = CartItem.objects.filter(user=request.user, product=product).first()
+        new_quantity = quantity + (existing.quantity if existing else 0)
+        if not product.is_available or new_quantity > product.total_stock:
+            return Response({'quantity': 'No hay inventario suficiente.'}, status=400)
+        CartItem.objects.update_or_create(
+            user=request.user, product=product, defaults={'quantity': new_quantity},
+        )
+        return Response(cart_response(request.user), status=201)
+
+    def delete(self, request):
+        CartItem.objects.filter(user=request.user).delete()
+        return Response(status=204)
+
+
+class CartItemView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, product_id):
+        quantity = cart_quantity(request.data.get('quantity'))
+        if quantity is None:
+            return Response({'quantity': 'Debe ser un entero entre 1 y 999.'}, status=400)
+        item = CartItem.objects.select_for_update().filter(user=request.user, product_id=product_id).select_related('product').first()
+        if not item:
+            return Response({'error': 'Producto no encontrado en el carrito.'}, status=404)
+        if not item.product.is_available or quantity > item.product.total_stock:
+            return Response({'quantity': 'No hay inventario suficiente.'}, status=400)
+        item.quantity = quantity
+        item.save(update_fields=['quantity', 'updated_at'])
+        return Response(cart_response(request.user))
+
+    def delete(self, request, product_id):
+        deleted, _ = CartItem.objects.filter(user=request.user, product_id=product_id).delete()
+        if not deleted:
+            return Response({'error': 'Producto no encontrado en el carrito.'}, status=404)
+        return Response(status=204)
+
+
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
+def pagination_params(request):
+    try:
+        page = int(request.query_params.get('page', 1))
+        per_page = int(request.query_params.get('per_page', 20))
+    except (TypeError, ValueError):
+        raise ValidationError({'pagination': 'page y per_page deben ser enteros positivos.'})
+    if page < 1 or not 1 <= per_page <= 100:
+        raise ValidationError({'pagination': 'page debe ser positivo y per_page debe estar entre 1 y 100.'})
+    return page, per_page
+
+
 def paginate(queryset, request, serializer_class, many=True):
-    page     = int(request.query_params.get('page', 1))
-    per_page = int(request.query_params.get('per_page', 20))
+    page, per_page = pagination_params(request)
     offset   = (page - 1) * per_page
     total    = queryset.count()
     items    = queryset[offset: offset + per_page]
@@ -441,8 +522,7 @@ class ProductListView(APIView):
         )
 
         # Paginación
-        page     = int(request.query_params.get('page', 1))
-        per_page = int(request.query_params.get('per_page', 20))
+        page, per_page = pagination_params(request)
         offset   = (page - 1) * per_page
         total    = qs.count()
         items    = qs[offset: offset + per_page]
@@ -787,13 +867,9 @@ SHIPPING_COST      = 25_000    # COP — costo de envío estándar
 class OrderListView(APIView):
     """
     GET  → mis pedidos (usuario autenticado)
-    POST → crear pedido (invitado o autenticado)
+    POST → crear pedido (usuario autenticado)
     """
-
-    def get_permissions(self):
-        if self.request.method == 'POST':
-            return [AllowAny()]
-        return [IsNormalUserOrAdmin()]
+    permission_classes = [IsNormalUserOrAdmin]
 
     def get(self, request):
         qs = Order.objects.filter(user=request.user).prefetch_related(
@@ -803,6 +879,12 @@ class OrderListView(APIView):
 
     @transaction.atomic
     def post(self, request):
+        profile = getattr(request.user, 'usuario_rel', None)
+        if not profile or profile.terms_version != CURRENT_TERMS_VERSION or not profile.terms_accepted_at:
+            return Response(
+                {'error': 'Debes aceptar la versión vigente de los términos antes de comprar.', 'code': 'terms_acceptance_required'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = OrderCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -872,6 +954,8 @@ class OrderListView(APIView):
                     'subtotal': subtotal, 'shipping_cost': shipping, 'total': total,
                 },
             )
+            if not created and intent.user_id != request.user.id:
+                return Response({'error': 'La referencia de pago ya fue utilizada.'}, status=409)
             existing_items = [(item['product_id'], item['quantity']) for item in intent.checkout_data.get('items', [])]
             submitted_items = [(item['product_id'], item['quantity']) for item in items_data]
             if not created and (intent.total != total or existing_items != submitted_items):
@@ -980,12 +1064,12 @@ class OrderDetailView(APIView):
             except (ValueError, AttributeError):
                 order = qs.get(pk=pk)
 
-            # Solo admin o el propietario pueden ver la orden por ID numérico
-            if not str(pk).replace('-', '') == str(order.tracking_code).replace('-', ''):
-                if not request.user.is_authenticated:
-                    return Response({'error': 'Autenticación requerida'}, status=401)
-                if order.user_id and order.user_id != request.user.id and not request.user.is_staff:
-                    return Response({'error': 'No tienes permiso para ver este pedido'}, status=403)
+            # Los pedidos históricos de invitado conservan su enlace UUID.
+            is_tracking_link = str(pk).replace('-', '') == str(order.tracking_code).replace('-', '')
+            if not request.user.is_authenticated and (order.user_id or not is_tracking_link):
+                return Response({'error': 'Autenticación requerida'}, status=401)
+            if order.user_id and order.user_id != request.user.id and not request.user.is_staff:
+                return Response({'error': 'No tienes permiso para ver este pedido'}, status=403)
 
         except Order.DoesNotExist:
             return Response({'error': 'Pedido no encontrado'}, status=404)
@@ -1004,6 +1088,10 @@ class OrderByTrackingView(APIView):
             ).get(tracking_code=tracking_code)
         except Order.DoesNotExist:
             return Response({'error': 'Pedido no encontrado'}, status=404)
+        if order.user_id and not request.user.is_authenticated:
+            return Response({'error': 'Autenticación requerida'}, status=401)
+        if order.user_id and order.user_id != request.user.id and not request.user.is_staff:
+            return Response({'error': 'No tienes permiso para ver este pedido'}, status=403)
         return Response({'data': OrderSerializer(order, context={'request': request}).data})
 
 
@@ -1041,6 +1129,11 @@ class OrderStatusPublicView(APIView):
 
         if not order:
             return Response({'found': False})
+
+        if order.user_id and not request.user.is_authenticated:
+            return Response({'error': 'Autenticación requerida'}, status=401)
+        if order.user_id and order.user_id != request.user.id and not request.user.is_staff:
+            return Response({'error': 'No tienes permiso para ver este pedido'}, status=403)
 
         return Response({
             'found':         True,
@@ -1179,8 +1272,7 @@ class WompiWebhookView(APIView):
 
 
 class WompiPaymentStatusView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = [IsAuthenticatedUser]
     throttle_scope = 'payment_status'
 
     def get(self, request):
@@ -1192,6 +1284,8 @@ class WompiPaymentStatusView(APIView):
             intent = WompiPaymentIntent.objects.select_related('order').get(tracking_code=tracking_code)
         except (WompiPaymentIntent.DoesNotExist, ValueError):
             return Response({'error': 'payment intent not found'}, status=404)
+        if intent.user_id != request.user.id and not request.user.is_staff:
+            return Response({'error': 'No tienes permiso para consultar este pago'}, status=403)
 
         if transaction_id:
             if not settings.WOMPI_PUBLIC_KEY:

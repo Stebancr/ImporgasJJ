@@ -1,11 +1,10 @@
 import './styles/LoginPage.css'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Flame, Eye, EyeOff, Mail, Lock, User, Phone, ArrowRight, Shield, Truck, Headphones, CreditCard } from 'lucide-react'
 import { authService } from '../../services/auth'
+import api from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
-import { useCart } from '../../context/CartContext'
-import { productsService } from '../../services/products'
 
 type AuthMode = 'login' | 'register' | 'forgot'
 
@@ -13,11 +12,12 @@ function LoginPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { login } = useAuth()
-  const { addToCart } = useCart()
-  const [mode, setMode] = useState<AuthMode>('login')
+  const [mode, setMode] = useState<AuthMode>(searchParams.get('mode') === 'register' ? 'register' : 'login')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [termsAccepted, setTermsAccepted] = useState(false)
+  const [termsVersion, setTermsVersion] = useState('')
   const [form, setForm] = useState({
     email: '',
     password: '',
@@ -31,19 +31,10 @@ function LoginPage() {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  const restorePendingCartItem = async () => {
-    const raw = sessionStorage.getItem('pendingCartItem')
-    if (!raw) return
-    try {
-      const { productId, quantity } = JSON.parse(raw) as { productId: string; quantity: number }
-      const product = await productsService.getById(productId)
-      addToCart(product, quantity)
-    } catch {
-      // ignore errors restoring cart
-    } finally {
-      sessionStorage.removeItem('pendingCartItem')
-    }
-  }
+  useEffect(() => {
+    api.get<{ version: string }>('/user/terms').then((data) => setTermsVersion(data.version))
+      .catch(() => setError('No fue posible cargar los términos. Intenta actualizar la página.'))
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -53,11 +44,14 @@ function LoginPage() {
     try {
       if (mode === 'login') {
         await login(form.email, form.password)
-        await restorePendingCartItem()
         const requested = searchParams.get('redirect') || '/'
         const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
         navigate(redirect)
       } else if (mode === 'register') {
+        if (!termsAccepted || !termsVersion) {
+          setError('Debes leer y aceptar los Términos y Condiciones y la Política de Tratamiento de Datos.')
+          return
+        }
         if (form.password !== form.confirmPassword) {
           setError('Las contrasenas no coinciden')
           setIsLoading(false)
@@ -69,10 +63,12 @@ function LoginPage() {
           password: form.password,
           cc: form.cc,
           phone: form.phone,
+          termsVersion,
+          termsAccepted,
         })
         await login(form.email, form.password)
-        await restorePendingCartItem()
-        const redirect = searchParams.get('redirect') || '/'
+        const requested = searchParams.get('redirect') || '/'
+        const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
         navigate(redirect)
       }
     } catch (err: unknown) {
@@ -257,6 +253,11 @@ function LoginPage() {
                 </div>
               </div>
             )}
+
+            {mode === 'register' && <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#E5E7EB] bg-white p-4 text-sm leading-6 text-[#374151]">
+              <input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} className="mt-1 h-5 w-5 shrink-0 accent-[#001575]" />
+              <span>He leído y acepto los <Link to="/terminos-y-condiciones" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#001575] underline">Términos y Condiciones</Link> y la <Link to="/politica-tratamiento-datos" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#001575] underline">Política de Tratamiento de Datos</Link>.</span>
+            </label>}
 
             <button
               type="submit"

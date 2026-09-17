@@ -140,7 +140,7 @@ export default function Footer() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500">
             <p>© {new Date().getFullYear()} ImporGas JJ S.A.S — NIT 900739269-1. Todos los derechos reservados.</p>
             <div className="flex gap-4">
-              <a href="#" className="hover:text-[#F58634] transition-colors">Términos y Condiciones</a>
+              <Link to="/terminos-y-condiciones" className="hover:text-[#F58634] transition-colors">Términos y Condiciones</Link>
               <Link to="/politica-tratamiento-datos" className="hover:text-[#F58634] transition-colors">Política de Tratamiento de Datos</Link>
             </div>
           </div>

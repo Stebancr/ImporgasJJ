@@ -66,6 +66,8 @@ class Usuario(models.Model):
     estado = models.IntegerField(default=1)
     fecha_creacion = models.DateTimeField(auto_now_add=True, null=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True, null=True)
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=32, blank=True, default='')
 
     class Meta:
         managed = True
