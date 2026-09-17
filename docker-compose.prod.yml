@@ -122,6 +122,7 @@ services:
       traefik.http.routers.imporgas-https.priority: "100"
       traefik.http.routers.imporgas-https.entrypoints: https
       traefik.http.routers.imporgas-https.tls: "true"
+      traefik.http.routers.imporgas-https.tls.certresolver: letsencrypt
       traefik.http.routers.imporgas-https.service: imporgas
       traefik.http.services.imporgas.loadbalancer.server.port: "80"
     depends_on:
