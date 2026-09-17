@@ -26,7 +26,7 @@ y `X-Forwarded-Proto: https` al puerto 81; esto no valida el certificado públic
 ## 1. Requisitos
 
 - Servidor Linux con Docker Engine y Docker Compose v2.
-- Registros DNS `A` de `imporgasjj.com` y `www.imporgasjj.com` hacia `2.25.225.216`.
+- Registro DNS `A` de `djsolutions.io` hacia `2.25.225.216`.
 - Puertos TCP 80 y 443 permitidos en el firewall.
 - Recursos para PostgreSQL, Django, Celery y `qwen2.5:1.5b` de Ollama.
 - Credenciales reales de PostgreSQL, SMTP, Wompi y Meta en el servidor.
@@ -119,11 +119,8 @@ docker network inspect coolify
 curl --fail --head https://djsolutions.io/
 ```
 
-Comprobar la sintaxis del proxy de la aplicación:
-
-```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml exec nginx nginx -t
-```
+Comprobar la sintaxis del proxy de la aplicación después de iniciar `prod`,
+como se indica en la sección de verificaciones.
 
 ## 5. Levantar datos
 
@@ -136,30 +133,59 @@ docker exec imporgas-prod-postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$PO
 docker exec imporgas-prod-media wget -qO- http://127.0.0.1/health
 ```
 
-### Restauración opcional de desarrollo
+### Restaurar la base inicial desde el dump del proyecto
 
-Restaurar una sola vez sobre los volúmenes vacíos. Primero verificar el respaldo
-y que la base no contenga tablas:
+`BACKEND/scripts/posgress.sql` es un archivo **custom** de `pg_dump`, no SQL
+plano. Se creó con `pg_dump` 17.0 a partir de PostgreSQL 16.13 y contiene 54
+tablas con sus entradas de datos. Por ello la restauración usa temporalmente
+`pg_restore` 17 contra el servidor PostgreSQL 16. Ejecutarla una sola vez,
+después de que `prodData` esté saludable y **antes** de arrancar `prod`.
+Comprobar el archivo y confirmar que la base de destino está vacía:
 
 ```bash
-pg_restore --list backups/AAAA-MM-DD-HHMMSS/postgres.dump >/dev/null
+docker run --rm \
+  -v "$PWD/BACKEND/scripts/posgress.sql:/backup/posgress.sql:ro" \
+  postgres:17 pg_restore --file=/dev/null /backup/posgress.sql
 docker exec imporgas-prod-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from pg_tables where schemaname = '\''public'\''"'
 ```
 
-Si el resultado es `0`:
+Sólo si el resultado es `0`, restaurar sin cambiar el propietario del dump ni
+crear otra base llamada `imporgas_db`. El filtro elimina únicamente
+`SET transaction_timeout = 0;`, una instrucción emitida por el cliente 17 que
+el servidor 16 no reconoce. La transacción única revierte la restauración si
+alguna instrucción falla. Cargar las variables con el shell es necesario porque
+`docker run --env-file` conserva las comillas de `.env.prod` de manera distinta
+a Compose:
 
 ```bash
-cat backups/AAAA-MM-DD-HHMMSS/postgres.dump | \
-  docker exec -i imporgas-prod-postgres sh -c \
-  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-privileges'
+bash -n .env.prod
+set -a
+. ./.env.prod
+set +a
+docker run --rm --network imporgas_prod_network \
+  --env POSTGRES_USER --env POSTGRES_PASSWORD --env POSTGRES_DB \
+  -v "$PWD/BACKEND/scripts/posgress.sql:/backup/posgress.sql:ro" \
+  postgres:17 bash -euo pipefail -c '
+    pg_restore --no-owner --no-privileges --file=- /backup/posgress.sql |
+    sed "/^SET transaction_timeout = 0;$/d" |
+    PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 --single-transaction >/dev/null
+  '
 
-docker run --rm -i -v imporgas_prod_media_data:/restore alpine \
-  sh -c 'cd /restore && tar -xzf -' \
-  < backups/AAAA-MM-DD-HHMMSS/media.tar.gz
+docker exec imporgas-prod-postgres sh -ec '
+  tables=$(psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
+    "select count(*) from pg_tables where schemaname = '\''public'\''")
+  migrations=$(psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
+    "select count(*) from django_migrations")
+  echo "Tablas: $tables; migraciones registradas: $migrations"
+  test "$tables" -ge 54 && test "$migrations" -gt 0
+'
 ```
 
-No repetir la restauración sobre datos que ya estén en uso.
+No repetir la restauración sobre datos que ya estén en uso. Si el volumen ya
+contiene tablas, inspeccionar su origen y preservar sus datos antes de decidir
+si corresponde restaurar.
 
 ## 6. Construir y arrancar la aplicación
 
@@ -174,6 +200,8 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml exec ollama \
 
 docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm --user root backend \
   sh -c 'chown -R django:django /app/media /app/staticfiles'
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend \
+  python manage.py migrate --plan
 docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend \
   python manage.py migrate --noinput
 docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm backend \
@@ -217,13 +245,12 @@ los puertos 80 y 443. Los puertos
 ### Sitio, API, admin y media
 
 ```bash
-curl --fail --head http://imporgasjj.com
-curl --fail --head https://imporgasjj.com/
-curl --fail --head https://www.imporgasjj.com/
-curl --fail https://imporgasjj.com/api/health/
-curl --fail --head https://imporgasjj.com/admin/
-curl --fail --head https://imporgasjj.com/admin/login
-curl --fail --head https://imporgasjj.com/media/RUTA_DE_UN_ARCHIVO_REAL
+curl --fail --head http://djsolutions.io
+curl --fail --head https://djsolutions.io/
+curl --fail https://djsolutions.io/api/health/
+curl --fail --head https://djsolutions.io/admin/
+curl --fail --head https://djsolutions.io/admin/login/
+curl --fail --head https://djsolutions.io/media/RUTA_DE_UN_ARCHIVO_REAL
 ```
 
 Abrir `/admin/` en una sesión privada y confirmar la redirección a
@@ -234,7 +261,7 @@ Abrir `/admin/` en una sesión privada y confirmar la redirección a
 Configurar en Wompi producción el evento:
 
 ```text
-https://imporgasjj.com/api/webhooks/wompi
+https://djsolutions.io/api/webhooks/wompi
 ```
 
 Realizar una compra controlada de valor mínimo y verificar:
@@ -249,12 +276,12 @@ Realizar una compra controlada de valor mínimo y verificar:
 Registrar las URI aplicables:
 
 ```text
-https://imporgasjj.com/api/meta/callback/
-https://imporgasjj.com/api/meta/webhook/
-https://imporgasjj.com/api/meta/whatsapp/webhook/
-https://imporgasjj.com/api/meta/facebook/webhook/
-https://imporgasjj.com/api/meta/instagram/webhook/
-https://imporgasjj.com/api/meta/instagram/oauth/callback/
+https://djsolutions.io/api/meta/callback/
+https://djsolutions.io/api/meta/webhook/
+https://djsolutions.io/api/meta/whatsapp/webhook/
+https://djsolutions.io/api/meta/facebook/webhook/
+https://djsolutions.io/api/meta/instagram/webhook/
+https://djsolutions.io/api/meta/instagram/oauth/callback/
 ```
 
 Confirmar el `verify token`, conectar cada canal y enviar un mensaje entrante de
