@@ -112,7 +112,9 @@ No usar `docker compose down -v`, `docker volume rm` ni
 No ejecutar Certbot standalone: Coolify ya ocupa 80/443. Conservar el proxy y
 sus certificados. La configuración de Nginx de este proyecto sirve HTTP
 interno en 80 y recibe el protocolo original mediante X-Forwarded-Proto.
-La redirección pública HTTP a HTTPS se realiza en Traefik.
+Nginx sólo acepta ese header desde la subred `172.16.1.0/24` de `coolify`,
+verificada en el VPS; si se recrea esa red, comprobar su subred y actualizar
+`nginxprod/nginx.conf`. La redirección pública HTTP a HTTPS se realiza en Traefik.
 
 ```bash
 docker network inspect coolify
