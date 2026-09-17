@@ -11,22 +11,21 @@ también a la red externa `coolify`. Los routers `imporgas-*` tienen prioridad
 100 para dirigir ese dominio al proyecto. Esto sustituye la ruta del panel de
 Coolify en ese dominio; el servicio administrativo conserva su puerto 8000.
 
-El 16/09/2026 el DNS de djsolutions.io apuntaba a 2.57.91.91 (página aparcada de
-Hostinger), mientras el VPS es 2.25.225.216. Su certificado público estaba en el
-proveedor, no en el VPS. Hay que corregir DNS y suministrar el certificado
-existente al proxy, o autorizar expresamente su emisión. Las etiquetas del
-proyecto no configuran un certresolver ni solicitan certificados nuevos.
-No debe eliminarse la validación TLS para dar por aprobada una prueba HTTPS.
+El DNS autoritativo de `djsolutions.io` apunta al VPS `2.25.225.216`, y
+`www.djsolutions.io` es un CNAME del dominio principal. Coolify gestiona los
+certificados con su resolver `letsencrypt` existente. El router HTTPS de la
+aplicación usa ese resolver; `www` redirige al dominio principal. Verificar
+siempre la cadena TLS sin desactivar la validación del certificado.
 
-Pruebas directas: `http://2.25.225.216:81/` y `/admin/`. Django mantiene la
-redirección HTTPS: la API autenticada requiere completar DNS/SSL. Para probar
-el enrutamiento interno desde el servidor se puede enviar `Host: djsolutions.io`
-y `X-Forwarded-Proto: https` al puerto 81; esto no valida el certificado público.
+Pruebas directas: `http://2.25.225.216:81/` y `/admin/`. Django redirige las
+peticiones API directas por HTTP a HTTPS; probar la API autenticada mediante
+`https://djsolutions.io`.
 
 ## 1. Requisitos
 
 - Servidor Linux con Docker Engine y Docker Compose v2.
 - Registro DNS `A` de `djsolutions.io` hacia `2.25.225.216`.
+- Registro `www.djsolutions.io` como CNAME de `djsolutions.io`.
 - Puertos TCP 80 y 443 permitidos en el firewall.
 - Recursos para PostgreSQL, Django, Celery y `qwen2.5:1.5b` de Ollama.
 - Credenciales reales de PostgreSQL, SMTP, Wompi y Meta en el servidor.
@@ -119,6 +118,7 @@ verificada en el VPS; si se recrea esa red, comprobar su subred y actualizar
 ```bash
 docker network inspect coolify
 curl --fail --head https://djsolutions.io/
+curl --fail --head https://www.djsolutions.io/
 ```
 
 Comprobar la sintaxis del proxy de la aplicación después de iniciar `prod`,
@@ -249,6 +249,7 @@ los puertos 80 y 443. Los puertos
 ```bash
 curl --fail --head http://djsolutions.io
 curl --fail --head https://djsolutions.io/
+curl --fail --head https://www.djsolutions.io/
 curl --fail https://djsolutions.io/api/health/
 curl --fail --head https://djsolutions.io/admin/
 curl --fail --head https://djsolutions.io/admin/login/

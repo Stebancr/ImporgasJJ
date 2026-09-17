@@ -111,14 +111,14 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: coolify
-      traefik.http.routers.imporgas-http.rule: Host(`djsolutions.io`)
+      traefik.http.routers.imporgas-http.rule: Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
       traefik.http.routers.imporgas-http.priority: "100"
       traefik.http.routers.imporgas-http.entrypoints: http
       traefik.http.routers.imporgas-http.middlewares: imporgas-https
       traefik.http.routers.imporgas-http.service: imporgas
       traefik.http.middlewares.imporgas-https.redirectscheme.scheme: https
       traefik.http.middlewares.imporgas-https.redirectscheme.permanent: "true"
-      traefik.http.routers.imporgas-https.rule: Host(`djsolutions.io`)
+      traefik.http.routers.imporgas-https.rule: Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
       traefik.http.routers.imporgas-https.priority: "100"
       traefik.http.routers.imporgas-https.entrypoints: https
       traefik.http.routers.imporgas-https.tls: "true"
