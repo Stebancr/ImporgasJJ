@@ -11,6 +11,7 @@ import addressesService, { UserAddress } from '../../services/addresses'
 // La llave pública puede incluirse en el bundle; los secretos permanecen sólo
 // en Django. El backend también devuelve esta llave con la intención de pago.
 const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? ''
+const CASH_ON_DELIVERY_ENABLED = false
 
 interface CheckoutForm {
   email: string
@@ -127,6 +128,7 @@ function CheckoutPage() {
 
   const handleCashConfirm = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!CASH_ON_DELIVERY_ENABLED) return
     if (submitting) return
     setSubmitting(true)
     try {
@@ -144,7 +146,7 @@ function CheckoutPage() {
           quantity: i.quantity,
         })),
       })
-      clearCart()
+      await clearCart()
       navigate(`/orden-confirmada?tracking=${order.tracking_code}`)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
@@ -436,8 +438,8 @@ function CheckoutPage() {
                     </div>
                   </label>
 
-                  {/* Cash Option */}
-                  <label
+                  {/* Cash Option: retained for a future reactivation. */}
+                  {CASH_ON_DELIVERY_ENABLED && <label
                     className={`block p-4 border-2 rounded-xl cursor-pointer transition-colors ${form.paymentMethod === 'cash' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}
                   >
                     <div className="flex items-center gap-4">
@@ -457,7 +459,7 @@ function CheckoutPage() {
                         <p className="text-sm text-gray-500">Paga en efectivo al recibir tu pedido</p>
                       </div>
                     </div>
-                  </label>
+                  </label>}
                 </div>
 
                 {/* Wompi info */}
@@ -481,7 +483,7 @@ function CheckoutPage() {
                   >
                     Atrás
                   </button>
-                  {form.paymentMethod === 'cash' ? (
+                  {CASH_ON_DELIVERY_ENABLED && form.paymentMethod === 'cash' ? (
                     <button
                       type="button"
                       onClick={handleCashConfirm as unknown as React.MouseEventHandler}

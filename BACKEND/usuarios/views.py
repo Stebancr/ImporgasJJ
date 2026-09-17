@@ -5,12 +5,14 @@ import os
 from io import BytesIO
 from django.http import JsonResponse, FileResponse
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from usuarios.permissions import IsSuperAdmin, IsAdminUser, IsUsuarioEspecial, IsSuperUserOrAdmin
 from usuarios.models import Usuario, Credenciales, Cargo, Niveles, Regional
+from usuarios.terms import CURRENT_TERMS_VERSION
 from usuarios.serializers import UsuarioListadoSerializer, CargoSerializer, NivelesSerializer, RegionalSerializer
 from django.db.models import Q
 from openpyxl import Workbook
@@ -49,6 +51,9 @@ class Perfil(APIView):
         }
         if id is None:
             data["tipo_usuario"] = int(getattr(request.user, "tipo_usuario", 0) or 0)
+            data["terms_accepted_at"] = usuario.terms_accepted_at
+            data["terms_version"] = usuario.terms_version
+            data["current_terms_version"] = CURRENT_TERMS_VERSION
             location = getattr(request.user, "location", None)
             data["location_id"] = location.id if location else None
             data["location_name"] = location.name if location else None
@@ -94,6 +99,9 @@ class registerUsers(APIView):
         if missing:
             return JsonResponse({'error': f'Faltan campos requeridos: {missing}'}, status=400)
 
+        if payload.get('terms_accepted') is not True or payload.get('terms_version') != CURRENT_TERMS_VERSION:
+            return Response({'error': 'Debes aceptar los Términos y Condiciones y la Política de Tratamiento de Datos.'}, status=400)
+
         usuario_nombre = payload.get('usuario', '').strip()
         if Credenciales.objects.filter(usuario=usuario_nombre).exists():
             return JsonResponse({'error': f'El usuario "{usuario_nombre}" ya existe'}, status=400)
@@ -127,6 +135,8 @@ class registerUsers(APIView):
                     nivel_id=nivel_id,
                     regional_id=regional_id,
                     estado=1,
+                    terms_accepted_at=timezone.now(),
+                    terms_version=CURRENT_TERMS_VERSION,
                 )
 
                 cred = Credenciales(
@@ -147,7 +157,32 @@ class registerUsers(APIView):
             return JsonResponse({'error': str(e)}, status=500)
 
 
+class TermsInfo(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response({'version': CURRENT_TERMS_VERSION, 'is_draft': True})
+
+
+class AcceptTerms(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.data.get('terms_accepted') is not True or request.data.get('terms_version') != CURRENT_TERMS_VERSION:
+            return Response({'error': 'Debes aceptar la versión vigente de los términos.'}, status=400)
+        usuario = getattr(request.user, 'usuario_rel', None)
+        if not usuario:
+            return Response({'error': 'El usuario no tiene perfil asociado.'}, status=400)
+        if usuario.terms_version != CURRENT_TERMS_VERSION or not usuario.terms_accepted_at:
+            usuario.terms_version = CURRENT_TERMS_VERSION
+            usuario.terms_accepted_at = timezone.now()
+            usuario.save(update_fields=['terms_version', 'terms_accepted_at', 'fecha_actualizacion'])
+        return Response({'terms_version': usuario.terms_version, 'terms_accepted_at': usuario.terms_accepted_at})
+
+
 class Register(APIView):
+    permission_classes = [IsAdminUser]
 
     def post(self, request, *args, **kwargs):
         payload = request.data if hasattr(request, 'data') else None

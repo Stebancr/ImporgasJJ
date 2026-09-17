@@ -2,6 +2,8 @@ from django.urls import path
 from usuarios import views
 
 urlpatterns = [
+    path('terms', views.TermsInfo.as_view(), name='terms-info'),
+    path('terms/accept', views.AcceptTerms.as_view(), name='terms-accept'),
     path("registerUsers", views.registerUsers.as_view(), name="register-users"),
     path("register", views.Register.as_view(), name="register"),
     path("register-public", views.registerUsers.as_view(), name="register-public"),

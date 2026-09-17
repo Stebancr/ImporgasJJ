@@ -163,7 +163,7 @@ function OrderConfirmationPage() {
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
-              onClick={() => navigate(`/seguimiento-pedido?tracking=${order.tracking_code}`)}
+              onClick={() => navigate(`/seguimiento?code=${encodeURIComponent(order.tracking_code)}`)}
               className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg hover:shadow-[#001575]/25 transition-all"
             >
               <Package className="w-5 h-5" />

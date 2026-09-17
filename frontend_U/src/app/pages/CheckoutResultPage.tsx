@@ -27,7 +27,7 @@ export default function CheckoutResultPage() {
     try {
       const data = await paymentsService.getPaymentStatus(tracking, transactionId || undefined)
       setResult(data)
-      if (data.payment_status === 'APPROVED') clearCart()
+      if (data.payment_status === 'APPROVED') await clearCart()
       if (data.payment_status !== 'PENDING') sessionStorage.removeItem('pendingWompiOrder')
     } catch (err) { setError(err instanceof Error ? err.message : 'No fue posible verificar el pago') }
     finally { setLoading(false) }

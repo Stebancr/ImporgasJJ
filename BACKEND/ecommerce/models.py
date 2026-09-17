@@ -332,6 +332,21 @@ class Review(models.Model):
 
 
 # ─────────────────────────────────────────────
+#  CART
+# ─────────────────────────────────────────────
+
+class CartItem(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='cart_items')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='cart_items')
+    quantity = models.PositiveIntegerField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'cart_items'
+        constraints = [models.UniqueConstraint(fields=['user', 'product'], name='uniq_cart_user_product')]
+
+
+# ─────────────────────────────────────────────
 #  ORDER
 # ─────────────────────────────────────────────
 

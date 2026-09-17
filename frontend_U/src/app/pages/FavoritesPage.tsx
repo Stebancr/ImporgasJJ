@@ -18,7 +18,7 @@ export default function FavoritesPage() {
       minimumFractionDigits: 0,
     }).format(price)
 
-  const handleAddToCart = (favorite: any) => {
+  const handleAddToCart = async (favorite: any) => {
     const product: Product = {
       id: favorite.product.id.toString(),
       name: favorite.product.name,
@@ -36,7 +36,7 @@ export default function FavoritesPage() {
       discount: favorite.product.discount_percentage,
       slug: favorite.product.slug || '',
     }
-    addToCart(product, 1)
+    if (!await addToCart(product, 1)) return
     setAddedToCartIds(prev => [...prev, favorite.id])
     setTimeout(() => {
       setAddedToCartIds(prev => prev.filter(id => id !== favorite.id))

@@ -15,8 +15,10 @@ services:
       - ./BACKEND:/app
       - media_data:/app/media
     env_file:
-      - .env
+      - path: .env
+        format: raw
     environment:
+      - ALLOWED_HOSTS=localhost,127.0.0.1,backend,nginx,${ALLOWED_HOSTS:-}
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -50,7 +52,8 @@ services:
       - ./BACKEND:/app
       - media_data:/app/media
     env_file:
-      - .env
+      - path: .env
+        format: raw
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
@@ -75,7 +78,8 @@ services:
     volumes:
       - ./BACKEND:/app
     env_file:
-      - .env
+      - path: .env
+        format: raw
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2

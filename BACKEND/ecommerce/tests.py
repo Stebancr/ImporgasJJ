@@ -8,7 +8,9 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from usuarios.models import Credenciales, Usuario
-from .models import Brand, Category, FCMDeviceToken, Location, Order, Product, ProductStock, Review, WompiPaymentIntent
+from usuarios.terms import CURRENT_TERMS_VERSION
+from django.utils import timezone
+from .models import Brand, CartItem, Category, FCMDeviceToken, Location, Order, Product, ProductStock, Review, WompiPaymentIntent
 from .email_service import send_order_payment_confirmation
 
 
@@ -54,6 +56,11 @@ class ProductReviewAPITests(APITestCase):
 
 class EcommercePurchaseFlowTests(APITestCase):
     def setUp(self):
+        profile = Usuario.objects.create(
+            cedula='buyer-1', nombre_completo='Cliente Compra', correo='compra@example.com',
+            terms_accepted_at=timezone.now(), terms_version=CURRENT_TERMS_VERSION,
+        )
+        self.user = Credenciales.objects.create(usuario='buyer', usuario_rel=profile, estado=1, tipo_usuario=0)
         brand = Brand.objects.create(name='Marca Compra')
         category = Category.objects.create(name='Categoría Compra')
         self.product = Product.objects.create(
@@ -76,6 +83,7 @@ class EcommercePurchaseFlowTests(APITestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.data['data']['total_stock'], 4)
 
+        self.client.force_authenticate(self.user)
         response = self.client.post(reverse('order-list'), self.payload, format='json')
         self.assertEqual(response.status_code, 201)
         order = Order.objects.get(pk=response.data['data']['id'])
@@ -86,10 +94,54 @@ class EcommercePurchaseFlowTests(APITestCase):
         self.assertEqual(tracked.status_code, 200)
         self.assertEqual(tracked.data['data']['order_number'], order.order_number)
 
+    def test_product_pagination_rejects_invalid_values_without_server_error(self):
+        for query in ('?per_page=0', '?per_page=abc', '?page=-1'):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get(reverse('product-list') + query).status_code, 400)
+
+    def test_cart_requires_login_and_supports_item_lifecycle(self):
+        cart_url = reverse('cart')
+        item_url = reverse('cart-item', args=[self.product.id])
+        self.assertEqual(self.client.get(cart_url).status_code, 401)
+        self.assertEqual(self.client.post(cart_url, {'product_id': self.product.id, 'quantity': 1}, format='json').status_code, 401)
+        self.assertFalse(CartItem.objects.exists())
+
+        self.client.force_authenticate(self.user)
+        added = self.client.post(cart_url, {'product_id': self.product.id, 'quantity': 1}, format='json')
+        self.assertEqual(added.status_code, 201)
+        self.assertEqual(added.data['items'][0]['quantity'], 1)
+        changed = self.client.patch(item_url, {'quantity': 3}, format='json')
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(changed.data['items'][0]['quantity'], 3)
+        self.assertEqual(self.client.patch(item_url, {'quantity': 5}, format='json').status_code, 400)
+        self.assertEqual(CartItem.objects.get(user=self.user).quantity, 3)
+        self.assertEqual(self.client.delete(item_url).status_code, 204)
+        self.assertFalse(CartItem.objects.exists())
+
     def test_zero_quantity_never_creates_order(self):
+        self.client.force_authenticate(self.user)
         self.payload['items'][0]['quantity'] = 0
         response = self.client.post(reverse('order-list'), self.payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+    def test_anonymous_cannot_create_order_or_payment_intent(self):
+        response = self.client.post(reverse('order-list'), self.payload, format='json')
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(Order.objects.exists())
+        self.assertEqual(ProductStock.objects.get(product=self.product).quantity, 4)
+        self.payload.update(payment_method='wompi', wompi_reference='ANON-REF')
+        response = self.client.post(reverse('order-list'), self.payload, format='json')
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(WompiPaymentIntent.objects.exists())
+
+    def test_old_terms_must_be_accepted_before_checkout(self):
+        self.client.force_authenticate(self.user)
+        self.user.usuario_rel.terms_version = '0.9'
+        self.user.usuario_rel.save(update_fields=['terms_version'])
+        response = self.client.post(reverse('order-list'), self.payload, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data['code'], 'terms_acceptance_required')
         self.assertFalse(Order.objects.exists())
 
 
@@ -102,6 +154,12 @@ class EcommercePurchaseFlowTests(APITestCase):
 )
 class WompiPaymentTests(APITestCase):
     def setUp(self):
+        profile = Usuario.objects.create(
+            cedula='wompi-buyer', nombre_completo='Cliente Wompi', correo='wompi@example.com',
+            terms_accepted_at=timezone.now(), terms_version=CURRENT_TERMS_VERSION,
+        )
+        self.user = Credenciales.objects.create(usuario='wompi-buyer', usuario_rel=profile, estado=1, tipo_usuario=0)
+        self.client.force_authenticate(self.user)
         brand = Brand.objects.create(name='Wompi Brand')
         category = Category.objects.create(name='Wompi Category')
         self.product = Product.objects.create(
@@ -113,7 +171,7 @@ class WompiPaymentTests(APITestCase):
 
     def create_intent(self, suffix):
         return WompiPaymentIntent.objects.create(
-            reference=f'REF-{suffix}', subtotal=Decimal('125000.00'), shipping_cost=0,
+            user=self.user, reference=f'REF-{suffix}', subtotal=Decimal('125000.00'), shipping_cost=0,
             total=Decimal('125000.00'), checkout_data={
                 'customer_name': 'Cliente Wompi', 'customer_email': 'wompi@example.com',
                 'shipping_address': 'Dirección de prueba',
