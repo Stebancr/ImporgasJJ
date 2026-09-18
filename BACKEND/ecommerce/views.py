@@ -73,8 +73,8 @@ class CartView(APIView):
             return Response({'product_id': 'Producto no encontrado.'}, status=404)
         existing = CartItem.objects.filter(user=request.user, product=product).first()
         new_quantity = quantity + (existing.quantity if existing else 0)
-        if not product.is_available or new_quantity > product.total_stock:
-            return Response({'quantity': 'No hay inventario suficiente.'}, status=400)
+        if not product.is_available or new_quantity > 999:
+            return Response({'quantity': 'Producto no disponible o cantidad mayor a 999.'}, status=400)
         CartItem.objects.update_or_create(
             user=request.user, product=product, defaults={'quantity': new_quantity},
         )
@@ -96,8 +96,8 @@ class CartItemView(APIView):
         item = CartItem.objects.select_for_update().filter(user=request.user, product_id=product_id).select_related('product').first()
         if not item:
             return Response({'error': 'Producto no encontrado en el carrito.'}, status=404)
-        if not item.product.is_available or quantity > item.product.total_stock:
-            return Response({'quantity': 'No hay inventario suficiente.'}, status=400)
+        if not item.product.is_available:
+            return Response({'quantity': 'Producto no disponible.'}, status=400)
         item.quantity = quantity
         item.save(update_fields=['quantity', 'updated_at'])
         return Response(cart_response(request.user))
@@ -239,7 +239,9 @@ class LocationListView(APIView):
 
     def get(self, request):
         qs = Location.objects.all()
-        if request.query_params.get('is_active'):
+        if getattr(request.user, 'tipo_usuario', 0) == 0:
+            qs = qs.filter(is_active=True)
+        elif request.query_params.get('is_active'):
             qs = qs.filter(is_active=request.query_params['is_active'].lower() == 'true')
         return paginate(qs, request, LocationSerializer)
 
@@ -265,7 +267,7 @@ class LocationDetailView(APIView):
 
     def get(self, request, pk):
         obj = self._get(pk)
-        if not obj:
+        if not obj or (getattr(request.user, 'tipo_usuario', 0) == 0 and not obj.is_active):
             return Response({'error': 'Not found'}, status=404)
         return Response({'data': LocationSerializer(obj).data})
 
@@ -683,10 +685,7 @@ class ProductImageDetailView(APIView):
 # ─── Product Stock ────────────────────────────────────────────────────────────
 
 class ProductStockListView(APIView):
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [AllowAny()]
-        return [IsAdminUser()]
+    permission_classes = [IsAdminUser]
 
     def get(self, request, product_id):
         entries = ProductStock.objects.filter(product_id=product_id).select_related('location')
@@ -890,6 +889,8 @@ class OrderListView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         data       = serializer.validated_data
+        if data['payment_method'] == 'cash' and not settings.CASH_ON_DELIVERY_ENABLED:
+            return Response({'payment_method': 'El pago contra entrega está deshabilitado.'}, status=400)
         items_data = data['items']
         if data['payment_method'] == 'wompi' and not settings.WOMPI_INTEGRITY_SECRET:
             return Response(
@@ -908,11 +909,6 @@ class OrderListView(APIView):
                 errors.append(f"Producto {pid} no disponible.")
                 continue
 
-            if p.total_stock < item['quantity']:
-                errors.append(
-                    f"Stock insuficiente para '{p.name}': "
-                    f"disponible {p.total_stock}, solicitado {item['quantity']}."
-                )
             products[pid] = p
 
         if errors:
@@ -1200,7 +1196,7 @@ def _create_approved_order(intent):
         wompi_transaction_id=intent.transaction_id or '', wompi_status=Order.WompiStatus.APPROVED,
         status=Order.Status.PAID,
     )
-    stock_shortages = []
+    needs_assignment = False
     for item in data['items']:
         product = Product.objects.select_for_update().get(pk=item['product_id'])
         quantity = item['quantity']
@@ -1209,7 +1205,7 @@ def _create_approved_order(intent):
             unit_price=item.get('unit_price', product.price),
         )
         remaining = quantity
-        for stock_entry in ProductStock.objects.filter(product=product, quantity__gt=0).order_by('-quantity').select_for_update():
+        for stock_entry in ProductStock.objects.filter(product=product, quantity__gt=0).order_by('-quantity', 'pk').select_for_update():
             deduct = min(stock_entry.quantity, remaining)
             stock_entry.quantity -= deduct
             stock_entry.save()
@@ -1217,10 +1213,21 @@ def _create_approved_order(intent):
             if remaining == 0:
                 break
         if remaining:
-            stock_shortages.append(f'{product.name}: {remaining} unidad(es)')
+            needs_assignment = True
+            # Record the shortfall in a dedicated inactive location, preserving
+            # the actual quantities at physical branches and total_stock.
+            deficit_location, _ = Location.objects.get_or_create(
+                name='Pedidos web pendientes de asignación',
+                defaults={'address': 'Ubicación virtual', 'city': 'Pedidos web', 'is_active': False},
+            )
+            deficit, _ = ProductStock.objects.select_for_update().get_or_create(
+                product=product, location=deficit_location, defaults={'quantity': 0},
+            )
+            deficit.quantity -= remaining
+            deficit.save(update_fields=['quantity', 'updated_at'])
     description = 'Pago confirmado por Wompi. Orden creada.'
-    if stock_shortages:
-        description += ' Requiere gestión de inventario: ' + ', '.join(stock_shortages)
+    if needs_assignment:
+        description += ' Inventario pendiente de asignación.'
     TrackingEvent.objects.create(order=order, status=Order.Status.PAID, description=description)
     intent.order = order
     intent.processed_at = timezone.now()

@@ -122,7 +122,7 @@ function OrderTrackingPage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-6">
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Número de pedido</p>
-                  <p className="text-xl font-bold text-gray-900">{result.order_number}</p>
+                  <p className="break-all text-xl font-bold text-gray-900">{result.order_number}</p>
                 </div>
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#e8ecff] text-[#001575] rounded-full text-sm font-semibold border border-[#c0caef]">
                   <CheckCircle className="w-4 h-4" />
@@ -178,7 +178,7 @@ function OrderTrackingPage() {
               {result.tracking_code && (
                 <div className="mt-5 pt-5 border-t border-gray-100 text-center">
                   <p className="text-xs text-gray-400 mb-1">Código de seguimiento</p>
-                  <p className="font-mono text-sm text-gray-600">{result.tracking_code}</p>
+                  <p className="break-all font-mono text-sm text-gray-600">{result.tracking_code}</p>
                 </div>
               )}
             </div>

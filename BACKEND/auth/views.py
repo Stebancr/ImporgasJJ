@@ -1,5 +1,6 @@
 from rest_framework_simplejwt.views import TokenObtainPairView
-from auth.serializers import TokenLMSSerializer
+from rest_framework_simplejwt.views import TokenRefreshView
+from auth.serializers import TokenLMSSerializer, PasswordVersionRefreshSerializer
 
 
 class TokenLMSView(TokenObtainPairView):
@@ -9,3 +10,7 @@ class TokenLMSView(TokenObtainPairView):
     """
     serializer_class = TokenLMSSerializer
     throttle_scope = 'login'
+
+
+class PasswordVersionRefreshView(TokenRefreshView):
+    serializer_class = PasswordVersionRefreshSerializer

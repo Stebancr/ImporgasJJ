@@ -50,7 +50,7 @@ def _csv_env(name, default=''):
 
 ALLOWED_HOSTS = _csv_env(
     'ALLOWED_HOSTS',
-    'imporgasjj.com,www.imporgasjj.com,.djsolutions.io,djsolutions.io,www.djsolutions.io,2.25.225.216',
+    'localhost,127.0.0.1,backend,nginx',
 )
 
 APPEND_SLASH = False
@@ -90,7 +90,7 @@ MIDDLEWARE = [
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = _csv_env(
     'CORS_ALLOWED_ORIGINS',
-    'http://localhost,https://djsolutions.io, http://localhost:81,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:81,http://127.0.0.1:3000',
+    'http://localhost,http://localhost:81,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:81,http://127.0.0.1:3000',
 )
 CSRF_TRUSTED_ORIGINS = _csv_env(
     'CSRF_TRUSTED_ORIGINS',
@@ -120,7 +120,7 @@ SIMPLE_JWT = {
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'auth.authentication.PasswordVersionJWTAuthentication',
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
@@ -134,6 +134,8 @@ REST_FRAMEWORK = {
         'anon': config('THROTTLE_ANON_RATE', default='60/min'),
         'user': config('THROTTLE_USER_RATE', default='300/min'),
         'login': config('THROTTLE_LOGIN_RATE', default='5/min'),
+        'password_reset_request': config('THROTTLE_PASSWORD_RESET_REQUEST_RATE', default='5/min'),
+        'password_reset_confirm': config('THROTTLE_PASSWORD_RESET_CONFIRM_RATE', default='10/min'),
         'chat': config('THROTTLE_CHAT_RATE', default='20/min'),
         'reviews': config('THROTTLE_REVIEW_RATE', default='30/min'),
         'payment_status': config('THROTTLE_PAYMENT_RATE', default='30/min'),
@@ -311,6 +313,8 @@ EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=False, cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='no-reply@regencysa.net')
+PASSWORD_RESET_TIMEOUT = 3600
+CASH_ON_DELIVERY_ENABLED = config('CASH_ON_DELIVERY_ENABLED', default=False, cast=bool)
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=30, cast=int)
 
 # Email Configuration - Exámenes Médicos (360 CloudRegency)

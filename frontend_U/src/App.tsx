@@ -17,6 +17,7 @@ const OrderDetailPage = lazy(() => import('./app/pages/OrderDetailPage'))
 const ProfilePage = lazy(() => import('./app/pages/ProfilePage'))
 const ContactPage = lazy(() => import('./app/pages/ContactPage'))
 const LoginPage = lazy(() => import('./app/pages/LoginPage'))
+const ResetPasswordPage = lazy(() => import('./app/pages/ResetPasswordPage'))
 const NosotrosPage = lazy(() => import('./app/pages/NosotrosPage'))
 const DataPolicyPage = lazy(() => import('./app/pages/DataPolicyPage'))
 const TermsPage = lazy(() => import('./app/pages/TermsPage'))
@@ -75,6 +76,7 @@ function StoreRoutes() {
         <Route path="/notificaciones" element={<StoreProtectedRoute><NotificationsPage /></StoreProtectedRoute>} />
         <Route path="/contacto" element={<ContactPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/restablecer-contrasena/:uid/:token" element={<ResetPasswordPage />} />
         <Route path="/nosotros" element={<NosotrosPage />} />
         <Route path="/politica-tratamiento-datos" element={<DataPolicyPage />} />
         <Route path="/terminos-y-condiciones" element={<TermsPage />} />

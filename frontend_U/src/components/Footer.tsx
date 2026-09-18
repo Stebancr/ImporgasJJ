@@ -114,8 +114,8 @@ export default function Footer() {
                   <div className="w-10 h-10 bg-white/5 group-hover:bg-[#F58634] rounded-lg flex items-center justify-center transition-colors flex-shrink-0">
                     <Mail className="w-5 h-5 text-[#F58634] group-hover:text-white transition-colors" />
                   </div>
-                  <div>
-                    <p className="text-white font-medium">gerenciaimporgasjj213@gmail.com</p>
+                  <div className="min-w-0">
+                    <p className="text-white font-medium break-all">gerenciaimporgasjj213@gmail.com</p>
                     <p className="text-xs">Respuesta en 24h</p>
                   </div>
                 </a>

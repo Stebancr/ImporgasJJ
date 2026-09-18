@@ -475,7 +475,7 @@ function CheckoutPage() {
                   </div>
                 )}
 
-                <div className="flex gap-4 mt-4">
+                <div className="flex flex-col sm:flex-row gap-4 mt-4">
                   <button
                     type="button"
                     onClick={() => setStep('info')}

@@ -16,13 +16,15 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from rest_framework_simplejwt.views import TokenRefreshView
-from auth.views import TokenLMSView
+from auth.views import TokenLMSView, PasswordVersionRefreshView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('auth/token/', TokenLMSView.as_view(), name='token_obtain_pair'),
-    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # Alias sin barra para proxies que normalizan la URL y redirigen los POST.
+    path('auth/token', TokenLMSView.as_view(), name='token_obtain_pair_no_slash'),
+    path('auth/token/refresh/', PasswordVersionRefreshView.as_view(), name='token_refresh'),
+    path('auth/token/refresh', PasswordVersionRefreshView.as_view(), name='token_refresh_no_slash'),
     path('user/', include('usuarios.urls')),
     path('ecommerce/', include('ecommerce.urls')),  # kept for legacy
     path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.

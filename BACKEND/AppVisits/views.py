@@ -134,12 +134,24 @@ class VisitaListCreateView(APIView):
                 pass
 
         search = request.query_params.get('search', '').strip()
+        search_field = request.query_params.get('search_field', 'all')
+        if search_field not in ('all', 'document', 'phone'):
+            return Response({'search_field': 'Filtro de búsqueda inválido.'}, status=400)
+        if search_field != 'all' and search and (not search.isascii() or not search.isdecimal() or len(search) > 15):
+            return Response({'search': 'Usa hasta 15 dígitos para buscar documento o teléfono.'}, status=400)
         if search:
-            qs = qs.filter(
-                Q(cliente__nombre__icontains=search) |
-                Q(cliente__direccion__icontains=search) |
-                Q(numero_tarea__icontains=search)
-            )
+            if search_field == 'document':
+                qs = qs.filter(cliente__identificacion__icontains=search)
+            elif search_field == 'phone':
+                qs = qs.filter(cliente__telefono__icontains=search)
+            else:
+                qs = qs.filter(
+                    Q(cliente__nombre__icontains=search) |
+                    Q(cliente__identificacion__icontains=search) |
+                    Q(cliente__telefono__icontains=search) |
+                    Q(cliente__direccion__icontains=search) |
+                    Q(numero_tarea__icontains=search)
+                )
 
         serializer = VisitaListSerializer(qs, many=True)
         return Response(serializer.data)

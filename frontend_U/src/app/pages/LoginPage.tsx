@@ -1,21 +1,24 @@
 import './styles/LoginPage.css'
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Flame, Eye, EyeOff, Mail, Lock, User, Phone, ArrowRight, Shield, Truck, Headphones, CreditCard } from 'lucide-react'
 import { authService } from '../../services/auth'
 import api from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
+import { readPendingCartIntent } from '../../context/pendingCartIntent'
 
 type AuthMode = 'login' | 'register' | 'forgot'
 
 function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const { login } = useAuth()
   const [mode, setMode] = useState<AuthMode>(searchParams.get('mode') === 'register' ? 'register' : 'login')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState((location.state as { message?: string } | null)?.message || '')
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [termsVersion, setTermsVersion] = useState('')
   const [form, setForm] = useState({
@@ -40,13 +43,14 @@ function LoginPage() {
     e.preventDefault()
     if (isLoading) return
     setError('')
+    setNotice('')
     setIsLoading(true)
     try {
       if (mode === 'login') {
         await login(form.email, form.password)
         const requested = searchParams.get('redirect') || '/'
         const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
-        navigate(redirect)
+        if (!readPendingCartIntent()) navigate(redirect)
       } else if (mode === 'register') {
         if (!termsAccepted || !termsVersion) {
           setError('Debes leer y aceptar los Términos y Condiciones y la Política de Tratamiento de Datos.')
@@ -69,7 +73,10 @@ function LoginPage() {
         await login(form.email, form.password)
         const requested = searchParams.get('redirect') || '/'
         const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
-        navigate(redirect)
+        if (!readPendingCartIntent()) navigate(redirect)
+      } else if (mode === 'forgot') {
+        await api.post('/user/password/reset/request', { email: form.email })
+        setNotice('Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.')
       }
     } catch (err: unknown) {
       const fetchErr = err as { message?: string }
@@ -110,6 +117,7 @@ function LoginPage() {
                 {error}
               </div>
             )}
+            {notice && <div role="status" className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl">{notice}</div>}
             {mode === 'register' && (
               <div>
                 <label htmlFor="customer-name" className="block text-sm font-medium text-[#4B5563] mb-2">

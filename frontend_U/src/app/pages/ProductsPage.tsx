@@ -414,7 +414,7 @@ function ProductsPage() {
 
       {/* Mobile Filter Modal */}
       {isFilterOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-[60] lg:hidden">
           <div 
             className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
             onClick={() => setIsFilterOpen(false)} 

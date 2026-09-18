@@ -68,8 +68,8 @@ function toProduct(p: ApiProduct): Product {
     reviewsCount: p.reviews_count,
     stock: p.total_stock,
     specifications: specs,
-    // `is_available` controla la publicación; para comprar también debe haber inventario.
-    isAvailable: p.is_available && Number(p.total_stock) > 0,
+    // La disponibilidad comercial es independiente del inventario físico.
+    isAvailable: p.is_available,
     isFeatured: p.is_featured,
     discount: p.discount_percentage || undefined,
     slug: p.slug,
