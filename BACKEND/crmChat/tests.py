@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from asgiref.sync import async_to_sync
 from channels.testing import WebsocketCommunicator
 from django.test import override_settings
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 from django.utils import timezone
@@ -32,7 +33,7 @@ from .models import (
 from usuarios.models import Credenciales
 from .assignment import assign_session_automatically
 from .apps.meta.webhooks import normalize_payload
-from .apps.meta.services import MetaAPIError, dispatch_outbound_message, secret_store
+from .apps.meta.services import MetaAPIError, dispatch_outbound_message, secret_store, disconnect_integration
 from .apps.meta.oauth import REQUIRED_SCOPES
 from .ollama_service import ollama_service
 from .tasks import (
@@ -567,6 +568,17 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(response.status_code, 401)
         self.assertFalse(WebhookEvent.objects.exists())
 
+    def test_invalid_payload_and_wrong_channel_alias_return_400(self):
+        self.assertEqual(self._signed_post(payload={'object': 'whatsapp_business_account', 'entry': 'invalid'}).status_code, 400)
+        body = json.dumps(self.payload, separators=(',', ':')).encode()
+        signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+        response = self.client.post(
+            '/api/meta/instagram/webhook/', data=body, content_type='application/json',
+            HTTP_X_HUB_SIGNATURE_256=signature,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(WebhookEvent.objects.exists())
+
     @patch('crmChat.apps.meta.views.process_meta_webhook_task.delay')
     def test_signed_whatsapp_alias_accepts_post(self, process_task):
         body = json.dumps(self.payload, separators=(',', ':')).encode()
@@ -591,7 +603,42 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(message.text, 'Hola desde WhatsApp')
         self.assertEqual(message.direction, 'inbound')
         self.assertEqual(message.session.channel, 'whatsapp')
+        self.assertEqual(WebhookEvent.objects.get().integration_id, self.integration.id)
         read_receipt.assert_called_once_with(message.id)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    def test_whatsapp_requires_matching_waba_and_phone_and_reconnects_to_new_account(self, _receipt):
+        self.assertEqual(self._signed_post().status_code, 200)
+        old_session = ChatSession.objects.get(channel='whatsapp')
+        disconnect_integration(self.integration)
+        self.integration.refresh_from_db()
+        self.assertFalse(self.integration.active)
+        self.assertEqual(old_session.messages.count(), 1)
+
+        rejected = json.loads(json.dumps(self.payload))
+        rejected['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.old-after-disconnect'
+        self.assertEqual(self._signed_post(rejected).status_code, 200)
+        self.assertFalse(ChatMessage.objects.filter(external_message_id='wamid.old-after-disconnect').exists())
+
+        new_integration = ChannelIntegration.objects.create(
+            name='Número nuevo', channel='whatsapp', active=True,
+            external_account_id='waba-2', phone_number_id='phone-2',
+        )
+        new_payload = json.loads(json.dumps(self.payload))
+        new_payload['entry'][0]['id'] = 'waba-2'
+        new_payload['entry'][0]['changes'][0]['value']['metadata']['phone_number_id'] = 'phone-2'
+        new_payload['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.new-account'
+        self.assertEqual(self._signed_post(new_payload).status_code, 200)
+        new_message = ChatMessage.objects.get(external_message_id='wamid.new-account')
+        self.assertEqual(new_message.session.integration_id, new_integration.pk)
+        old_session.refresh_from_db()
+        self.assertEqual(old_session.integration_id, self.integration.pk)
+
+        mismatched = json.loads(json.dumps(new_payload))
+        mismatched['entry'][0]['id'] = 'waba-1'
+        mismatched['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.mixed-ids'
+        self.assertEqual(self._signed_post(mismatched).status_code, 200)
+        self.assertFalse(ChatMessage.objects.filter(external_message_id='wamid.mixed-ids').exists())
 
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
     def test_new_inbound_message_creates_new_whatsapp_session_without_old_history(self, _receipt):
@@ -659,6 +706,7 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
     """Prueba OAuth/selección sin ejecutar solicitudes reales contra Meta."""
 
     def setUp(self):
+        cache.clear()
         self.admin_user = Credenciales.objects.create(usuario='oauth_admin', tipo_usuario=1, estado=1)
         self.other_admin = Credenciales.objects.create(usuario='oauth_other', tipo_usuario=1, estado=1)
         self.client.force_authenticate(self.admin_user)
@@ -748,7 +796,17 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         self.assertNotIn('sensitive', response['Location'])
         self.assertFalse(MetaConnection.objects.exists())
 
-    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(self):
+    @patch('crmChat.apps.meta.oauth.get_instagram_account')
+    @patch('crmChat.apps.meta.oauth.get_page_details')
+    @patch('crmChat.apps.meta.oauth.validate_access_token')
+    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(self, validate_token, page_details, instagram_details):
+        validate_token.return_value = {'is_valid': True, 'user_id': 'facebook-user-selection', 'scopes': sorted(REQUIRED_SCOPES)}
+        page_details.return_value = {
+            'id': 'page-selection', 'name': 'Página Selección',
+            'access_token': 'fresh-page-token', 'tasks': ['MESSAGING'],
+            'instagram_business_account': {'id': 'instagram-selection'},
+        }
+        instagram_details.return_value = {'id': 'instagram-selection', 'username': 'seleccion'}
         connection = MetaConnection.objects.create(
             created_by=self.admin_user,
             facebook_user_id='facebook-user-selection',
@@ -783,11 +841,38 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         disconnected = self.client.delete(reverse('meta-connection-detail', args=[connection.pk]))
         self.assertEqual(disconnected.status_code, 204)
         self.assertEqual(ChannelIntegration.objects.filter(active=True).count(), 0)
-        self.assertTrue(ChannelIntegration.objects.filter(meta_connection=connection).exists())
+        self.assertTrue(ChannelIntegration.objects.filter(channel='facebook', external_account_id=page.page_id).exists())
+        self.assertTrue(ChannelIntegration.objects.filter(channel='instagram', external_account_id=instagram.instagram_account_id).exists())
         connection.refresh_from_db()
         page.refresh_from_db()
         self.assertEqual(connection.access_token_encrypted, '')
         self.assertEqual(page.page_access_token_encrypted, '')
+
+    @patch('crmChat.apps.meta.oauth.get_page_details')
+    @patch('crmChat.apps.meta.oauth.validate_access_token')
+    @patch('crmChat.apps.meta.views.MetaConnectionAccountsView.get_throttles', return_value=[])
+    def test_selection_rejects_page_without_messaging_task_and_other_user_token(self, _throttles, validate_token, page_details):
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user, facebook_user_id='owner-one',
+            access_token_encrypted=secret_store.encrypt('user-token'),
+        )
+        page = MetaFacebookPage.objects.create(
+            connection=connection, page_id='page-available',
+            page_access_token_encrypted=secret_store.encrypt('page-token'),
+        )
+        url = reverse('meta-connection-accounts', args=[connection.pk])
+        selection = {'facebook_page_ids': [page.page_id]}
+        validate_token.return_value = {'is_valid': True, 'user_id': 'someone-else', 'scopes': sorted(REQUIRED_SCOPES)}
+        self.assertEqual(self.client.post(url, selection, format='json').status_code, 400)
+        page_details.assert_not_called()
+        self.assertFalse(ChannelIntegration.objects.filter(channel='facebook', active=True).exists())
+
+        validate_token.return_value['user_id'] = 'owner-one'
+        page_details.return_value = {'id': page.page_id, 'access_token': 'new-page-token', 'tasks': []}
+        response = self.client.post(url, selection, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('tarea de mensajería', response.data['detail'])
+        self.assertFalse(ChannelIntegration.objects.filter(channel='facebook', active=True).exists())
 
     def test_connection_cannot_be_read_or_disconnected_by_another_admin(self):
         connection = MetaConnection.objects.create(
@@ -798,6 +883,19 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         self.client.force_authenticate(self.other_admin)
         self.assertEqual(self.client.get(reverse('meta-connection-accounts', args=[connection.pk])).status_code, 404)
         self.assertEqual(self.client.delete(reverse('meta-connection-detail', args=[connection.pk])).status_code, 404)
+
+    def test_disconnect_invalidates_pending_oauth_state(self):
+        start = self.client.get(reverse('meta-connect'))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user, facebook_user_id='account-to-disconnect',
+            access_token_encrypted=secret_store.encrypt('old-user-token'),
+        )
+        self.assertEqual(self.client.delete(reverse('meta-connection-detail', args=[connection.pk])).status_code, 204)
+        with patch('crmChat.apps.meta.oauth.requests.request') as graph_request:
+            callback = self.client.get(reverse('meta-callback'), {'code': 'stale-code', 'state': state})
+            self.assertIn('meta_oauth=invalid_state', callback['Location'])
+            graph_request.assert_not_called()
 
     def test_cancelled_callback_does_not_create_connection(self):
         response = self.client.get(reverse('meta-callback'), {'error': 'access_denied'})
@@ -878,6 +976,7 @@ class IntegrationSecurityTests(APITestCase):
     """Verifica permisos, cifrado, auditoría y manejo de redes no confiables."""
 
     def setUp(self):
+        cache.clear()
         self.admin_user = Credenciales.objects.create(usuario='meta_admin', tipo_usuario=1, estado=1)
         self.client.force_authenticate(self.admin_user)
 
@@ -898,6 +997,99 @@ class IntegrationSecurityTests(APITestCase):
         self.assertNotEqual(integration.access_token_encrypted, 'token-que-no-debe-salir')
         audit = ChatAuditEvent.objects.get(action='integration.created')
         self.assertNotIn('token-que-no-debe-salir', json.dumps(audit.details))
+
+    def test_client_cannot_activate_an_unvalidated_integration(self):
+        response = self.client.post(reverse('meta-integrations'), {
+            'name': 'WhatsApp pendiente', 'channel': 'whatsapp',
+            'external_account_id': 'waba-pending', 'phone_number_id': 'phone-pending',
+            'active': True, 'access_token': 'secret-token',
+        }, format='json')
+        self.assertEqual(response.status_code, 201)
+        integration = ChannelIntegration.objects.get(pk=response.data['id'])
+        self.assertFalse(integration.active)
+        self.assertEqual(integration.connection_status, 'pending')
+        self.assertNotIn('secret-token', json.dumps(response.data))
+
+    @override_settings(META_APP_ID='meta-app', META_APP_SECRET='meta-secret', META_GRAPH_API_URL='https://graph.facebook.test')
+    @patch('crmChat.apps.meta.services.graph_request')
+    @patch('crmChat.apps.meta.services.requests.get')
+    def test_whatsapp_activation_checks_token_permissions_and_waba_phone_relation(self, token_request, graph_request):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp por validar', channel='whatsapp',
+            external_account_id='waba-valid', phone_number_id='phone-valid',
+            graph_api_version='v26.0', access_token_encrypted=secret_store.encrypt('token-private'),
+        )
+        token_request.return_value = Mock(ok=True, content=b'json', json=lambda: {'data': {
+            'is_valid': True, 'app_id': 'meta-app',
+            'scopes': ['whatsapp_business_management', 'whatsapp_business_messaging'],
+        }})
+        graph_request.side_effect = [
+            {'data': [{'id': 'phone-valid', 'display_phone_number': '+57 300 123 4567'}]},
+            {'id': 'phone-valid', 'display_phone_number': '+57 300 123 4567', 'verified_name': 'Empresa'},
+            {'data': [{'whatsapp_business_api_data': {'id': 'meta-app'}}]},
+        ]
+        response = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        integration.refresh_from_db()
+        self.assertTrue(integration.active)
+        self.assertEqual(integration.connection_status, 'pending')
+        self.assertEqual(integration.display_phone_number, '+57 300 123 4567')
+        self.assertIsNotNone(integration.last_validated_at)
+        self.assertEqual(graph_request.call_args_list[0].args[2], 'waba-valid/phone_numbers')
+        self.assertNotIn('token-private', json.dumps(response.data))
+
+    @override_settings(META_APP_ID='meta-app', META_APP_SECRET='meta-secret', META_GRAPH_API_URL='https://graph.facebook.test')
+    @patch('crmChat.apps.meta.services.graph_request')
+    @patch('crmChat.apps.meta.services.requests.get')
+    def test_whatsapp_rejects_token_without_messaging_scope_and_wrong_phone(self, token_request, graph_request):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp inválido', channel='whatsapp',
+            external_account_id='waba-invalid', phone_number_id='phone-other',
+            graph_api_version='v26.0', access_token_encrypted=secret_store.encrypt('token-private'),
+        )
+        token_request.return_value = Mock(ok=True, content=b'json', json=lambda: {'data': {
+            'is_valid': True, 'app_id': 'meta-app', 'scopes': ['whatsapp_business_management'],
+        }})
+        denied = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(denied.status_code, 400)
+        graph_request.assert_not_called()
+        integration.refresh_from_db()
+        self.assertFalse(integration.active)
+
+        self.assertEqual(integration.connection_status, 'error')
+
+        token_request.return_value = Mock(ok=True, content=b'json', json=lambda: {'data': {
+            'is_valid': True, 'app_id': 'meta-app',
+            'scopes': ['whatsapp_business_management', 'whatsapp_business_messaging'],
+        }})
+        graph_request.return_value = {'data': [{'id': 'phone-someone-else'}]}
+        denied = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn('no pertenece', denied.data['detail'])
+        integration.refresh_from_db()
+        self.assertFalse(integration.active)
+
+        graph_request.side_effect = [
+            {'data': [{'id': 'phone-other'}]},
+            {'id': 'phone-other', 'display_phone_number': '+57 300 000 0000'},
+            {'data': []},
+        ]
+        denied = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn('no está suscrita', denied.data['detail'])
+        integration.refresh_from_db()
+        self.assertFalse(integration.active)
+
+    def test_active_whatsapp_phone_cannot_be_attached_to_two_accounts(self):
+        ChannelIntegration.objects.create(
+            name='Cuenta A', channel='whatsapp', active=True,
+            external_account_id='waba-a', phone_number_id='phone-shared',
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ChannelIntegration.objects.create(
+                name='Cuenta B', channel='whatsapp', active=True,
+                external_account_id='waba-b', phone_number_id='phone-shared',
+            )
 
     def test_non_administrator_cannot_list_integrations(self):
         user = Credenciales.objects.create(usuario='customer_meta', tipo_usuario=2, estado=1)
@@ -950,6 +1142,24 @@ class IntegrationSecurityTests(APITestCase):
 
     @override_settings(
         INSTAGRAM_OAUTH_REDIRECT_URI='https://crm.example.test/api/meta/instagram/oauth/callback/',
+        INSTAGRAM_OAUTH_AUTHORIZE_URL='https://www.instagram.com/oauth/authorize',
+        INSTAGRAM_OAUTH_SCOPES='instagram_business_basic,instagram_business_manage_messages',
+    )
+    def test_instagram_disconnect_invalidates_pending_oauth_state(self):
+        integration = ChannelIntegration.objects.create(
+            name='Instagram por desconectar', channel='instagram', app_id='instagram-app-id',
+            app_secret_encrypted=secret_store.encrypt('instagram-app-secret'),
+        )
+        start = self.client.post(reverse('instagram-oauth-start', args=[integration.pk]))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        self.assertEqual(self.client.delete(reverse('meta-integration-detail', args=[integration.pk])).status_code, 204)
+        with patch('crmChat.apps.instagram.services.requests.post') as token_request:
+            callback = self.client.get(reverse('instagram-oauth-callback'), {'code': 'old-code', 'state': state})
+            self.assertIn('instagram_oauth=invalid_state', callback['Location'])
+            token_request.assert_not_called()
+
+    @override_settings(
+        INSTAGRAM_OAUTH_REDIRECT_URI='https://crm.example.test/api/meta/instagram/oauth/callback/',
         INSTAGRAM_OAUTH_TOKEN_URL='https://api.instagram.test/oauth/access_token',
         INSTAGRAM_GRAPH_API_URL='https://graph.instagram.test',
     )
@@ -970,12 +1180,14 @@ class IntegrationSecurityTests(APITestCase):
             content=b'json',
             json=lambda: {'access_token': 'short-lived-token', 'user_id': 'ig-professional-123'},
         )
-        get.return_value = Mock(
-            ok=True,
-            status_code=200,
-            content=b'json',
-            json=lambda: {'access_token': 'long-lived-token', 'expires_in': 5_184_000},
-        )
+        get.side_effect = [
+            Mock(ok=True, status_code=200, content=b'json', json=lambda: {
+                'access_token': 'long-lived-token', 'expires_in': 5_184_000,
+            }),
+            Mock(ok=True, status_code=200, content=b'json', json=lambda: {
+                'id': 'ig-professional-123', 'username': 'empresa', 'account_type': 'BUSINESS',
+            }),
+        ]
 
         callback = self.client.get(reverse('instagram-oauth-callback'), {'code': 'authorization-code', 'state': state})
         self.assertEqual(callback.status_code, 302)

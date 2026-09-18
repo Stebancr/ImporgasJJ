@@ -23,11 +23,12 @@ from crmChat.models import (
     MetaInstagramAccount,
 )
 
-from .services import MetaAPIError, SecretConfigurationError, secret_store
+from .services import MetaAPIError, SecretConfigurationError, disconnect_integration, secret_store
 
 
 OAUTH_STATE_SALT = 'crmChat.meta.facebook-instagram'
 STATE_CACHE_PREFIX = 'meta-oauth-state:'
+STATE_GENERATION_PREFIX = 'meta-oauth-generation:'
 REQUIRED_SCOPES = {
     'pages_show_list',
     'pages_read_engagement',
@@ -106,7 +107,8 @@ def build_authorization_url(user_id):
     # con expiración y uso único.
     nonce = secrets.token_urlsafe(32)
     timeout = getattr(settings, 'META_OAUTH_STATE_MAX_AGE', 600)
-    cache.set(f'{STATE_CACHE_PREFIX}{nonce}', {'user_id': user_id}, timeout=timeout)
+    generation = cache.get_or_set(f'{STATE_GENERATION_PREFIX}{user_id}', secrets.token_urlsafe(32), timeout=86400)
+    cache.set(f'{STATE_CACHE_PREFIX}{nonce}', {'user_id': user_id, 'generation': generation}, timeout=timeout)
     query = urlencode({
         'client_id': app_id,
         'redirect_uri': redirect_uri,
@@ -128,6 +130,8 @@ def consume_oauth_state(state):
     if not cached or not cached.get('user_id'):
         raise signing.BadSignature('El state OAuth expiró o ya fue utilizado.')
     cache.delete(key)
+    if cached.get('generation') != cache.get(f'{STATE_GENERATION_PREFIX}{cached["user_id"]}'):
+        raise signing.BadSignature('El state OAuth fue invalidado al desconectar la cuenta.')
     return cached
 
 
@@ -272,8 +276,10 @@ def persist_oauth_inventory(user_id, user_token, token_info):
             'token_expires_at': _timestamp(token_info.get('expires_at')),
             'token_last_validated_at': timezone.now(),
             'token_status': 'pending',
+            'is_active': False,
         },
     )
+    connection.channel_integrations.update(active=False, connection_status='pending')
     seen_page_ids = []
     for page_data in get_facebook_pages(user_token):
         page_id = str(page_data.get('id', ''))
@@ -310,7 +316,9 @@ def persist_oauth_inventory(user_id, user_token, token_info):
             )
         else:
             MetaInstagramAccount.objects.filter(facebook_page=page).delete()
-    connection.facebook_pages.exclude(page_id__in=seen_page_ids).filter(is_selected=False).delete()
+    stale_pages = connection.facebook_pages.exclude(page_id__in=seen_page_ids)
+    stale_pages.update(is_selected=False, is_active=False, page_access_token_encrypted='')
+    MetaInstagramAccount.objects.filter(facebook_page__in=stale_pages).update(is_selected=False, is_active=False)
     return connection
 
 
@@ -330,13 +338,50 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
     if facebook_page_ids - available_pages or instagram_account_ids - available_instagram:
         raise ValueError('La selección contiene una cuenta que no pertenece a esta conexión.')
 
+    if not connection.access_token_encrypted or connection.token_status in {'revoked', 'expired', 'error'}:
+        raise MetaAPIError('La autorización Meta no está vigente. Inicia nuevamente OAuth.')
+    user_token = secret_store.decrypt(connection.access_token_encrypted)
+    token_info = validate_access_token(user_token)
+    if str(token_info.get('user_id', '')) != connection.facebook_user_id:
+        raise MetaAPIError('El token ya no corresponde al usuario de Facebook autorizado.')
+    verified_pages = {}
+    verified_instagram = {}
     for page in pages:
         instagram = page.instagram_account if hasattr(page, 'instagram_account') else None
         facebook_selected = page.page_id in facebook_page_ids
         instagram_selected = bool(instagram and instagram.instagram_account_id in instagram_account_ids)
+        if not facebook_selected and not instagram_selected:
+            continue
+        details = get_page_details(page.page_id, user_token)
+        if str(details.get('id', '')) != page.page_id or not details.get('access_token'):
+            raise MetaAPIError(f'Meta no confirmó el acceso a la página {page.page_id}.')
+        tasks = details.get('tasks') or []
+        if facebook_selected and 'MESSAGING' not in tasks:
+            raise MetaAPIError(f'La página {page.page_id} no tiene tarea de mensajería.')
+        verified_pages[page.page_id] = details
+        if instagram_selected:
+            linked = details.get('instagram_business_account') or {}
+            if str(linked.get('id', '')) != instagram.instagram_account_id:
+                raise MetaAPIError('La cuenta de Instagram ya no está asociada a la página seleccionada.')
+            account = get_instagram_account(instagram.instagram_account_id, details['access_token'])
+            if str(account.get('id', '')) != instagram.instagram_account_id:
+                raise MetaAPIError('Meta no confirmó la cuenta profesional de Instagram.')
+            verified_instagram[instagram.instagram_account_id] = account
+
+    for page in pages:
+        instagram = page.instagram_account if hasattr(page, 'instagram_account') else None
+        facebook_selected = page.page_id in facebook_page_ids
+        instagram_selected = bool(instagram and instagram.instagram_account_id in instagram_account_ids)
+        if page.page_id in verified_pages:
+            details = verified_pages[page.page_id]
+            page.page_name = details.get('name') or page.page_name
+            page.page_access_token_encrypted = secret_store.encrypt(details['access_token'])
+            page.tasks = details.get('tasks') or []
         page.is_selected = facebook_selected
         page.is_active = facebook_selected or instagram_selected
-        page.save(update_fields=['is_selected', 'is_active', 'updated_at'])
+        page.save(update_fields=[
+            'page_name', 'page_access_token_encrypted', 'tasks', 'is_selected', 'is_active', 'updated_at',
+        ])
 
         current_facebook = ChannelIntegration.objects.filter(
             channel='facebook', external_account_id=page.page_id,
@@ -346,6 +391,10 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
         facebook_defaults = {
             'name': page.page_name,
             'active': facebook_selected,
+            'connection_status': 'pending',
+            'last_validated_at': timezone.now() if facebook_selected else None,
+            'last_error': '',
+            'disconnected_at': None if facebook_selected else timezone.now(),
             'app_id': settings.META_APP_ID,
             'page_id': page.page_id,
             'graph_api_version': settings.META_GRAPH_API_VERSION,
@@ -361,9 +410,13 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
         )
 
         if instagram:
+            if instagram.instagram_account_id in verified_instagram:
+                account = verified_instagram[instagram.instagram_account_id]
+                instagram.username = account.get('username') or instagram.username
+                instagram.name = account.get('name') or instagram.name
             instagram.is_selected = instagram_selected
             instagram.is_active = instagram_selected
-            instagram.save(update_fields=['is_selected', 'is_active', 'updated_at'])
+            instagram.save(update_fields=['username', 'name', 'is_selected', 'is_active', 'updated_at'])
             current_instagram = ChannelIntegration.objects.filter(
                 channel='instagram', external_account_id=instagram.instagram_account_id,
             ).first()
@@ -375,6 +428,10 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
                 defaults={
                     'name': instagram.username or instagram.name or instagram.instagram_account_id,
                     'active': instagram_selected,
+                    'connection_status': 'pending',
+                    'last_validated_at': timezone.now() if instagram_selected else None,
+                    'last_error': '',
+                    'disconnected_at': None if instagram_selected else timezone.now(),
                     'app_id': settings.META_APP_ID,
                     'page_id': page.page_id,
                     'instagram_account_id': instagram.instagram_account_id,
@@ -388,7 +445,7 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
             )
 
     connection.is_active = bool(facebook_page_ids or instagram_account_ids)
-    connection.token_status = 'valid'
+    connection.token_status = 'valid' if connection.is_active else 'pending'
     connection.token_last_validated_at = timezone.now()
     connection.save(update_fields=['is_active', 'token_status', 'token_last_validated_at', 'updated_at'])
     return connection
@@ -398,7 +455,8 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
 def disconnect_connection(connection):
     """Desactiva la conexión sin borrar conversaciones ni auditoría."""
 
-    connection.channel_integrations.update(active=False)
+    for integration in connection.channel_integrations.all():
+        disconnect_integration(integration)
     connection.facebook_pages.update(
         is_active=False,
         is_selected=False,
@@ -409,4 +467,5 @@ def disconnect_connection(connection):
     connection.token_status = 'revoked'
     connection.access_token_encrypted = ''
     connection.save(update_fields=['is_active', 'token_status', 'access_token_encrypted', 'updated_at'])
+    cache.set(f'{STATE_GENERATION_PREFIX}{connection.created_by_id}', secrets.token_urlsafe(32), timeout=86400)
     return connection

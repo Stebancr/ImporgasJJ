@@ -20,6 +20,7 @@ from .apps.meta.services import (
     process_webhook_event,
     secret_store,
     send_read_receipt,
+    UnmatchedIntegrationError,
 )
 from .models import (
     ChannelIntegration,
@@ -46,7 +47,11 @@ def process_meta_webhook_task(self, event_id):
     event = WebhookEvent.objects.get(pk=event_id)
     if event.status == 'processed':
         return {'duplicate': True}
-    messages = process_webhook_event(event)
+    try:
+        messages = process_webhook_event(event)
+    except UnmatchedIntegrationError:
+        logger.warning('Webhook Meta event_id=%s ignorado: cuenta externa no conectada.', event_id)
+        return {'skipped': 'unmatched_integration'}
     for message in messages:
         publish_crm_event('message.created', session_id=message.session_id, message_id=message.id)
         for attachment in message.attachments.all():

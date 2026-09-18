@@ -5,9 +5,11 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
+from django.db import IntegrityError
 from django.http import HttpResponse
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -33,6 +35,7 @@ from .services import (
     MetaAPIError,
     SecretConfigurationError,
     accept_webhook,
+    disconnect_integration,
     validate_integration_connection,
     verify_webhook_token,
 )
@@ -68,8 +71,7 @@ class IntegrationDetailView(generics.RetrieveUpdateDestroyAPIView):
     def perform_destroy(self, instance):
         """Desactivar conserva conversaciones, identidades y auditoría."""
 
-        instance.active = False
-        instance.save(update_fields=['active', 'updated_at'])
+        disconnect_integration(instance)
         ChatAuditEvent.objects.create(
             actor=self.request.user,
             action='integration.disabled',
@@ -130,11 +132,37 @@ class IntegrationValidateView(APIView):
     def post(self, request, pk):
         try:
             integration = ChannelIntegration.objects.get(pk=pk)
-            return Response(validate_integration_connection(integration))
+            result = validate_integration_connection(integration)
+            integration.last_validated_at = timezone.now()
+            integration.last_error = ''
+            if integration.channel == 'whatsapp':
+                integration.display_phone_number = result['display_phone_number']
+            if request.data.get('activate') is True:
+                integration.active = True
+                integration.connection_status = 'pending'
+                integration.disconnected_at = None
+            integration.save(update_fields=[
+                'last_validated_at', 'last_error', 'display_phone_number',
+                'active', 'connection_status', 'disconnected_at', 'updated_at',
+            ])
+            ChatAuditEvent.objects.create(
+                actor=request.user,
+                action='integration.validated',
+                details={'integration_id': integration.pk, 'channel': integration.channel, 'activated': integration.active},
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+            return Response({**result, 'connection_status': integration.connection_status})
         except ChannelIntegration.DoesNotExist:
             return Response({'detail': 'Integración no encontrada.'}, status=404)
         except MetaAPIError as exc:
+            if 'integration' in locals():
+                integration.active = False
+                integration.connection_status = 'error'
+                integration.last_error = str(exc)[:500]
+                integration.save(update_fields=['active', 'connection_status', 'last_error', 'updated_at'])
             return Response({'valid': False, 'detail': str(exc)}, status=400)
+        except IntegrityError:
+            return Response({'valid': False, 'detail': 'Ya existe una integración activa para este identificador de Meta.'}, status=409)
 
 
 class MetaConnectView(APIView):
@@ -228,8 +256,10 @@ class MetaConnectionAccountsView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             select_accounts(connection, **serializer.validated_data)
-        except ValueError as exc:
+        except (ValueError, MetaAPIError) as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError:
+            return Response({'detail': 'Ya existe una integración activa para esta cuenta de Meta.'}, status=409)
         ChatAuditEvent.objects.create(
             actor=request.user,
             action='meta.accounts_selected',

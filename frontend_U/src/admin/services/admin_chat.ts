@@ -66,11 +66,18 @@ export interface MetaIntegration {
   app_id: string
   external_account_id: string
   phone_number_id: string
+  business_id: string
+  display_phone_number: string
   page_id: string
   instagram_account_id: string
   graph_api_version: string
   configuration: Record<string, unknown>
   token_expires_at: string | null
+  connection_status: 'pending' | 'connected' | 'error' | 'disconnected'
+  last_validated_at: string | null
+  last_webhook_at: string | null
+  last_error: string
+  disconnected_at: string | null
   has_access_token: boolean
   has_app_secret: boolean
   has_verify_token: boolean
@@ -109,7 +116,7 @@ export interface MetaConnection {
   updated_at: string
 }
 
-export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'has_access_token' | 'has_app_secret' | 'has_verify_token' | 'managed_by_meta_oauth' | 'token_expires_at'> & {
+export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'active' | 'display_phone_number' | 'connection_status' | 'last_validated_at' | 'last_webhook_at' | 'last_error' | 'disconnected_at' | 'has_access_token' | 'has_app_secret' | 'has_verify_token' | 'managed_by_meta_oauth' | 'token_expires_at'> & {
   access_token?: string
   app_secret?: string
   verify_token?: string
@@ -192,9 +199,13 @@ export const adminChatService = {
     return res.data
   },
 
-  validateIntegration: async (id: number): Promise<{ valid: boolean; remote_id?: string; name?: string; detail?: string }> => {
-    const res = await api.post(`/meta/integrations/${id}/validate/`)
+  validateIntegration: async (id: number, activate = false): Promise<{ valid: boolean; remote_id?: string; name?: string; detail?: string }> => {
+    const res = await api.post(`/meta/integrations/${id}/validate/`, { activate })
     return res.data
+  },
+
+  disconnectIntegration: async (id: number): Promise<void> => {
+    await api.delete(`/meta/integrations/${id}/`)
   },
 
   startInstagramOAuth: async (id: number): Promise<{ authorization_url: string; redirect_uri: string }> => {

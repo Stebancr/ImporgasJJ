@@ -31,12 +31,16 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'channel', 'active', 'app_id', 'external_account_id',
             'phone_number_id', 'page_id', 'instagram_account_id',
-            'graph_api_version', 'configuration', 'token_expires_at',
+            'business_id', 'display_phone_number', 'graph_api_version', 'configuration', 'token_expires_at',
+            'connection_status', 'last_validated_at', 'last_webhook_at', 'last_error', 'disconnected_at',
             'access_token', 'app_secret', 'verify_token', 'has_access_token',
             'has_app_secret', 'has_verify_token', 'managed_by_meta_oauth',
             'created_at', 'updated_at',
         )
-        read_only_fields = ('created_at', 'updated_at')
+        read_only_fields = (
+            'active', 'display_phone_number', 'connection_status', 'last_validated_at', 'last_webhook_at',
+            'last_error', 'disconnected_at', 'created_at', 'updated_at',
+        )
 
     def get_has_access_token(self, obj):
         """Indica disponibilidad sin exponer el token ni su origen cifrado."""
@@ -63,24 +67,25 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         channel = attrs.get('channel', getattr(self.instance, 'channel', None))
-        active = attrs.get('active', getattr(self.instance, 'active', False))
-        effective = lambda name: attrs.get(name, getattr(self.instance, name, ''))
-        token_present = bool(attrs.get('access_token')) or bool(
-            self.instance and self.instance.access_token_encrypted
-        ) or bool(self.instance and self.instance.meta_facebook_page_id)
-
         if channel == ChannelIntegration.CHANNEL_ECOMMERCE:
             raise serializers.ValidationError({'channel': 'Ecommerce no requiere una integración Meta.'})
-        if active and not effective('graph_api_version'):
-            raise serializers.ValidationError({'graph_api_version': 'Es obligatorio al activar el canal.'})
-        if active and not token_present:
-            raise serializers.ValidationError({'access_token': 'Es obligatorio al activar el canal.'})
-        if channel == ChannelIntegration.CHANNEL_WHATSAPP and active and not effective('phone_number_id'):
-            raise serializers.ValidationError({'phone_number_id': 'Es obligatorio para WhatsApp.'})
-        if channel == ChannelIntegration.CHANNEL_FACEBOOK and active and not effective('page_id'):
-            raise serializers.ValidationError({'page_id': 'Es obligatorio para Messenger.'})
-        if channel == ChannelIntegration.CHANNEL_INSTAGRAM and active and not effective('instagram_account_id'):
-            raise serializers.ValidationError({'instagram_account_id': 'Es obligatorio para Instagram.'})
+        if self.instance:
+            identity_fields = {'channel', 'external_account_id', 'phone_number_id', 'page_id', 'instagram_account_id'}
+            identity_changed = any(
+                name in attrs and attrs[name] != getattr(self.instance, name)
+                for name in identity_fields
+            )
+            if identity_changed and (
+                self.instance.conversations.exists() or self.instance.contact_identities.exists()
+            ):
+                raise serializers.ValidationError({
+                    'identity': 'Esta cuenta tiene historial. Desconéctala y crea otra integración para la nueva cuenta.'
+                })
+            if self.instance.meta_connection_id or self.instance.meta_facebook_page_id:
+                if identity_changed or any(name in attrs for name in ('access_token', 'app_secret', 'verify_token')):
+                    raise serializers.ValidationError({
+                        'identity': 'Las credenciales de esta cuenta se administran mediante OAuth de Meta.'
+                    })
         return attrs
 
     def _save_secrets(self, instance, secrets):
@@ -131,6 +136,17 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
         changed_fields = set(validated_data)
         instance = super().update(instance, validated_data)
         instance = self._save_secrets(instance, secrets)
+        if any(secrets.values()) or changed_fields.intersection({
+            'channel', 'app_id', 'external_account_id', 'phone_number_id',
+            'page_id', 'instagram_account_id', 'business_id', 'graph_api_version',
+        }):
+            instance.active = False
+            instance.connection_status = 'pending'
+            instance.last_validated_at = None
+            instance.last_error = ''
+            instance.save(update_fields=[
+                'active', 'connection_status', 'last_validated_at', 'last_error', 'updated_at',
+            ])
         self._audit(instance, 'integration.updated', changed_fields, [key for key, value in secrets.items() if value])
         return instance
 
