@@ -62,6 +62,11 @@ SIMPLE_JWT = {
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'redact_webhook_secrets': {
+            '()': 'core.logging_filters.RedactWebhookSecretsFilter',
+        },
+    },
     'formatters': {
         'standard': {
             'format': '{asctime} {levelname} {name} {message}',
@@ -72,6 +77,7 @@ LOGGING = {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'standard',
+            'filters': ['redact_webhook_secrets'],
         },
     },
     'root': {'handlers': ['console'], 'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO')},

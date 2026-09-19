@@ -135,11 +135,13 @@ class ChannelIntegration(models.Model):
 
     CHANNEL_ECOMMERCE = 'ecommerce'
     CHANNEL_WHATSAPP = 'whatsapp'
+    CHANNEL_WHATSAPP_WEB = 'whatsapp_web'
     CHANNEL_FACEBOOK = 'facebook'
     CHANNEL_INSTAGRAM = 'instagram'
     CHANNEL_CHOICES = [
         (CHANNEL_ECOMMERCE, 'Ecommerce'),
         (CHANNEL_WHATSAPP, 'WhatsApp'),
+        (CHANNEL_WHATSAPP_WEB, 'WhatsApp Web experimental'),
         (CHANNEL_FACEBOOK, 'Facebook Messenger'),
         (CHANNEL_INSTAGRAM, 'Instagram'),
     ]

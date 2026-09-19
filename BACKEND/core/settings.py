@@ -235,14 +235,12 @@ else:
         }
     }
 
-# Para evitar errores de FK en MySQL durante las pruebas y acelerar el ciclo de test
+# Las pruebas usan una base SQLite aislada. Nunca deben reutilizar ni borrar la
+# base local de desarrollo que vive en BASE_DIR/db.sqlite3.
 if 'test' in sys.argv:
     DATABASES['default'] = {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': str(BASE_DIR / 'db.sqlite3'),
-        'TEST': {
-            'NAME': str(BASE_DIR / 'db.sqlite3'),
-        },
+        'NAME': ':memory:',
     }
 
 AUTH_USER_MODEL = 'usuarios.Credenciales'
@@ -334,7 +332,7 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Ollama Chatbot Configuration
 # En Docker usa 'ollama', en desarrollo local usa 'localhost'
 OLLAMA_API_URL = config('OLLAMA_API_URL', default='http://ollama:11434/api/chat')
-OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen2.5:1.5b')
+OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen:4b')
 OLLAMA_TIMEOUT = config('OLLAMA_TIMEOUT', default=90, cast=int)
 OLLAMA_NUM_CTX = config('OLLAMA_NUM_CTX', default=4096, cast=int)
 OLLAMA_ECOMMERCE_ENABLED = config('OLLAMA_ECOMMERCE_ENABLED', default=True, cast=bool)
@@ -419,10 +417,22 @@ META_WEBHOOK_MAX_BYTES = config('META_WEBHOOK_MAX_BYTES', default=2 * 1024 * 102
 CRM_ATTACHMENT_MAX_BYTES = config('CRM_ATTACHMENT_MAX_BYTES', default=25 * 1024 * 1024, cast=int)
 CRM_ATTACHMENT_MAX_REDIRECTS = config('CRM_ATTACHMENT_MAX_REDIRECTS', default=3, cast=int)
 META_WEBHOOK_VERIFY_TOKEN = config('META_WEBHOOK_VERIFY_TOKEN', default='')
+META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM = config('META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM', default='')
+META_WEBHOOK_VERIFY_TOKEN_FACEBOOK = config('META_WEBHOOK_VERIFY_TOKEN_FACEBOOK', default='')
+META_WEBHOOK_VERIFY_TOKEN_WHATSAPP = config('META_WEBHOOK_VERIFY_TOKEN_WHATSAPP', default='')
 META_APP_SECRET = config('META_APP_SECRET', default='')
 META_CREDENTIALS_ENCRYPTION_KEY = config('META_CREDENTIALS_ENCRYPTION_KEY', default='')
 META_TOKEN_WARNING_DAYS = config('META_TOKEN_WARNING_DAYS', default=7, cast=int)
 META_REDIRECT_URI = config('META_REDIRECT_URI', default='')
+META_PUBLIC_BASE_URL = config('META_PUBLIC_BASE_URL', default='').rstrip('/')
+META_FACEBOOK_WEBHOOK_URL = config(
+    'META_FACEBOOK_WEBHOOK_URL',
+    default=f'{META_PUBLIC_BASE_URL}/api/meta/facebook/webhook/' if META_PUBLIC_BASE_URL else '',
+)
+META_INSTAGRAM_WEBHOOK_URL = config(
+    'META_INSTAGRAM_WEBHOOK_URL',
+    default=f'{META_PUBLIC_BASE_URL}/api/meta/instagram/webhook/' if META_PUBLIC_BASE_URL else '',
+)
 META_OAUTH_AUTHORIZE_URL = config('META_OAUTH_AUTHORIZE_URL', default='https://www.facebook.com')
 META_OAUTH_STATE_MAX_AGE = config('META_OAUTH_STATE_MAX_AGE', default=600, cast=int)
 META_OAUTH_SCOPES = config(
@@ -436,6 +446,53 @@ META_OAUTH_FRONTEND_REDIRECT = config(
     'META_OAUTH_FRONTEND_REDIRECT',
     default='/admin/chat/integraciones',
 )
+META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID = config(
+    'META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID', default='',
+)
+# Embedded Signup v4 evita depender de los flujos v2/v3 que Meta retira para
+# nuevas altas. El backend sigue aceptando el payload de sesión de coexistencia.
+META_WHATSAPP_EMBEDDED_SIGNUP_VERSION = config(
+    'META_WHATSAPP_EMBEDDED_SIGNUP_VERSION', default='4',
+)
+META_WHATSAPP_EMBEDDED_SIGNUP_STATE_MAX_AGE = config(
+    'META_WHATSAPP_EMBEDDED_SIGNUP_STATE_MAX_AGE', default=600, cast=int,
+)
+CRM_INTERNAL_SERVICE_TOKEN = config('CRM_INTERNAL_SERVICE_TOKEN', default='')
+WHATSAPP_GATEWAY_URL = config('WHATSAPP_GATEWAY_URL', default='http://whatsapp-gateway:3001')
+WHATSAPP_GATEWAY_CONNECTION_ID = config('WHATSAPP_GATEWAY_CONNECTION_ID', default='primary')
+WHATSAPP_GATEWAY_MAX_MEDIA_BYTES = config('WHATSAPP_GATEWAY_MAX_MEDIA_BYTES', default=25 * 1024 * 1024, cast=int)
+WHATSAPP_GATEWAY_REQUEST_MAX_AGE = config('WHATSAPP_GATEWAY_REQUEST_MAX_AGE', default=300, cast=int)
+WHATSAPP_GATEWAY_BOT_ENABLED = config('WHATSAPP_GATEWAY_BOT_ENABLED', default=False, cast=bool)
+
+# Daphne incluye la query string en sus líneas de acceso. Meta transmite el
+# verify token por query, por lo que se sanitiza antes de escribir cualquier log.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'redact_webhook_secrets': {
+            '()': 'core.logging_filters.RedactWebhookSecretsFilter',
+        },
+    },
+    'handlers': {
+        'safe_console': {
+            'class': 'logging.StreamHandler',
+            'filters': ['redact_webhook_secrets'],
+        },
+    },
+    'loggers': {
+        'daphne.server': {
+            'handlers': ['safe_console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.server': {
+            'handlers': ['safe_console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
 
 # Instagram Business Login. La URI debe coincidir literalmente con la
 # registrada en Meta for Developers y apuntar al callback HTTPS de Django.

@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 from . import views
 
 urlpatterns = [
@@ -13,4 +13,5 @@ urlpatterns = [
     path('bot/sessions/<int:session_id>/messages/', views.BotSessionMessagesView.as_view(), name='bot-session-messages'),
     path('queues/', views.AssignmentQueueListCreateView.as_view(), name='crm-queue-list'),
     path('queues/<int:pk>/', views.AssignmentQueueDetailView.as_view(), name='crm-queue-detail'),
+    path('whatsapp-web/', include('crmChat.apps.whatsapp_web.urls_admin')),
 ]

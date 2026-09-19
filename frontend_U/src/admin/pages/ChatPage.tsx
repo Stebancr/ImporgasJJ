@@ -103,7 +103,13 @@ function BotMarkdown({ text }: { text: string }) {
 }
 
 function messageState(message: ChatMessage) {
-  if (message.status === 'failed') return <XCircle size={13} color="#dc2626" />
+  if (message.status === 'failed') return (
+    <Tooltip title={message.error || 'Meta rechazó el envío'} arrow>
+      <Box component="span" sx={{ display: 'inline-flex', cursor: 'help' }}>
+        <XCircle size={13} color="#dc2626" />
+      </Box>
+    </Tooltip>
+  )
   if (message.status === 'read') return <CheckCheck size={13} color="#2563eb" />
   if (message.status === 'delivered') return <CheckCheck size={13} />
   if (['sent', 'received'].includes(message.status)) return <Check size={13} />
@@ -113,6 +119,7 @@ function messageState(message: ChatMessage) {
 function ConversationMessage({ message }: { message: ChatMessage }) {
   const incoming = message.direction === 'inbound' || message.sender_type === 'user'
   const bot = message.sender_type === 'bot'
+  const originLabel = bot ? 'Ollama' : message.origin === 'mobile' ? 'Celular' : message.origin === 'crm' ? 'CRM' : 'Cliente'
   return (
     <Stack direction="row" spacing={1} sx={{ justifyContent: incoming ? 'flex-start' : 'flex-end' }}>
       {incoming && <Avatar sx={{ width: 28, height: 28, bgcolor: '#ffedd5', color: '#b45309', fontSize: 13 }}>C</Avatar>}
@@ -125,7 +132,10 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
           borderRadius: incoming ? '4px 14px 14px 14px' : '14px 4px 14px 14px',
         }}
       >
-        {bot && <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', mb: 0.75 }}><Bot size={13} /><Typography variant="caption" sx={{ fontWeight: 700 }}>Ollama</Typography></Stack>}
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', mb: 0.75 }}>
+          {bot && <Bot size={13} />}
+          <Typography variant="caption" sx={{ fontWeight: 700 }}>{originLabel}</Typography>
+        </Stack>
         {message.text && (bot
           ? <BotMarkdown text={message.text} />
           : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
@@ -140,7 +150,7 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
           )
         ))}
         <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end', alignItems: 'center', mt: 0.5, opacity: 0.75 }}>
-          <Typography variant="caption">{new Date(message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
+          <Typography variant="caption">{new Date(message.timestamp || message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
           {!incoming && messageState(message)}
         </Stack>
       </Paper>
@@ -183,6 +193,14 @@ export default function ChatPage() {
     enabled: selectedId !== null,
     refetchInterval: 30_000,
   })
+  const orderedMessages = useMemo(() => {
+    const unique = new Map<number, ChatMessage>()
+    for (const message of messages.data?.messages || []) unique.set(message.id, message)
+    return [...unique.values()].sort((left, right) => {
+      const difference = new Date(left.timestamp || left.created_at).getTime() - new Date(right.timestamp || right.created_at).getTime()
+      return difference || left.id - right.id
+    })
+  }, [messages.data?.messages])
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
@@ -212,8 +230,8 @@ export default function ChatPage() {
   }, [selectedId])
 
   useLayoutEffect(() => {
-    if (!messages.data?.messages.length) return
-    const lastId = messages.data.messages.at(-1)!.id
+    if (!orderedMessages.length) return
+    const lastId = orderedMessages.at(-1)!.id
     if (lastMessageIdRef.current === lastId) return
     lastMessageIdRef.current = lastId
     if (forceScrollRef.current || nearBottom) {
@@ -222,7 +240,7 @@ export default function ChatPage() {
     } else {
       setHasNewMessage(true)
     }
-  }, [messages.data?.messages, nearBottom, scrollToLatest])
+  }, [orderedMessages, nearBottom, scrollToLatest])
 
   const toggleNotifications = async () => {
     if (!notificationsSupported) return
@@ -278,7 +296,7 @@ export default function ChatPage() {
               <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => setSearch(event.target.value)} />
               <Stack direction="row" spacing={1}>
                 <TextField select size="small" label="Canal" value={channel} onChange={(event) => setChannel(event.target.value)} fullWidth>
-                  <MenuItem value="all">Todos</MenuItem><MenuItem value="whatsapp">WhatsApp</MenuItem><MenuItem value="facebook">Facebook</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
+                  <MenuItem value="all">Todos</MenuItem><MenuItem value="whatsapp">WhatsApp Cloud</MenuItem><MenuItem value="whatsapp_web">WhatsApp Web experimental</MenuItem><MenuItem value="facebook">Facebook</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
                 </TextField>
                 <TextField select size="small" label="Estado" value={status} onChange={(event) => setStatus(event.target.value)} fullWidth>
                   <MenuItem value="all">Todos</MenuItem><MenuItem value="waiting">Pendientes</MenuItem><MenuItem value="active">Abiertos</MenuItem><MenuItem value="closed">Cerrados</MenuItem><MenuItem value="bot">Con bot</MenuItem>
@@ -340,7 +358,7 @@ export default function ChatPage() {
               </Stack>
               <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
-                {messages.data?.messages.map((message) => <ConversationMessage key={message.id} message={message} />)}
+                {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
               <Box sx={{ p: 1.5, borderTop: '1px solid #e2e8f0' }}>

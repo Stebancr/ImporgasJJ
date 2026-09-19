@@ -18,14 +18,14 @@ El archivo `docker-compose.dev.yml` ya está configurado para descargar el model
 # En el servidor, levanta los servicios
 docker compose -f docker-compose.dev.yml up -d
 
-# El contenedor 'ollama' descargará automáticamente el modelo qwen2.5:1.5b
+# El contenedor 'ollama' descargará automáticamente el modelo qwen:4b
 # Esto puede tomar 5-10 minutos la primera vez
 ```
 
 **Verificar que el modelo se descargó:**
 ```bash
 docker exec ollama ollama list
-# Debe mostrar: qwen2.5:1.5b
+# Debe mostrar: qwen:4b
 ```
 
 ---
@@ -42,7 +42,7 @@ docker compose -f docker-compose.dev.yml up -d ollama
 sleep 30
 
 # Paso 3: Descargar el modelo manualmente
-docker exec ollama ollama pull qwen2.5:1.5b
+docker exec ollama ollama pull qwen:4b
 
 # Paso 4: Levantar el resto de servicios
 docker compose -f docker-compose.dev.yml up -d
@@ -58,7 +58,7 @@ Estos parámetros están en `BACKEND/crmChat/ollama_service.py` y **se aplican a
 
 | Parámetro | Valor | Descripción |
 |-----------|-------|-------------|
-| **Modelo** | `qwen2.5:1.5b` | Modelo de IA ligero y rápido |
+| **Modelo** | `qwen:4b` | Modelo de IA ligero y rápido |
 | **Temperatura** | `0.1` | Respuestas muy precisas y consistentes |
 | **Max tokens** | `600` | Respuestas de longitud media |
 | **Filtrado** | Inteligente por categoría | Detecta si piden calentador/regulador/aire y filtra productos |
@@ -150,7 +150,7 @@ docker restart ollama
 **Solución:**
 ```bash
 # Descargar el modelo manualmente
-docker exec ollama ollama pull qwen2.5:1.5b
+docker exec ollama ollama pull qwen:4b
 
 # Listar modelos disponibles
 docker exec ollama ollama list

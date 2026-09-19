@@ -52,17 +52,31 @@ def process_meta_webhook_task(self, event_id):
     except UnmatchedIntegrationError:
         logger.warning('Webhook Meta event_id=%s ignorado: cuenta externa no conectada.', event_id)
         return {'skipped': 'unmatched_integration'}
+    except Exception as exc:
+        logger.warning(
+            'Falló tarea webhook Meta: event_id=%s channel=%s error=%s.',
+            event_id, event.channel, ' '.join(str(exc).split())[:300],
+        )
+        raise
     for message in messages:
         publish_crm_event('message.created', session_id=message.session_id, message_id=message.id)
         for attachment in message.attachments.all():
             download_meta_attachment.delay(attachment.id)
         if message.direction == 'inbound':
-            send_meta_read_receipt.delay(message.id)
+            receipt_task = send_meta_read_receipt.delay(message.id)
+            logger.info(
+                'Confirmación de lectura encolada: message_id=%s channel=%s task_id=%s.',
+                message.id, message.session.channel, receipt_task.id,
+            )
         integration = message.session.integration
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
             generate_omnichannel_bot_reply.delay(message.id)
             logger.info('Respuesta bot programada para message_id=%s session_id=%s.', message.id, message.session_id)
+    logger.info(
+        'Tarea webhook Meta completada: event_id=%s channel=%s messages=%s.',
+        event_id, event.channel, len(messages),
+    )
     return {'processed': len(messages)}
 
 
@@ -71,7 +85,12 @@ def send_meta_read_receipt(message_id):
     """Confirma lectura fuera del request del webhook."""
 
     message = ChatMessage.objects.select_related('session__integration').get(pk=message_id)
-    send_read_receipt(message)
+    result = send_read_receipt(message)
+    logger.info(
+        'Confirmación de lectura procesada: message_id=%s channel=%s.',
+        message.id, message.session.channel,
+    )
+    return result
 
 
 def _assert_public_https(url):

@@ -345,7 +345,7 @@ docker ps | Select-String "ollama"
 docker logs ollama --tail 50
 
 # Probar Ollama directamente
-docker exec -it ollama ollama run qwen2.5:1.5b "Hola, como estas?"
+docker exec -it ollama ollama run qwen:4b "Hola, como estas?"
 ```
 
 ### 19. Verificar Estado del Backend

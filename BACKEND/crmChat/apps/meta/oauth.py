@@ -5,6 +5,7 @@ aplicación se leen exclusivamente desde ``settings`` y los tokens persistidos
 se cifran con el almacén de secretos existente del CRM.
 """
 
+import logging
 import secrets
 from datetime import datetime, timezone as datetime_timezone
 from urllib.parse import urlencode, urlparse
@@ -26,6 +27,9 @@ from crmChat.models import (
 from .services import MetaAPIError, SecretConfigurationError, disconnect_integration, secret_store
 
 
+logger = logging.getLogger(__name__)
+
+
 OAUTH_STATE_SALT = 'crmChat.meta.facebook-instagram'
 STATE_CACHE_PREFIX = 'meta-oauth-state:'
 STATE_GENERATION_PREFIX = 'meta-oauth-generation:'
@@ -37,6 +41,8 @@ REQUIRED_SCOPES = {
     'instagram_basic',
     'instagram_manage_messages',
 }
+FACEBOOK_WEBHOOK_FIELDS = ('messages', 'messaging_postbacks', 'message_deliveries', 'message_reads')
+INSTAGRAM_WEBHOOK_FIELDS = ('messages', 'messaging_postbacks')
 
 
 def _required_setting(name):
@@ -80,6 +86,105 @@ def _request(method, url, *, token='', params=None, data=None):
         )
     except requests.RequestException as exc:
         raise MetaAPIError('No fue posible conectar con Meta Graph API.') from exc
+
+
+def _webhook_configuration(channel):
+    if channel == 'facebook':
+        callback_url = getattr(settings, 'META_FACEBOOK_WEBHOOK_URL', '')
+        verify_token = getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN_FACEBOOK', '')
+        return 'page', callback_url, verify_token or settings.META_WEBHOOK_VERIFY_TOKEN, FACEBOOK_WEBHOOK_FIELDS
+    if channel == 'instagram':
+        callback_url = getattr(settings, 'META_INSTAGRAM_WEBHOOK_URL', '')
+        verify_token = getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM', '')
+        return 'instagram', callback_url, verify_token or settings.META_WEBHOOK_VERIFY_TOKEN, INSTAGRAM_WEBHOOK_FIELDS
+    raise ValueError('Canal Meta no soportado para suscripción webhook.')
+
+
+def _validate_public_webhook_url(url, channel):
+    parsed = urlparse(url)
+    if parsed.scheme != 'https' or not parsed.netloc:
+        raise SecretConfigurationError(f'La URL pública del webhook de {channel} debe usar HTTPS.')
+
+
+def _subscribe_app_webhook(channel):
+    object_name, callback_url, verify_token, fields = _webhook_configuration(channel)
+    _validate_public_webhook_url(callback_url, channel)
+    if not verify_token:
+        raise SecretConfigurationError(f'Falta el token de verificación del webhook de {channel}.')
+    app_id = _required_setting('META_APP_ID')
+    app_access_token = f'{app_id}|{_required_setting("META_APP_SECRET")}'
+    data = _safe_json(_request(
+        'POST', _graph_url(f'{app_id}/subscriptions'), token=app_access_token,
+        data={
+            'object': object_name,
+            'callback_url': callback_url,
+            'fields': ','.join(fields),
+            'verify_token': verify_token,
+        },
+    ), f'la suscripción del webhook de {channel}')
+    if data.get('success') is not True:
+        raise MetaAPIError(f'Meta no confirmó la suscripción del webhook de {channel}.')
+
+
+def ensure_oauth_webhook_subscriptions(page_id, page_token, *, facebook=False, instagram=False):
+    """Configura webhooks requeridos sin enviar mensajes ni habilitar campañas."""
+
+    if not facebook and not instagram:
+        return
+    if facebook:
+        _subscribe_app_webhook('facebook')
+    if instagram:
+        _subscribe_app_webhook('instagram')
+    page_fields = set(INSTAGRAM_WEBHOOK_FIELDS if instagram else ())
+    if facebook:
+        page_fields.update(FACEBOOK_WEBHOOK_FIELDS)
+    data = _safe_json(_request(
+        'POST', _graph_url(f'{page_id}/subscribed_apps'), token=page_token,
+        data={'subscribed_fields': ','.join(sorted(page_fields))},
+    ), 'la asociación del webhook con la página')
+    if data.get('success') is not True:
+        raise MetaAPIError('Meta no confirmó la asociación del webhook con la página.')
+    logger.info(
+        'Suscripciones webhook Meta confirmadas: page_id=%s facebook=%s instagram=%s.',
+        page_id, facebook, instagram,
+    )
+
+
+def validate_oauth_webhook_subscriptions(channel, page_id, page_token):
+    """Comprueba la suscripción remota sin cambiar la configuración de Meta."""
+
+    object_name, expected_url, _verify_token, expected_fields = _webhook_configuration(channel)
+    _validate_public_webhook_url(expected_url, channel)
+    app_id = _required_setting('META_APP_ID')
+    app_access_token = f'{app_id}|{_required_setting("META_APP_SECRET")}'
+    subscriptions = _safe_json(_request(
+        'GET', _graph_url(f'{app_id}/subscriptions'), token=app_access_token,
+    ), 'la consulta de suscripciones de la aplicación')
+    matching = next((item for item in subscriptions.get('data') or [] if item.get('object') == object_name), None)
+    fields = {
+        item.get('name') if isinstance(item, dict) else item
+        for item in ((matching or {}).get('fields') or [])
+    }
+    if (
+        not matching
+        or matching.get('active') is not True
+        or matching.get('callback_url') != expected_url
+        or not set(expected_fields).issubset(fields)
+    ):
+        raise MetaAPIError(f'La suscripción de webhook de {channel} está incompleta o usa otra URL.')
+    page_subscriptions = _safe_json(_request(
+        'GET', _graph_url(f'{page_id}/subscribed_apps'), token=page_token,
+    ), 'la consulta de aplicaciones suscritas a la página')
+    page_entry = next((item for item in page_subscriptions.get('data') or [] if str(item.get('id', '')) == app_id), None)
+    page_fields = set((page_entry or {}).get('subscribed_fields') or [])
+    if not page_entry or not set(expected_fields).issubset(page_fields):
+        raise MetaAPIError('La aplicación no está suscrita a los mensajes de la página seleccionada.')
+    return {
+        'valid': True,
+        'object': object_name,
+        'callback_url': expected_url,
+        'fields': sorted(expected_fields),
+    }
 
 
 def build_authorization_url(user_id):
@@ -223,15 +328,18 @@ def get_facebook_pages(user_token):
 
 
 def get_page_details(page_id, user_token):
-    """Consulta una página concreta con el token de usuario validado."""
+    """Obtiene una página y sus tareas desde el inventario administrado.
 
-    response = _request(
-        'GET',
-        _graph_url(page_id),
-        token=user_token,
-        params={'fields': 'id,name,access_token,tasks,instagram_business_account'},
-    )
-    return _safe_json(response, 'la consulta de la página')
+    Meta expone ``tasks`` en ``/me/accounts``. Solicitar ese campo
+    directamente sobre el nodo Page devuelve OAuthException código 100 en
+    versiones actuales de Graph API.
+    """
+
+    expected = str(page_id)
+    for page in _get_all_pages(user_token):
+        if str(page.get('id', '')) == expected:
+            return page
+    raise MetaAPIError('Meta ya no confirmó el acceso a la página vinculada.')
 
 
 def get_instagram_account(instagram_account_id, page_token):
@@ -367,6 +475,12 @@ def select_accounts(connection, facebook_page_ids, instagram_account_ids):
             if str(account.get('id', '')) != instagram.instagram_account_id:
                 raise MetaAPIError('Meta no confirmó la cuenta profesional de Instagram.')
             verified_instagram[instagram.instagram_account_id] = account
+        ensure_oauth_webhook_subscriptions(
+            page.page_id,
+            details['access_token'],
+            facebook=facebook_selected,
+            instagram=instagram_selected,
+        )
 
     for page in pages:
         instagram = page.instagram_account if hasattr(page, 'instagram_account') else None

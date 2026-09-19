@@ -25,6 +25,7 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
     has_app_secret = serializers.SerializerMethodField()
     has_verify_token = serializers.SerializerMethodField()
     managed_by_meta_oauth = serializers.SerializerMethodField()
+    whatsapp_coexistence = serializers.SerializerMethodField()
 
     class Meta:
         model = ChannelIntegration
@@ -35,6 +36,7 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
             'connection_status', 'last_validated_at', 'last_webhook_at', 'last_error', 'disconnected_at',
             'access_token', 'app_secret', 'verify_token', 'has_access_token',
             'has_app_secret', 'has_verify_token', 'managed_by_meta_oauth',
+            'whatsapp_coexistence',
             'created_at', 'updated_at',
         )
         read_only_fields = (
@@ -65,10 +67,20 @@ class ChannelIntegrationSerializer(serializers.ModelSerializer):
 
         return bool(obj.meta_connection_id or obj.meta_facebook_page_id)
 
+    def get_whatsapp_coexistence(self, obj):
+        return bool(
+            obj.channel == ChannelIntegration.CHANNEL_WHATSAPP
+            and (obj.configuration or {}).get('coexistence') is True
+        )
+
     def validate(self, attrs):
         channel = attrs.get('channel', getattr(self.instance, 'channel', None))
         if channel == ChannelIntegration.CHANNEL_ECOMMERCE:
             raise serializers.ValidationError({'channel': 'Ecommerce no requiere una integración Meta.'})
+        if channel == ChannelIntegration.CHANNEL_WHATSAPP_WEB:
+            raise serializers.ValidationError({
+                'channel': 'WhatsApp Web experimental se administra únicamente desde el gateway QR.'
+            })
         if self.instance:
             identity_fields = {'channel', 'external_account_id', 'phone_number_id', 'page_id', 'instagram_account_id'}
             identity_changed = any(
@@ -198,3 +210,12 @@ class MetaAccountSelectionSerializer(serializers.Serializer):
         if not attrs['facebook_page_ids'] and not attrs['instagram_account_ids']:
             raise serializers.ValidationError('Seleccione al menos una página o cuenta de Instagram.')
         return attrs
+
+
+class WhatsAppCoexistenceCompletionSerializer(serializers.Serializer):
+    state = serializers.CharField(min_length=20, max_length=256, trim_whitespace=False)
+    code = serializers.CharField(min_length=3, max_length=4096, trim_whitespace=False)
+    event = serializers.ChoiceField(choices=['FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'])
+    waba_id = serializers.RegexField(r'^\d{5,120}$', max_length=120)
+    phone_number_id = serializers.RegexField(r'^\d{5,120}$', max_length=120, required=False, allow_blank=True)
+    business_id = serializers.RegexField(r'^\d{5,120}$', max_length=120, required=False, allow_blank=True)

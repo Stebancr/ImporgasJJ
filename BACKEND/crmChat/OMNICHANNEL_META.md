@@ -36,6 +36,29 @@ Reemplace `<DOMINIO_HTTPS>` por el dominio real con un certificado válido:
 El endpoint unificado detecta `whatsapp_business_account`, `page` o
 `instagram`. Los alias de canal rechazan un payload de otro producto.
 
+### Verify token del GET de suscripción
+
+La estrategia más simple usa `META_WEBHOOK_VERIFY_TOKEN` con el mismo valor en
+Facebook, Instagram, WhatsApp y el webhook unificado. También se admiten tokens
+independientes:
+
+```env
+META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM=
+META_WEBHOOK_VERIFY_TOKEN_FACEBOOK=
+META_WEBHOOK_VERIFY_TOKEN_WHATSAPP=
+```
+
+En un endpoint tipado, el token específico tiene prioridad y, si está vacío, se
+usa el global. El fallback por integración se limita al mismo canal. El
+endpoint común usa el token global. Los nombres
+`META_WEBHOOK_messages_TOKEN_INSTAGRAM` y
+`META_WEBHOOK_messages_TOKEN_Facebook` no son válidos.
+
+Docker Compose carga `.envdev` con `format: raw`; no se deben envolver estos
+valores en comillas porque las comillas se convertirían en parte del token. El
+GET utiliza exclusivamente `hub.mode`, `hub.challenge` y `hub.verify_token`.
+Los parámetros con guion bajo se ignoran.
+
 ## Credenciales necesarias
 
 Los access tokens los entrega Meta después de crear la aplicación, vincular los
@@ -47,6 +70,9 @@ Variables obligatorias o recomendadas en el backend:
   tokens guardados. Debe conservarse en el gestor de secretos del despliegue.
 - `META_WEBHOOK_VERIFY_TOKEN`: token aleatorio elegido por el administrador;
   puede configurarse globalmente o por integración desde el panel.
+- `META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM`,
+  `META_WEBHOOK_VERIFY_TOKEN_FACEBOOK` y
+  `META_WEBHOOK_VERIFY_TOKEN_WHATSAPP`: reemplazos opcionales por canal.
 - `META_APP_SECRET`: App Secret de Meta para la firma; puede configurarse
   globalmente o cifrado por integración desde el panel.
 - `META_GRAPH_API_URL=https://graph.facebook.com`.
@@ -68,11 +94,37 @@ Se requiere WABA ID, Phone Number ID, App ID, App Secret, verify token y un
 access token de usuario del sistema con los permisos aprobados de WhatsApp. La
 aplicación debe suscribirse a la WABA y al campo `messages`.
 
+Para un número que ya funciona en la aplicación WhatsApp Business, el panel
+ofrece **Conectar WhatsApp existente** mediante Embedded Signup/WhatsApp
+Business App Onboarding. Se requieren además:
+
+- `META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID`
+- `META_WHATSAPP_EMBEDDED_SIGNUP_VERSION=4`
+- `META_WHATSAPP_EMBEDDED_SIGNUP_STATE_MAX_AGE`
+
+`GET /api/meta/whatsapp/coexistence/config/` crea una sesión temporal ligada al
+administrador y devuelve solo App ID, Configuration ID y parámetros públicos.
+`POST /api/meta/whatsapp/coexistence/complete/` consume esa sesión una sola vez,
+intercambia el código en Django, comprueba WABA/número/permisos, suscribe el
+webhook y cifra el token. El flujo no llama al endpoint `/messages`, no crea
+plantillas y deja el bot deshabilitado inicialmente.
+
+El SDK se carga desde `https://connect.facebook.net/en_US/sdk.js`. El cliente
+usa `VITE_API_URL=/api` y el interceptor administrativo añade el JWT. El
+callback `/api/meta/callback/` pertenece a Facebook/Instagram y no participa en
+WhatsApp Coexistence.
+
 ### Facebook Messenger
 
 Se requiere Page ID, App ID, App Secret, verify token y Page Access Token. La
 página debe estar vinculada a la aplicación y esta debe contar con
 `pages_messaging`. Meta aplica su ventana y políticas de mensajería.
+
+La suscripción de la aplicación al objeto `page` debe apuntar a
+`META_FACEBOOK_WEBHOOK_URL` y contener `messages`, `messaging_postbacks`,
+`message_deliveries` y `message_reads`. El nombre actual es `message_reads`;
+`messaging_reads` es rechazado por Graph API. La página también debe mostrar la
+aplicación en `/<PAGE_ID>/subscribed_apps` con esos campos.
 
 ### Instagram
 
@@ -80,6 +132,21 @@ Se requiere Instagram Professional Account ID, App ID, App Secret, verify token
 y token autorizado por la cuenta profesional. Para Instagram Login se requiere
 al menos `instagram_business_basic` e
 `instagram_business_manage_messages`. Las conversaciones las inicia el usuario.
+
+La suscripción de la aplicación al objeto `instagram` debe apuntar a
+`META_INSTAGRAM_WEBHOOK_URL` y contener `messages` y `messaging_postbacks`. La
+página de Facebook vinculada debe tener la aplicación activa en
+`/<PAGE_ID>/subscribed_apps`.
+
+El flujo OAuth configura y comprueba estas suscripciones al seleccionar las
+cuentas. El botón **Probar** valida tanto la identidad remota como la URL, los
+campos de la aplicación y la asociación de la página. Los errores seguros se
+guardan en `ChannelIntegration.last_error` y aparecen en el panel.
+
+Meta conserva una sola URL de callback por objeto y aplicación. Si desarrollo y
+producción deben recibir eventos simultáneamente, use aplicaciones Meta
+separadas. Con una sola aplicación, la última suscripción configurada determina
+qué entorno recibe los webhooks.
 
 Configure las cuentas en `/admin/chat/integraciones`. Los secretos son campos de
 solo escritura: la API informa únicamente si están configurados.

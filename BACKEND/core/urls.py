@@ -30,6 +30,7 @@ urlpatterns = [
     path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.
     path('gestion/', include('gestion.urls')),
     path('crm-chat/', include('crmChat.urls')),
+    path('internal/whatsapp/', include('crmChat.apps.whatsapp_web.urls_internal')),
     # Meta usa un callback público independiente de la autenticación del CRM.
     path('meta/', include('crmChat.apps.meta.urls')),
     path('meta/whatsapp/', include('crmChat.apps.whatsapp.urls')),

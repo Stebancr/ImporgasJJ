@@ -27,7 +27,7 @@ peticiones API directas por HTTP a HTTPS; probar la API autenticada mediante
 - Registro DNS `A` de `djsolutions.io` hacia `2.25.225.216`.
 - Registro `www.djsolutions.io` como CNAME de `djsolutions.io`.
 - Puertos TCP 80 y 443 permitidos en el firewall.
-- Recursos para PostgreSQL, Django, Celery y `qwen2.5:1.5b` de Ollama.
+- Recursos para PostgreSQL, Django, Celery y `qwen:4b` de Ollama.
 - Credenciales reales de PostgreSQL, SMTP, Wompi y Meta en el servidor.
 
 ## 2. Respaldar el origen
@@ -198,7 +198,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml build
 
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d redis ollama
 docker compose --env-file .env.prod -f docker-compose.prod.yml exec ollama \
-  ollama pull "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+  ollama pull "${OLLAMA_MODEL:-qwen:4b}"
 
 docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm --user root backend \
   sh -c 'chown -R django:django /app/media /app/staticfiles'

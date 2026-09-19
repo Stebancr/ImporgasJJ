@@ -33,8 +33,8 @@ from .models import (
 from usuarios.models import Credenciales
 from .assignment import assign_session_automatically
 from .apps.meta.webhooks import normalize_payload
-from .apps.meta.services import MetaAPIError, dispatch_outbound_message, secret_store, disconnect_integration
-from .apps.meta.oauth import REQUIRED_SCOPES
+from .apps.meta.services import MetaAPIError, dispatch_outbound_message, graph_request, secret_store, disconnect_integration
+from .apps.meta.oauth import REQUIRED_SCOPES, ensure_oauth_webhook_subscriptions, get_page_details
 from .ollama_service import ollama_service
 from .tasks import (
     _assert_public_https,
@@ -44,6 +44,7 @@ from .tasks import (
     INACTIVITY_WARNING_TEXT,
 )
 from core.asgi import application
+from core.logging_filters import redact_webhook_tokens
 from ecommerce.models import Brand, Category, Product
 
 
@@ -322,6 +323,29 @@ class ChatInactivityTests(APITestCase):
 
 
 class OmnichannelModelTests(APITestCase):
+    @override_settings(
+        META_GRAPH_API_URL='https://graph.facebook.test',
+        META_CREDENTIALS_ENCRYPTION_KEY=Fernet.generate_key().decode('ascii'),
+    )
+    @patch('crmChat.apps.meta.services.requests.request')
+    def test_graph_error_is_saved_on_integration_without_exposing_token(self, request_mock):
+        token = 'private-page-token'
+        integration = ChannelIntegration.objects.create(
+            name='Facebook error', channel='facebook', active=True,
+            external_account_id='page-error', page_id='page-error', graph_api_version='v26.0',
+            access_token_encrypted=secret_store.encrypt(token),
+        )
+        request_mock.return_value = Mock(
+            ok=False, status_code=400, content=b'json', headers={},
+            json=lambda: {'error': {'code': 100, 'type': 'OAuthException', 'message': 'Campo inválido'}},
+        )
+        with self.assertRaises(MetaAPIError):
+            graph_request(integration, 'GET', 'page-error')
+        integration.refresh_from_db()
+        self.assertEqual(integration.connection_status, 'error')
+        self.assertIn('código 100', integration.last_error)
+        self.assertNotIn(token, integration.last_error)
+
     """Protege compatibilidad e idempotencia del esquema omnicanal."""
 
     def test_existing_conversation_defaults_to_ecommerce(self):
@@ -563,6 +587,100 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'direct-backend-challenge')
 
+    @override_settings(
+        META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='ig-special-+%<token>',
+        META_WEBHOOK_VERIFY_TOKEN_FACEBOOK='fb-special-token',
+        META_WEBHOOK_VERIFY_TOKEN_WHATSAPP='wa-special-token',
+    )
+    def test_typed_webhooks_use_only_their_channel_token(self):
+        instagram = self.client.get('/api/meta/instagram/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'ig-special-+%<token>',
+            'hub.challenge': 'instagram-challenge',
+        })
+        self.assertEqual(instagram.status_code, 200)
+        self.assertEqual(instagram.content, b'instagram-challenge')
+        self.assertTrue(instagram['Content-Type'].startswith('text/plain'))
+
+        facebook = self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'fb-special-token',
+            'hub.challenge': 'facebook-challenge',
+        })
+        self.assertEqual(facebook.status_code, 200)
+        self.assertEqual(facebook.content, b'facebook-challenge')
+        self.assertEqual(self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'ig-special-+%<token>',
+            'hub.challenge': 'must-not-return',
+        }).status_code, 403)
+
+    @override_settings(META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='instagram-secret')
+    def test_instagram_rejects_invalid_empty_and_non_official_parameters(self):
+        for candidate in ('wrong-token', ''):
+            response = self.client.get('/api/meta/instagram/webhook/', {
+                'hub.mode': 'subscribe',
+                'hub.verify_token': candidate,
+                'hub.challenge': 'must-not-return',
+            })
+            self.assertEqual(response.status_code, 403)
+            self.assertNotIn(candidate or 'instagram-secret', response.content.decode())
+        underscored = self.client.get('/api/meta/instagram/webhook/', {
+            'hub_mode': 'subscribe',
+            'hub_verify_token': 'instagram-secret',
+            'hub_challenge': 'must-not-return',
+        })
+        self.assertEqual(underscored.status_code, 403)
+
+    def test_unified_webhook_uses_global_token_and_rejects_unknown_payload(self):
+        accepted = self.client.get(reverse('meta-webhook'), {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'verify-test',
+            'hub.challenge': 'global-challenge',
+        })
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.content, b'global-challenge')
+        self.assertEqual(self.client.get(reverse('meta-webhook'), {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'wrong-global',
+            'hub.challenge': 'must-not-return',
+        }).status_code, 403)
+
+        body = json.dumps({'object': 'unknown', 'entry': []}).encode()
+        signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+        response = self.client.post(
+            reverse('meta-webhook'), data=body, content_type='application/json',
+            HTTP_X_HUB_SIGNATURE_256=signature,
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @override_settings(
+        META_WEBHOOK_VERIFY_TOKEN='',
+        META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='',
+    )
+    def test_hashed_integration_token_fallback_is_scoped_to_channel(self):
+        token = 'stored-instagram-token'
+        ChannelIntegration.objects.create(
+            name='Instagram hash', channel='instagram', active=True,
+            verify_token_digest=secret_store.digest(token),
+        )
+        self.assertEqual(self.client.get('/api/meta/instagram/webhook/', {
+            'hub.mode': 'subscribe', 'hub.verify_token': token, 'hub.challenge': 'ok',
+        }).status_code, 200)
+        self.assertEqual(self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe', 'hub.verify_token': token, 'hub.challenge': 'no',
+        }).status_code, 403)
+
+    def test_access_log_redaction_hides_both_meta_parameter_spellings(self):
+        token = 'never-log-this-token'
+        line = (
+            f'GET /api/meta/instagram/webhook/?hub.verify_token={token}'
+            f'&hub_verify_token={token}&hub.challenge=123 HTTP/1.1'
+        )
+        redacted = redact_webhook_tokens(line)
+        self.assertNotIn(token, redacted)
+        self.assertEqual(redacted.count('[REDACTED]'), 2)
+
     def test_invalid_signature_is_rejected(self):
         response = self._signed_post(signature='sha256=bad')
         self.assertEqual(response.status_code, 401)
@@ -605,6 +723,99 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(message.session.channel, 'whatsapp')
         self.assertEqual(WebhookEvent.objects.get().integration_id, self.integration.id)
         read_receipt.assert_called_once_with(message.id)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    def test_facebook_and_instagram_signed_events_create_crm_conversations(self, read_receipt):
+        cases = (
+            ('facebook', 'page-test', 'psid-test', '/api/meta/facebook/webhook/'),
+            ('instagram', 'ig-test', 'igsid-test', '/api/meta/instagram/webhook/'),
+        )
+        for channel, account_id, sender_id, endpoint in cases:
+            with self.subTest(channel=channel):
+                integration = ChannelIntegration.objects.create(
+                    name=f'{channel} pruebas', channel=channel, active=True,
+                    external_account_id=account_id,
+                    page_id=account_id if channel == 'facebook' else 'page-for-instagram',
+                    instagram_account_id=account_id if channel == 'instagram' else '',
+                    graph_api_version='v-test', configuration={'bot_enabled': False},
+                )
+                payload = {
+                    'object': 'page' if channel == 'facebook' else 'instagram',
+                    'entry': [{
+                        'id': account_id,
+                        'messaging': [{
+                            'sender': {'id': sender_id},
+                            'recipient': {'id': account_id},
+                            'timestamp': 1_700_000_000_000,
+                            'message': {'mid': f'mid.{channel}.test', 'text': f'Prueba {channel}'},
+                        }],
+                    }],
+                }
+                body = json.dumps(payload, separators=(',', ':')).encode()
+                signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+                with self.assertLogs('crmChat', level='INFO') as logs:
+                    response = self.client.post(
+                        endpoint, data=body, content_type='application/json',
+                        HTTP_X_HUB_SIGNATURE_256=signature,
+                    )
+                self.assertEqual(response.status_code, 200)
+                message = ChatMessage.objects.get(external_message_id=f'mid.{channel}.test')
+                self.assertEqual(message.session.channel, channel)
+                self.assertEqual(message.session.integration_id, integration.id)
+                self.assertEqual(message.direction, 'inbound')
+                integration.refresh_from_db()
+                self.assertEqual(integration.connection_status, 'connected')
+                self.assertIsNotNone(integration.last_webhook_at)
+                rendered_logs = '\n'.join(logs.output)
+                self.assertIn('Webhook Meta recibido', rendered_logs)
+                self.assertIn('Mensaje Meta persistido', rendered_logs)
+        self.assertEqual(read_receipt.call_count, 2)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.instagram.services.get_sender_profile')
+    def test_instagram_enriches_profile_and_reopens_same_conversation(self, profile, _read_receipt):
+        profile.return_value = {
+            'id': 'igsid-customer',
+            'name': 'Cliente Instagram Real',
+            'username': 'cliente_real',
+            'profile_pic': 'https://cdn.example.test/profile.jpg',
+        }
+        integration = ChannelIntegration.objects.create(
+            name='Instagram perfil', channel='instagram', active=True,
+            external_account_id='ig-profile', instagram_account_id='ig-profile',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+
+        def payload(message_id, text):
+            return {
+                'object': 'instagram',
+                'entry': [{
+                    'id': 'ig-profile',
+                    'messaging': [{
+                        'sender': {'id': 'igsid-customer'},
+                        'recipient': {'id': 'ig-profile'},
+                        'timestamp': 1_700_000_000_000,
+                        'message': {'mid': message_id, 'text': text},
+                    }],
+                }],
+            }
+
+        self.assertEqual(self._signed_post(payload('mid.ig.profile.1', 'Primer mensaje')).status_code, 200)
+        session = ChatSession.objects.get(integration=integration)
+        session.status = 'closed'
+        session.save(update_fields=['status'])
+
+        self.assertEqual(self._signed_post(payload('mid.ig.profile.2', 'Segundo mensaje')).status_code, 200)
+        session.refresh_from_db()
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='igsid-customer')
+        self.assertEqual(ChatSession.objects.filter(integration=integration).count(), 1)
+        self.assertEqual(session.status, 'bot')
+        self.assertEqual(session.messages.count(), 2)
+        self.assertEqual(session.user_name, 'Cliente Instagram Real')
+        self.assertEqual(identity.display_name, 'Cliente Instagram Real')
+        self.assertEqual(identity.contact.name, 'Cliente Instagram Real')
+        self.assertEqual(identity.contact.avatar_url, 'https://cdn.example.test/profile.jpg')
+        self.assertEqual(profile.call_count, 1)
 
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
     def test_whatsapp_requires_matching_waba_and_phone_and_reconnects_to_new_account(self, _receipt):
@@ -697,6 +908,9 @@ class MetaWebhookTests(APITestCase):
     META_GRAPH_API_URL='https://graph.facebook.test',
     META_GRAPH_API_VERSION='v26.0',
     META_REDIRECT_URI='https://crm.example.test/api/meta/callback/',
+    META_FACEBOOK_WEBHOOK_URL='https://crm.example.test/api/meta/facebook/webhook/',
+    META_INSTAGRAM_WEBHOOK_URL='https://crm.example.test/api/meta/instagram/webhook/',
+    META_WEBHOOK_VERIFY_TOKEN='webhook-verify-test',
     META_OAUTH_AUTHORIZE_URL='https://www.facebook.com',
     META_OAUTH_SCOPES=','.join(sorted(REQUIRED_SCOPES)),
     META_OAUTH_FRONTEND_REDIRECT='/admin/chat/integraciones',
@@ -711,9 +925,88 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         self.other_admin = Credenciales.objects.create(usuario='oauth_other', tipo_usuario=1, estado=1)
         self.client.force_authenticate(self.admin_user)
 
+    @patch('crmChat.apps.instagram.services.graph_request')
+    def test_instagram_facebook_login_sends_through_linked_page(self, graph_request_mock):
+        from crmChat.apps.instagram.services import send_text
+
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user,
+            facebook_user_id='facebook-routing',
+            access_token_encrypted='encrypted-user-token',
+        )
+        page = MetaFacebookPage.objects.create(
+            connection=connection,
+            page_id='page-routing',
+            page_name='Página routing',
+            page_access_token_encrypted='encrypted-page-token',
+        )
+        integration = ChannelIntegration.objects.create(
+            name='Instagram routing', channel='instagram', active=True,
+            instagram_account_id='ig-routing', external_account_id='ig-routing',
+            graph_api_version='v-test', meta_connection=connection, meta_facebook_page=page,
+        )
+        graph_request_mock.return_value = {'message_id': 'mid.sent'}
+
+        send_text(integration, 'igsid-recipient', 'Respuesta reactiva')
+
+        args, kwargs = graph_request_mock.call_args
+        self.assertEqual(args[1:3], ('POST', 'page-routing/messages'))
+        self.assertIsNone(kwargs['base_url'])
+        self.assertEqual(kwargs['json_body']['messaging_type'], 'RESPONSE')
+        self.assertEqual(kwargs['json_body']['recipient']['id'], 'igsid-recipient')
+
+    @patch('crmChat.apps.instagram.services.graph_request')
+    def test_instagram_login_keeps_native_send_endpoint(self, graph_request_mock):
+        from crmChat.apps.instagram.services import send_text
+
+        integration = ChannelIntegration.objects.create(
+            name='Instagram Login', channel='instagram', active=True,
+            instagram_account_id='ig-native', external_account_id='ig-native',
+            graph_api_version='v-test', configuration={},
+        )
+        graph_request_mock.return_value = {'message_id': 'mid.sent'}
+
+        send_text(integration, 'igsid-recipient', 'Respuesta reactiva')
+
+        args, kwargs = graph_request_mock.call_args
+        self.assertEqual(args[1:3], ('POST', 'ig-native/messages'))
+        self.assertEqual(kwargs['base_url'], 'https://graph.instagram.com')
+        self.assertNotIn('messaging_type', kwargs['json_body'])
+
     @staticmethod
     def _response(data, ok=True, status_code=200):
         return Mock(ok=ok, status_code=status_code, content=b'json', json=lambda: data)
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_page_details_reads_tasks_from_managed_pages_inventory(self, request_mock):
+        request_mock.return_value = self._response({'data': [{
+            'id': 'page-1', 'name': 'Página Uno', 'access_token': 'page-token',
+            'tasks': ['MESSAGING'], 'instagram_business_account': {'id': 'instagram-1'},
+        }]})
+        page = get_page_details('page-1', 'user-token')
+        self.assertEqual(page['tasks'], ['MESSAGING'])
+        requested_url = request_mock.call_args.args[1]
+        requested_fields = request_mock.call_args.kwargs['params']['fields']
+        self.assertTrue(requested_url.endswith('/me/accounts'))
+        self.assertIn('tasks', requested_fields)
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_selected_accounts_subscribe_app_objects_and_page_fields(self, request_mock):
+        request_mock.return_value = self._response({'success': True})
+        ensure_oauth_webhook_subscriptions(
+            'page-1', 'page-token', facebook=True, instagram=True,
+        )
+        self.assertEqual(request_mock.call_count, 3)
+        page_app = request_mock.call_args_list[0].kwargs['data']
+        instagram_app = request_mock.call_args_list[1].kwargs['data']
+        page_activation = request_mock.call_args_list[2].kwargs['data']
+        self.assertEqual(page_app['object'], 'page')
+        self.assertEqual(page_app['callback_url'], 'https://crm.example.test/api/meta/facebook/webhook/')
+        self.assertIn('message_reads', page_app['fields'])
+        self.assertNotIn('messaging_reads', page_app['fields'])
+        self.assertEqual(instagram_app['object'], 'instagram')
+        self.assertEqual(instagram_app['callback_url'], 'https://crm.example.test/api/meta/instagram/webhook/')
+        self.assertIn('messages', page_activation['subscribed_fields'])
 
     def test_oauth_start_generates_unique_state_without_whatsapp_scopes(self):
         first = self.client.get(reverse('meta-connect'))
@@ -796,10 +1089,13 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         self.assertNotIn('sensitive', response['Location'])
         self.assertFalse(MetaConnection.objects.exists())
 
+    @patch('crmChat.apps.meta.oauth.ensure_oauth_webhook_subscriptions')
     @patch('crmChat.apps.meta.oauth.get_instagram_account')
     @patch('crmChat.apps.meta.oauth.get_page_details')
     @patch('crmChat.apps.meta.oauth.validate_access_token')
-    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(self, validate_token, page_details, instagram_details):
+    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(
+        self, validate_token, page_details, instagram_details, ensure_subscriptions,
+    ):
         validate_token.return_value = {'is_valid': True, 'user_id': 'facebook-user-selection', 'scopes': sorted(REQUIRED_SCOPES)}
         page_details.return_value = {
             'id': 'page-selection', 'name': 'Página Selección',
@@ -837,6 +1133,9 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         instagram_payload = next(item for item in integrations.data if item['channel'] == 'instagram')
         self.assertTrue(instagram_payload['has_access_token'])
         self.assertTrue(instagram_payload['managed_by_meta_oauth'])
+        ensure_subscriptions.assert_called_once_with(
+            page.page_id, 'fresh-page-token', facebook=True, instagram=True,
+        )
 
         disconnected = self.client.delete(reverse('meta-connection-detail', args=[connection.pk]))
         self.assertEqual(disconnected.status_code, 204)
@@ -901,6 +1200,190 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         response = self.client.get(reverse('meta-callback'), {'error': 'access_denied'})
         self.assertIn('meta_oauth=denied', response['Location'])
         self.assertFalse(MetaConnection.objects.exists())
+
+
+@override_settings(
+    META_APP_ID='whatsapp-app-id',
+    META_APP_SECRET='whatsapp-app-secret',
+    META_GRAPH_API_URL='https://graph.facebook.test',
+    META_GRAPH_API_VERSION='v26.0',
+    META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID='coexistence-config-id',
+    META_WHATSAPP_EMBEDDED_SIGNUP_VERSION='4',
+    META_CREDENTIALS_ENCRYPTION_KEY=Fernet.generate_key().decode('ascii'),
+)
+class WhatsAppCoexistenceTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.admin = Credenciales.objects.create(usuario='coexistence_admin', tipo_usuario=1, estado=1)
+        self.client.force_authenticate(self.admin)
+
+    def test_configuration_is_admin_only_and_contains_no_secret(self):
+        response = self.client.get(reverse('whatsapp-coexistence-config'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['app_id'], 'whatsapp-app-id')
+        self.assertEqual(response.data['config_id'], 'coexistence-config-id')
+        self.assertEqual(response.data['feature_type'], 'whatsapp_business_app_onboarding')
+        self.assertNotIn('secret', json.dumps(response.data).lower())
+
+        user = Credenciales.objects.create(usuario='coexistence_customer', tipo_usuario=2, estado=1)
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.get(reverse('whatsapp-coexistence-config')).status_code, 403)
+
+    @patch('crmChat.apps.whatsapp.coexistence.validate_integration_connection')
+    @patch('crmChat.apps.whatsapp.coexistence.graph_request')
+    @patch('crmChat.apps.whatsapp.coexistence.validate_whatsapp_token_permissions')
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_signup_connects_existing_business_app_without_sending_messages(
+        self, token_request, validate_token, graph_request, validate_connection,
+    ):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=True, status_code=200, content=b'json',
+            json=lambda: {'access_token': 'coexistence-private-token'},
+        )
+        graph_request.side_effect = [
+            {
+                'id': '1111111111', 'name': 'IMPORGAS JJ',
+                'owner_business_info': {'id': '3333333333', 'name': 'IMPORGAS JJ'},
+            },
+            {'data': [{
+                'id': '2222222222', 'display_phone_number': '+57 300 111 2233',
+                'verified_name': 'IMPORGAS JJ', 'platform_type': 'CLOUD_API',
+            }]},
+            {'success': True},
+        ]
+        validate_connection.return_value = {
+            'valid': True, 'remote_id': '2222222222',
+            'display_phone_number': '+57 300 111 2233', 'name': 'IMPORGAS JJ',
+        }
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'],
+            'code': 'one-use-authorization-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '1111111111',
+            'phone_number_id': '2222222222',
+            'business_id': '3333333333',
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['integration']['whatsapp_coexistence'])
+        integration = ChannelIntegration.objects.get(channel='whatsapp')
+        self.assertTrue(integration.active)
+        self.assertEqual(integration.external_account_id, '1111111111')
+        self.assertEqual(integration.phone_number_id, '2222222222')
+        self.assertTrue(integration.configuration['coexistence'])
+        self.assertFalse(integration.configuration['bot_enabled'])
+        self.assertEqual(secret_store.decrypt(integration.access_token_encrypted), 'coexistence-private-token')
+        self.assertNotIn('coexistence-private-token', json.dumps(response.data))
+        validate_token.assert_called_once_with(integration)
+        self.assertEqual(graph_request.call_args_list[0].args[2], '1111111111')
+        self.assertEqual(graph_request.call_args_list[1].args[2], '1111111111/phone_numbers')
+        self.assertEqual(graph_request.call_args_list[2].args[1:3], ('POST', '1111111111/subscribed_apps'))
+        self.assertFalse(any('/messages' in str(call) for call in graph_request.call_args_list))
+        self.assertTrue(ChatAuditEvent.objects.filter(action='whatsapp.coexistence_connected').exists())
+
+        replay = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'replayed-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '1111111111', 'phone_number_id': '2222222222',
+        }, format='json')
+        self.assertEqual(replay.status_code, 400)
+        self.assertIn('expiró', replay.data['detail'])
+        self.assertEqual(token_request.call_count, 1)
+
+    @patch('crmChat.apps.whatsapp.coexistence.graph_request')
+    @patch('crmChat.apps.whatsapp.coexistence.validate_whatsapp_token_permissions')
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_failed_subscription_stays_inactive_and_records_safe_error(
+        self, token_request, _validate_token, graph_request,
+    ):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=True, status_code=200, content=b'json', json=lambda: {'access_token': 'private-token'},
+        )
+        graph_request.side_effect = [
+            {
+                'id': '4444444444', 'name': 'IMPORGAS JJ',
+                'owner_business_info': {'id': '6666666666', 'name': 'IMPORGAS JJ'},
+            },
+            {'data': [{'id': '5555555555', 'display_phone_number': '+57 300 000 0000'}]},
+            {'success': False},
+        ]
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'valid-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '4444444444', 'phone_number_id': '5555555555',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        integration = ChannelIntegration.objects.get(external_account_id='4444444444')
+        self.assertFalse(integration.active)
+        self.assertEqual(integration.connection_status, 'error')
+        self.assertNotIn('private-token', integration.last_error)
+        self.assertNotIn('private-token', json.dumps(response.data))
+
+    @patch('crmChat.apps.whatsapp.coexistence.graph_request')
+    @patch('crmChat.apps.whatsapp.coexistence.validate_whatsapp_token_permissions')
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_business_id_must_own_the_authorized_waba(
+        self, token_request, _validate_token, graph_request,
+    ):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=True, status_code=200, content=b'json', json=lambda: {'access_token': 'private-token'},
+        )
+        graph_request.return_value = {
+            'id': '7777777777',
+            'owner_business_info': {'id': '8888888888', 'name': 'Negocio autorizado'},
+        }
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'valid-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '7777777777', 'phone_number_id': '9999999999',
+            'business_id': '6666666666',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('no es el propietario', response.data['detail'])
+        integration = ChannelIntegration.objects.get(external_account_id='7777777777')
+        self.assertFalse(integration.active)
+        self.assertFalse(any('/messages' in str(call) for call in graph_request.call_args_list))
+
+    @override_settings(META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID='')
+    def test_missing_configuration_returns_explicit_safe_503(self):
+        response = self.client.get(reverse('whatsapp-coexistence-config'))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data['error'], 'configuration_missing')
+        self.assertEqual(response.data['phase'], 'configuration')
+        self.assertIn('META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID', response.data['detail'])
+        self.assertNotIn('whatsapp-app-secret', json.dumps(response.data))
+
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_meta_code_exchange_error_is_diagnostic_and_hides_code(self, token_request):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=False,
+            status_code=400,
+            content=b'json',
+            headers={'x-fb-request-id': 'safe-request-reference'},
+            json=lambda: {
+                'error': {
+                    'code': 100,
+                    'error_subcode': 36008,
+                    'message': 'Authorization code one-use-secret-code is invalid.',
+                },
+            },
+        )
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'one-use-secret-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '1111111111', 'phone_number_id': '2222222222',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['phase'], 'code_exchange')
+        self.assertEqual(response.data['http_status'], 400)
+        self.assertEqual(response.data['meta_code'], 100)
+        self.assertEqual(response.data['meta_subcode'], 36008)
+        self.assertEqual(response.data['request_id'], 'safe-request-reference')
+        self.assertNotIn('one-use-secret-code', json.dumps(response.data))
+        self.assertFalse(ChannelIntegration.objects.exists())
 
 
 class ChannelAdapterTests(APITestCase):

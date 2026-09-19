@@ -6,7 +6,19 @@ import {
   MenuItem, Stack, Switch, TextField, ThemeProvider, Typography,
 } from '@mui/material'
 import { adminChatService, type MetaConnection, type MetaIntegration, type MetaIntegrationInput } from '../services/admin_chat'
+import { launchWhatsAppCoexistence } from '../services/whatsappEmbeddedSignup'
+import WhatsAppWebGatewayCard from '../components/WhatsAppWebGatewayCard'
 import { crmTheme } from '../theme/crmTheme'
+
+const whatsappCoexistenceError = (reason: any): string => {
+  const status = reason.response?.status
+  const data = reason.response?.data ?? {}
+  if (status === 401) return 'La sesión administrativa expiró. Inicia sesión nuevamente antes de conectar WhatsApp.'
+  if (status === 403) return 'La cuenta autenticada no tiene permisos administrativos para conectar WhatsApp.'
+  if (status === 503) return data.detail ?? 'La configuración de WhatsApp Coexistence está incompleta en el backend.'
+  const requestId = data.request_id ? ` Referencia Meta: ${data.request_id}.` : ''
+  return `${data.detail ?? reason.message ?? 'No fue posible conectar WhatsApp Business.'}${requestId}`
+}
 
 const emptyForm: MetaIntegrationInput = {
   name: '', channel: 'whatsapp', app_id: '', external_account_id: '', business_id: '',
@@ -91,6 +103,21 @@ export default function MetaIntegrationsPage() {
       setError('')
     },
     onError: (reason: any) => setError(reason.response?.data?.detail ?? 'No fue posible desconectar.'),
+  })
+  const whatsappCoexistence = useMutation({
+    mutationFn: async () => {
+      const configuration = await adminChatService.getWhatsAppCoexistenceConfig()
+      const signup = await launchWhatsAppCoexistence(configuration)
+      return adminChatService.completeWhatsAppCoexistence({
+        ...signup,
+        state: configuration.state,
+      })
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ['meta-integrations'] })
+      setError('')
+    },
+    onError: (reason: any) => setError(whatsappCoexistenceError(reason)),
   })
   useEffect(() => {
     if (!connections.data) return
@@ -224,6 +251,29 @@ export default function MetaIntegrationsPage() {
           </CardContent></Card>
         )
       })}
+      <Divider><Chip label="WhatsApp Business" size="small" /></Divider>
+      <Card variant="outlined"><CardContent>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6">WhatsApp Business App con coexistencia</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Conecta mediante el flujo oficial de Meta el número que ya utilizas en la aplicación WhatsApp Business. Durante el proceso se escanea el código que muestra Meta. La aplicación móvil y el CRM podrán conservar el mismo número.
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Esta conexión solo autoriza la cuenta y el webhook. No envía mensajes de prueba, plantillas ni campañas; Ollama queda desactivado hasta que lo habilites para respuestas reactivas.
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            color="success"
+            disabled={whatsappCoexistence.isPending}
+            onClick={() => whatsappCoexistence.mutate()}
+          >
+            {whatsappCoexistence.isPending ? 'Conectando…' : 'Conectar WhatsApp existente'}
+          </Button>
+        </Stack>
+      </CardContent></Card>
+      <WhatsAppWebGatewayCard />
       <Divider><Chip label="Configuración manual y estado por canal" size="small" /></Divider>
       {new URLSearchParams(window.location.search).get('instagram_oauth') === 'success' && (
         <Alert severity="info">Instagram devolvió un token y una cuenta profesional. Valida la integración antes de activarla; la mensajería se confirma al recibir y responder un mensaje real.</Alert>
@@ -277,6 +327,7 @@ export default function MetaIntegrationsPage() {
               </Box>
               <Chip label={integrationStatus(integration).label} color={integrationStatus(integration).color} size="small" />
               <Chip label={integration.has_access_token ? 'Token configurado' : 'Sin token'} color={integration.has_access_token ? 'success' : 'warning'} size="small" />
+              {integration.channel === 'whatsapp' && integration.whatsapp_coexistence && <Chip label="Coexistencia" color="success" variant="outlined" size="small" />}
               {integration.managed_by_meta_oauth && <Chip label="Gestionado por OAuth Meta" color="info" size="small" />}
               <Button size="small" variant="outlined" disabled={validate.isPending || !integration.has_access_token} onClick={() => validate.mutate({ id: integration.id, activate: false })}>Validar Graph</Button>
               {!integration.active && integration.has_access_token && <Button size="small" variant="contained" disabled={validate.isPending} onClick={() => validate.mutate({ id: integration.id, activate: true })}>Validar y activar</Button>}
@@ -285,7 +336,7 @@ export default function MetaIntegrationsPage() {
                   Conectar Instagram
                 </Button>
               )}
-              {!integration.managed_by_meta_oauth && <Button size="small" onClick={() => { setEditingId(integration.id); setCredentialEdit({}) }}>Rotar credenciales</Button>}
+              {!integration.managed_by_meta_oauth && !integration.whatsapp_coexistence && <Button size="small" onClick={() => { setEditingId(integration.id); setCredentialEdit({}) }}>Rotar credenciales</Button>}
               {!integration.managed_by_meta_oauth && <Button size="small" color="error" disabled={disconnectIntegration.isPending || integration.connection_status === 'disconnected'} onClick={() => window.confirm('¿Desconectar esta cuenta? Sus conversaciones se conservarán.') && disconnectIntegration.mutate(integration.id)}>Desconectar</Button>}
             </Stack>
             {integration.active && <FormControlLabel

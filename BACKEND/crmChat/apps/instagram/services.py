@@ -164,17 +164,42 @@ def exchange_authorization_code(integration, code):
 
 
 def _send(integration, recipient_id, payload):
-    # Las cuentas conectadas mediante Facebook Login usan graph.facebook.com
-    # y el Page Access Token relacionado; se conserva Instagram Login legado.
-    base_url = None if integration.meta_facebook_page_id else integration.configuration.get('api_base_url', 'https://graph.instagram.com')
+    # Facebook Login usa el Messenger Platform Send API de la página enlazada
+    # y su Page Access Token. Instagram Login usa el host/API nativo de Instagram.
+    if integration.meta_facebook_page_id:
+        account_id = integration.meta_facebook_page.page_id
+        base_url = None
+    else:
+        account_id = integration.instagram_account_id
+        base_url = integration.configuration.get('api_base_url', 'https://graph.instagram.com')
     body = {'recipient': {'id': recipient_id}}
+    if integration.meta_facebook_page_id:
+        body['messaging_type'] = 'RESPONSE'
     body.update(payload)
     return graph_request(
         integration,
         'POST',
-        f'{integration.instagram_account_id}/messages',
+        f'{account_id}/messages',
         json_body=body,
         base_url=base_url,
+    )
+
+
+def get_sender_profile(integration, sender_id):
+    """Obtiene el perfil público del remitente sin convertir un fallo opcional en error de conexión."""
+
+    base_url = (
+        None
+        if integration.meta_facebook_page_id
+        else integration.configuration.get('api_base_url', 'https://graph.instagram.com')
+    )
+    return graph_request(
+        integration,
+        'GET',
+        sender_id,
+        params={'fields': 'id,name,username,profile_pic'},
+        base_url=base_url,
+        record_error=False,
     )
 
 

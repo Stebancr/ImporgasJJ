@@ -5,7 +5,8 @@ import type { Channel } from '../services/admin_chat'
 
 const channelConfig = {
   ecommerce: { label: 'Ecommerce', color: '#c2410c', Icon: ShoppingBag },
-  whatsapp: { label: 'WhatsApp', color: '#16a34a', Icon: MessageCircle },
+  whatsapp: { label: 'WhatsApp Cloud', color: '#16a34a', Icon: MessageCircle },
+  whatsapp_web: { label: 'WhatsApp Web experimental', color: '#15803d', Icon: MessageCircle },
   facebook: { label: 'Facebook', color: '#2563eb', Icon: Facebook },
   instagram: { label: 'Instagram', color: '#a21caf', Icon: Instagram },
 } satisfies Record<Channel, { label: string; color: string; Icon: typeof MessageCircle }>

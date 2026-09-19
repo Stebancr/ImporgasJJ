@@ -37,6 +37,18 @@ class SecretConfigurationError(RuntimeError):
 class MetaAPIError(RuntimeError):
     """Error seguro de comunicación con Graph API."""
 
+    def __init__(
+        self, message, *, http_status=None, meta_code=None, meta_subcode=None,
+        request_id='', endpoint='', phase='',
+    ):
+        super().__init__(message)
+        self.http_status = http_status
+        self.meta_code = meta_code
+        self.meta_subcode = meta_subcode
+        self.request_id = request_id
+        self.endpoint = endpoint
+        self.phase = phase
+
 
 class UnmatchedIntegrationError(ValueError):
     """Evento auténtico de una cuenta no conectada; no debe reintentarse."""
@@ -73,16 +85,28 @@ class SecretStore:
 secret_store = SecretStore()
 
 
-def verify_webhook_token(candidate):
-    """Compara el token de verificación global o los hashes configurados."""
+def verify_webhook_token(candidate, channel=''):
+    """Compara el token global/específico o el hash del canal configurado."""
 
     if not candidate:
         return False
-    global_token = getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN', '')
-    if global_token and hmac.compare_digest(candidate, global_token):
+    setting_by_channel = {
+        ChannelIntegration.CHANNEL_INSTAGRAM: 'META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM',
+        ChannelIntegration.CHANNEL_FACEBOOK: 'META_WEBHOOK_VERIFY_TOKEN_FACEBOOK',
+        ChannelIntegration.CHANNEL_WHATSAPP: 'META_WEBHOOK_VERIFY_TOKEN_WHATSAPP',
+    }
+    specific_name = setting_by_channel.get(channel)
+    specific_token = getattr(settings, specific_name, '') if specific_name else ''
+    # Si existe un token específico, el endpoint tipado no acepta el global.
+    # Si no existe, conserva compatibilidad con la estrategia unificada.
+    configured_token = specific_token or getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN', '')
+    if configured_token and hmac.compare_digest(candidate, configured_token):
         return True
     digest = secret_store.digest(candidate)
-    return ChannelIntegration.objects.filter(active=True, verify_token_digest=digest).exists()
+    integrations = ChannelIntegration.objects.filter(active=True, verify_token_digest=digest)
+    if channel:
+        integrations = integrations.filter(channel=channel)
+    return integrations.exists()
 
 
 def _candidate_app_secrets(channel=''):
@@ -112,7 +136,19 @@ def verify_webhook_signature(raw_body, signature_header, channel=''):
     return False
 
 
-def graph_request(integration, method, path, *, json_body=None, params=None, base_url=None):
+def _record_integration_error(integration, detail):
+    safe_detail = ' '.join(str(detail).split())[:500]
+    if getattr(integration, 'pk', None):
+        ChannelIntegration.objects.filter(pk=integration.pk).update(
+            connection_status='error', last_error=safe_detail,
+        )
+    return safe_detail
+
+
+def graph_request(
+    integration, method, path, *, json_body=None, params=None, base_url=None,
+    record_error=True,
+):
     """Ejecuta una solicitud Graph sin incluir tokens en URL, logs o errores."""
 
     encrypted_token = integration.access_token_encrypted
@@ -120,10 +156,16 @@ def graph_request(integration, method, path, *, json_body=None, params=None, bas
         encrypted_token = integration.meta_facebook_page.page_access_token_encrypted
     token = secret_store.decrypt(encrypted_token)
     if not token:
-        raise MetaAPIError('La integración no tiene token de acceso.')
+        detail = 'La integración no tiene token de acceso.'
+        if record_error:
+            detail = _record_integration_error(integration, detail)
+        raise MetaAPIError(detail)
     version = integration.graph_api_version
     if not version:
-        raise MetaAPIError('La integración no tiene versión de Graph API.')
+        detail = 'La integración no tiene versión de Graph API.'
+        if record_error:
+            detail = _record_integration_error(integration, detail)
+        raise MetaAPIError(detail)
     root = (base_url or getattr(settings, 'META_GRAPH_API_URL', 'https://graph.facebook.com')).rstrip('/')
     url = f"{root}/{version}/{path.lstrip('/')}"
     try:
@@ -145,17 +187,41 @@ def graph_request(integration, method, path, *, json_body=None, params=None, bas
             # Graph puede devolver saltos de línea y textos extensos. Se conserva el
             # motivo útil, sin registrar URL, cabeceras ni el token de acceso.
             detail = ' '.join(str(detail).replace(token, '[credencial oculta]').split())[:500]
+            request_id = str(
+                response.headers.get('x-fb-request-id')
+                or response.headers.get('x-fb-trace-id')
+                or error.get('fbtrace_id')
+                or ''
+            )[:120]
             logger.warning(
-                'Meta Graph API rechazó una solicitud: status=%s code=%s subcode=%s detail=%s',
-                response.status_code, code, subcode or '-', detail,
+                'Meta Graph API rechazó una solicitud: integration_id=%s method=%s endpoint=%s '
+                'status=%s code=%s subcode=%s request_id=%s detail=%s',
+                integration.pk, method.upper(), path.split('?', 1)[0], response.status_code,
+                code, subcode or '-', request_id or '-', detail,
             )
             subcode_text = f', subcódigo {subcode}' if subcode else ''
-            raise MetaAPIError(
+            error_message = (
                 f'Graph API rechazó la solicitud ({response.status_code}, código {code}{subcode_text}): {detail}'
+            )
+            visible_error = (
+                _record_integration_error(integration, error_message)
+                if record_error else error_message
+            )
+            raise MetaAPIError(
+                visible_error,
+                http_status=response.status_code,
+                meta_code=code,
+                meta_subcode=subcode,
+                request_id=request_id,
+                endpoint=path.split('?', 1)[0],
+                phase='graph_validation',
             )
         return data
     except requests.RequestException as exc:
-        raise MetaAPIError('No fue posible conectar con Meta Graph API.') from exc
+        detail = 'No fue posible conectar con Meta Graph API.'
+        if record_error:
+            detail = _record_integration_error(integration, detail)
+        raise MetaAPIError(detail) from exc
 
 
 def validate_whatsapp_token_permissions(integration):
@@ -208,7 +274,7 @@ def validate_integration_connection(integration):
     """Comprueba identidad y permisos sin enviar mensajes de prueba."""
 
     if integration.meta_connection_id:
-        from .oauth import get_page_details, validate_access_token
+        from .oauth import get_page_details, validate_access_token, validate_oauth_webhook_subscriptions
 
         connection = integration.meta_connection
         if not connection.access_token_encrypted or connection.token_status in {'revoked', 'expired', 'error'}:
@@ -229,6 +295,12 @@ def validate_integration_connection(integration):
             linked = page_data.get('instagram_business_account') or {}
             if str(linked.get('id', '')) != integration.instagram_account_id:
                 raise MetaAPIError('Instagram ya no está asociada a la página autorizada.')
+        if integration.channel in {'facebook', 'instagram'}:
+            validate_oauth_webhook_subscriptions(
+                integration.channel,
+                page.page_id,
+                page_data['access_token'],
+            )
 
     if integration.channel == 'whatsapp':
         if not integration.external_account_id or not integration.phone_number_id:
@@ -453,28 +525,96 @@ def persist_normalized_message(event):
         integration=integration,
         external_id=event.sender_id,
     ).first()
+    profile = {}
+    resolved_sender_name = event.sender_name
+    if event.channel == ChannelIntegration.CHANNEL_INSTAGRAM and (
+        not identity
+        or not identity.display_name
+        or identity.contact.name == f'Cliente {event.channel}'
+    ):
+        try:
+            from crmChat.apps.instagram.services import get_sender_profile
+
+            profile = get_sender_profile(integration, event.sender_id)
+            resolved_sender_name = (
+                resolved_sender_name
+                or str(profile.get('name') or '').strip()
+                or str(profile.get('username') or '').strip()
+            )[:200]
+            logger.info(
+                'Perfil Meta resuelto: channel=%s integration_id=%s sender=%s has_name=%s.',
+                event.channel, integration.id, _mask_destination(event.sender_id),
+                bool(resolved_sender_name),
+            )
+        except MetaAPIError as exc:
+            logger.warning(
+                'No fue posible enriquecer el perfil Meta: channel=%s integration_id=%s '
+                'sender=%s error=%s.',
+                event.channel, integration.id, _mask_destination(event.sender_id), str(exc)[:300],
+            )
+    contact_created = False
     if not identity:
-        contact = CRMContact.objects.create(name=event.sender_name or f'Cliente {event.channel}')
+        contact = CRMContact.objects.create(
+            name=resolved_sender_name or f'Cliente {event.channel}',
+            avatar_url=str(profile.get('profile_pic') or '')[:1000],
+        )
         identity = ChannelIdentity.objects.create(
             integration=integration,
             external_id=event.sender_id,
             contact=contact,
-            display_name=event.sender_name,
+            display_name=resolved_sender_name,
+            profile_data={
+                key: profile[key]
+                for key in ('id', 'name', 'username', 'profile_pic')
+                if profile.get(key)
+            },
         )
+        contact_created = True
     contact = identity.contact
-    if event.sender_name and contact.name != event.sender_name:
-        contact.name = event.sender_name
-        contact.save(update_fields=['name', 'updated_at'])
+    contact_update_fields = []
+    if resolved_sender_name and contact.name != resolved_sender_name:
+        contact.name = resolved_sender_name
+        contact_update_fields.append('name')
+    profile_picture = str(profile.get('profile_pic') or '')[:1000]
+    if profile_picture and contact.avatar_url != profile_picture:
+        contact.avatar_url = profile_picture
+        contact_update_fields.append('avatar_url')
+    if contact_update_fields:
+        contact.save(update_fields=[*contact_update_fields, 'updated_at'])
+    if resolved_sender_name and identity.display_name != resolved_sender_name:
+        identity.display_name = resolved_sender_name
+        identity.profile_data = {
+            **(identity.profile_data or {}),
+            **{
+                key: profile[key]
+                for key in ('id', 'name', 'username', 'profile_pic')
+                if profile.get(key)
+            },
+        }
+        identity.save(update_fields=['display_name', 'profile_data', 'updated_at'])
+    logger.info(
+        'Identidad Meta resuelta: channel=%s integration_id=%s contact_id=%s created=%s.',
+        event.channel, integration.id, contact.id, contact_created,
+    )
 
-    session = ChatSession.objects.filter(
+    session_query = ChatSession.objects.filter(
         integration=integration,
         external_thread_id=event.sender_id,
-    ).exclude(status='closed').order_by('-created_at').first()
+    )
+    session = session_query.exclude(status='closed').order_by('-updated_at', '-id').first()
+    session_created = False
+    if session is None and event.channel == ChannelIntegration.CHANNEL_INSTAGRAM:
+        session = session_query.order_by('-updated_at', '-id').first()
+        if session is not None:
+            session.status = 'bot'
+            session.user_name = resolved_sender_name or contact.name
+            session.inactivity_warning_at = None
+            session.save(update_fields=['status', 'user_name', 'inactivity_warning_at', 'updated_at'])
     if session is None:
         session_defaults = {
             'contact': contact,
             'channel': event.channel,
-            'user_name': event.sender_name or contact.name,
+            'user_name': resolved_sender_name or contact.name,
             'user_cedula': event.sender_id,
             'status': 'bot',
         }
@@ -487,24 +627,36 @@ def persist_normalized_message(event):
                     external_thread_id=event.sender_id,
                     **session_defaults,
                 )
+                session_created = True
         except IntegrityError:
             session = ChatSession.objects.exclude(status='closed').get(
                 integration=integration,
                 external_thread_id=event.sender_id,
             )
-    message = ChatMessage.objects.create(
-        session=session,
-        text=event.text,
-        sender_type='user',
-        sender_name=event.sender_name or contact.name,
-        direction='inbound',
-        message_type=event.message_type,
-        external_message_id=event.external_message_id or None,
-        external_timestamp=_timestamp(event.timestamp),
-        reply_to_external_id=event.reply_to_external_id,
-        metadata=event.metadata,
-        status='received',
+    logger.info(
+        'Conversación Meta resuelta: channel=%s integration_id=%s contact_id=%s '
+        'session_id=%s created=%s.',
+        event.channel, integration.id, contact.id, session.id, session_created,
     )
+    try:
+        with transaction.atomic():
+            message = ChatMessage.objects.create(
+                session=session,
+                text=event.text,
+                sender_type='user',
+                sender_name=resolved_sender_name or contact.name,
+                direction='inbound',
+                message_type=event.message_type,
+                external_message_id=event.external_message_id or None,
+                external_timestamp=_timestamp(event.timestamp),
+                reply_to_external_id=event.reply_to_external_id,
+                metadata=event.metadata,
+                status='received',
+            )
+    except IntegrityError:
+        if not event.external_message_id:
+            raise
+        return ChatMessage.objects.get(external_message_id=event.external_message_id)
     for attachment in event.attachments:
         ChatAttachment.objects.create(
             message=message,
@@ -513,10 +665,16 @@ def persist_normalized_message(event):
             mime_type=attachment.get('mime_type', ''),
             metadata={key: value for key, value in attachment.items() if key not in {'token'}},
         )
-    session.last_customer_message_at = message.created_at
+    session.last_customer_message_at = message.external_timestamp or message.created_at
     session.inactivity_warning_at = None
     session.unread_by_agent += 1
     session.save(update_fields=['last_customer_message_at', 'inactivity_warning_at', 'unread_by_agent', 'updated_at'])
+    logger.info(
+        'Mensaje Meta persistido: channel=%s integration_id=%s contact_id=%s '
+        'session_id=%s message_id=%s type=%s attachments=%s.',
+        event.channel, integration.id, contact.id, session.id, message.id,
+        message.message_type, len(event.attachments),
+    )
     return message
 
 
@@ -578,6 +736,7 @@ def dispatch_outbound_message(message):
     if (
         session.channel in {
             ChannelIntegration.CHANNEL_WHATSAPP,
+            ChannelIntegration.CHANNEL_WHATSAPP_WEB,
             ChannelIntegration.CHANNEL_FACEBOOK,
             ChannelIntegration.CHANNEL_INSTAGRAM,
         }
@@ -608,7 +767,11 @@ def dispatch_outbound_message(message):
     )
     try:
         outbound_payload = message.metadata.get('outbound_payload', {})
-        if session.channel == ChannelIntegration.CHANNEL_WHATSAPP:
+        if session.channel == ChannelIntegration.CHANNEL_WHATSAPP_WEB:
+            from crmChat.apps.whatsapp_web.services import send_message as gateway_send
+            response = gateway_send(message, outbound_payload)
+            external_id = response.get('external_message_id', '')
+        elif session.channel == ChannelIntegration.CHANNEL_WHATSAPP:
             from crmChat.apps.whatsapp import services as channel_service
             if message.message_type == 'interactive':
                 response = channel_service.send_interactive(session.integration, recipient, outbound_payload)
@@ -639,7 +802,9 @@ def dispatch_outbound_message(message):
         message.external_message_id = external_id or None
         message.status = 'sent'
         message.direction = 'outbound'
-        message.save(update_fields=['external_message_id', 'status', 'direction'])
+        if message.external_timestamp is None:
+            message.external_timestamp = timezone.now()
+        message.save(update_fields=['external_message_id', 'status', 'direction', 'external_timestamp'])
         ChannelIntegration.objects.filter(pk=session.integration_id, active=True).update(
             connection_status='connected', last_error='',
         )
@@ -650,14 +815,17 @@ def dispatch_outbound_message(message):
         )
         return message
     except Exception as exc:
+        safe_error = ' '.join(str(exc).split())[:500]
         message.status = 'failed'
-        message.metadata = {**message.metadata, 'error': str(exc)[:500]}
+        message.metadata = {**message.metadata, 'error': safe_error}
         message.save(update_fields=['status', 'metadata'])
+        if session.integration_id:
+            ChannelIntegration.objects.filter(pk=session.integration_id).update(last_error=safe_error)
         logger.warning(
             'Falló envío externo: session_id=%s message_id=%s contact_id=%s channel=%s '
             'type=%s destination=%s error=%s',
             session.id, message.id, session.contact_id, session.channel,
-            message.message_type, _mask_destination(recipient), str(exc)[:500],
+            message.message_type, _mask_destination(recipient), safe_error,
         )
         if isinstance(exc, MetaAPIError):
             raise
@@ -687,34 +855,58 @@ def process_webhook_event(webhook_event):
     webhook_event.status = 'processing'
     webhook_event.attempts += 1
     webhook_event.save(update_fields=['status', 'attempts'])
+    integration_ids = set()
     try:
         normalized = normalize_payload(webhook_event.payload, webhook_event.channel)
+        logger.info(
+            'Webhook Meta normalizado: event_id=%s channel=%s events=%s attempt=%s.',
+            webhook_event.id, webhook_event.channel, len(normalized), webhook_event.attempts,
+        )
         messages = []
-        integration_ids = set()
         resolved = []
         for event in normalized:
             integration = _find_integration(event)
             if not integration:
                 raise UnmatchedIntegrationError(f'No hay una integración activa para {event.channel}.')
-            resolved.append((event, integration))
-        for event, integration in resolved:
             integration_ids.add(integration.pk)
+            logger.info(
+                'Integración Meta encontrada: event_id=%s channel=%s account_id=%s integration_id=%s.',
+                webhook_event.id, event.channel, event.integration_external_id, integration.pk,
+            )
+            resolved.append((event, integration))
+        if len(integration_ids) == 1:
+            webhook_event.integration_id = next(iter(integration_ids))
+            webhook_event.save(update_fields=['integration'])
+        for event, integration in resolved:
             message = persist_normalized_message(event)
             if message is not None:
                 messages.append(message)
         if integration_ids:
             ChannelIntegration.objects.filter(pk__in=integration_ids, active=True).update(
                 last_webhook_at=timezone.now(),
+                connection_status='connected',
+                last_error='',
             )
-        if len(integration_ids) == 1:
-            webhook_event.integration_id = next(iter(integration_ids))
         webhook_event.status = 'processed'
         webhook_event.processed_at = timezone.now()
         webhook_event.error_message = ''
         webhook_event.save(update_fields=['integration', 'status', 'processed_at', 'error_message'])
+        logger.info(
+            'Webhook Meta procesado: event_id=%s channel=%s integrations=%s messages=%s.',
+            webhook_event.id, webhook_event.channel, len(integration_ids), len(messages),
+        )
         return messages
     except Exception as exc:
+        safe_error = ' '.join(str(exc).split())[:500]
         webhook_event.status = 'failed'
-        webhook_event.error_message = str(exc)[:2000]
+        webhook_event.error_message = safe_error
         webhook_event.save(update_fields=['status', 'error_message'])
+        if integration_ids:
+            ChannelIntegration.objects.filter(pk__in=integration_ids).update(
+                connection_status='error', last_error=safe_error,
+            )
+        logger.warning(
+            'Webhook Meta falló: event_id=%s channel=%s integrations=%s error=%s.',
+            webhook_event.id, webhook_event.channel, len(integration_ids), safe_error,
+        )
         raise

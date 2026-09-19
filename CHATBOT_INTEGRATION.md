@@ -2,14 +2,14 @@
 
 ## Descripción General
 
-Sistema de chatbot inteligente integrado con Ollama (modelo qwen2.5:1.5b) que atiende automáticamente consultas simples de clientes y deriva a un agente humano cuando detecta intenciones de compra o servicio.
+Sistema de chatbot inteligente integrado con Ollama (modelo qwen:4b) que atiende automáticamente consultas simples de clientes y deriva a un agente humano cuando detecta intenciones de compra o servicio.
 
 ## Arquitectura
 
 ```
 ┌─────────────┐      ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
 │   Frontend  │─────▶│    Nginx    │─────▶│   Backend   │─────▶│   Ollama    │
-│  (Ecommerce)│      │  (Puerto 81)│      │   Django    │      │   qwen2.5   │
+│  (Ecommerce)│      │  (Puerto 81)│      │   Django    │      │   qwen:4b    │
 └─────────────┘      └─────────────┘      └─────────────┘      └─────────────┘
                                                   │
                                                   ▼
@@ -91,7 +91,7 @@ Obtener todos los mensajes de una sesión.
 
 ### 2. Ollama Service (Puerto 11434)
 
-**Modelo:** `qwen2.5:1.5b`
+**Modelo:** `qwen:4b`
 
 **Características:**
 - Responde preguntas informativas sobre productos, servicios, horarios
@@ -330,7 +330,7 @@ ollama:
 ### Descargar el Modelo
 
 ```bash
-docker exec ollama ollama pull qwen2.5:1.5b
+docker exec ollama ollama pull qwen:4b
 ```
 
 ### Verificar Modelos Instalados
@@ -344,7 +344,7 @@ docker exec ollama ollama list
 ```bash
 # Ollama Configuration
 OLLAMA_API_URL=http://ollama:11434/api/chat
-OLLAMA_MODEL=qwen2.5:1.5b
+OLLAMA_MODEL=qwen:4b
 ```
 
 ## Comandos Útiles
@@ -361,7 +361,7 @@ docker logs -f ollama
 
 ### Probar Ollama Directamente
 ```bash
-docker exec -it ollama ollama run qwen2.5:1.5b
+docker exec -it ollama ollama run qwen:4b
 ```
 
 ### Reiniciar Servicios
@@ -397,6 +397,71 @@ Estado: waiting → Un agente debe tomar la conversación
 Agente: "Hola, soy Juan. ¿En qué puedo ayudarte con tu compra?"
 Estado: active
 ```
+
+## WhatsApp Business App con coexistencia
+
+El canal de WhatsApp puede conectarse mediante **Embedded Signup** con la
+modalidad `whatsapp_business_app_onboarding`. Esto permite autorizar en Cloud
+API un número que continúa en la aplicación WhatsApp Business, sin crear otro
+sistema de conversaciones: los mensajes recibidos siguen el flujo existente
+`WebhookEvent → Celery → ChatSession → ChatMessage → Ollama/asesor`.
+
+Desde `/admin/chat/integraciones`, pulse **Conectar WhatsApp existente**. El
+navegador abre el diálogo oficial de Meta y el backend:
+
+1. Intercambia el código temporal usando el App Secret únicamente en Django.
+2. Comprueba permisos, WABA ID y Phone Number ID contra Graph API.
+3. Suscribe la aplicación al webhook del WABA.
+4. Cifra el access token y activa la integración solo si las validaciones pasan.
+5. Mantiene `bot_enabled=false`; el administrador puede habilitar después las
+   respuestas reactivas de Ollama para esa cuenta.
+
+El proceso de conexión no envía mensajes, no crea plantillas, no activa
+campañas y no realiza pruebas de envío. Ollama solo responde cuando entra un
+mensaje real del cliente y la conversación está activa.
+
+Variables de backend necesarias:
+
+```bash
+META_APP_ID=
+META_APP_SECRET=
+META_GRAPH_API_URL=https://graph.facebook.com
+META_GRAPH_API_VERSION=v26.0
+META_CREDENTIALS_ENCRYPTION_KEY=
+META_WEBHOOK_VERIFY_TOKEN=
+META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM=
+META_WEBHOOK_VERIFY_TOKEN_FACEBOOK=
+META_WEBHOOK_VERIFY_TOKEN_WHATSAPP=
+META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID=
+META_WHATSAPP_EMBEDDED_SIGNUP_VERSION=4
+META_WHATSAPP_EMBEDDED_SIGNUP_STATE_MAX_AGE=600
+```
+
+En Meta Developers se debe crear una configuración de Embedded Signup que
+incluya **WhatsApp Business App Onboarding**, publicar la aplicación con los
+permisos aprobados y configurar el producto Webhooks para el objeto
+`whatsapp_business_account` y el campo `messages`. El Configuration ID se
+guarda en `META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID`; nunca se coloca el App
+Secret ni el access token en variables `VITE_`.
+
+### Direcciones por entorno
+
+Los IDs y credenciales de DEV y PROD deben pertenecer a configuraciones
+independientes de Meta. Los valores secretos no se documentan en el repositorio.
+
+| Entorno | Frontend | API | Webhook WhatsApp | Config ID |
+| --- | --- | --- | --- | --- |
+| DEV local | `http://localhost/admin/chat/integraciones` | `http://localhost/api` | `https://v8jsj64l-8000.use.devtunnels.ms/api/meta/whatsapp/webhook/` | `<CONFIG_ID_DEV>` |
+| PROD | `https://djsolutions.io/admin/chat/integraciones` | `https://djsolutions.io/api` | `https://djsolutions.io/api/meta/whatsapp/webhook/` | `<CONFIG_ID_PROD>` |
+
+El túnel indicado pertenece solamente a DEV y puede cambiar. Cuando cambie se
+deben actualizar `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`,
+`CSRF_TRUSTED_ORIGINS`, App Domains y la URL pública del webhook en Meta. Para
+usar Embedded Signup desde fuera del equipo, el frontend de DEV también debe
+publicarse bajo HTTPS y registrar ese dominio en Meta Developers.
+
+`META_REDIRECT_URI` sigue reservado para Facebook/Instagram. WhatsApp termina
+exclusivamente en `POST /api/meta/whatsapp/coexistence/complete/`.
 
 ## Monitoreo para Agentes
 
@@ -437,3 +502,8 @@ Los agentes pueden ver las sesiones pendientes en:
 ### El bot no deriva a agente
 - Verificar logs del backend para ver si detecta las palabras clave
 - Las palabras clave están en `ollama_service.py` → `NEEDS_AGENT_KEYWORDS`
+# Canal WhatsApp Web experimental
+
+El servicio independiente [`whatsapp-gateway/`](whatsapp-gateway/README.md) integra una sola sesión de WhatsApp Web mediante Baileys y QR. Usa el canal interno `whatsapp_web`; no es WhatsApp Coexistence, no utiliza WABA, Cloud API ni Graph API y permanece separado de la integración oficial `whatsapp`.
+
+El bot sigue siendo reactivo: solo se encola después de un mensaje real entrante y cuando `bot_enabled` está activo en la integración. No se implementan plantillas, campañas ni mensajes proactivos. El gateway puede desconectarse o ser bloqueado por WhatsApp y no garantiza recuperar todo el historial.

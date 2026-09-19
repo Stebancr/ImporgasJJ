@@ -14,3 +14,7 @@ frontend/src/services/axios.js
 
 **/.npm-cache/
 **/*.tsbuildinfo
+whatsapp-gateway/node_modules/
+whatsapp-gateway/dist/
+whatsapp-gateway/auth/
+whatsapp-gateway/media/

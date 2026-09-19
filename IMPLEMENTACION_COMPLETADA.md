@@ -2,7 +2,7 @@
 
 ## Resumen Ejecutivo
 
-Se ha completado exitosamente la integración del chatbot basado en Ollama (modelo qwen2.5:1.5b) con el CRM y el ecommerce de Gasoductos JJ. El sistema ahora:
+Se ha completado exitosamente la integración del chatbot basado en Ollama (modelo qwen:4b) con el CRM y el ecommerce de Gasoductos JJ. El sistema ahora:
 
 - ✅ Responde automáticamente preguntas simples de clientes
 - ✅ Detecta intenciones de compra/servicio y deriva a agente humano
@@ -31,7 +31,7 @@ Se ha completado exitosamente la integración del chatbot basado en Ollama (mode
            │              - Gestiona sesiones
            ▼              - Detecta intención
 ┌─────────────────────┐
-│   Ollama (11434)    │  Modelo qwen2.5:1.5b
+│   Ollama (11434)    │  Modelo qwen:4b
 │   IA Conversacional │  - Responde preguntas
 └─────────────────────┘  - Mantiene contexto
            │
@@ -67,7 +67,7 @@ Se ha completado exitosamente la integración del chatbot basado en Ollama (mode
 4. **`BACKEND/core/settings.py`** (MODIFICADO)
    ```python
    OLLAMA_API_URL = 'http://ollama:11434/api/chat'
-   OLLAMA_MODEL = 'qwen2.5:1.5b'
+   OLLAMA_MODEL = 'qwen:4b'
    ```
 
 ### Frontend (React/TypeScript)
@@ -86,7 +86,7 @@ Se ha completado exitosamente la integración del chatbot basado en Ollama (mode
 
 1. **`docker-compose.dev.yml`** (YA EXISTÍA)
    - Servicio `ollama` ya configurado
-   - Modelo `qwen2.5:1.5b` descargado
+   - Modelo `qwen:4b` descargado
    - Red compartida `shared_net` para comunicación
 
 ## Endpoints de la API
@@ -248,7 +248,7 @@ docker-compose -f docker-compose.dev.yml restart backend ollama
 
 ### Probar Ollama directamente
 ```bash
-docker exec -it ollama ollama run qwen2.5:1.5b
+docker exec -it ollama ollama run qwen:4b
 ```
 
 ### Verificar modelos instalados
@@ -339,5 +339,5 @@ Para cualquier duda o problema con la integración:
 
 **Estado:** ✅ PRODUCCIÓN (Integración completada y probada)  
 **Fecha:** 2026-07-23  
-**Versión del modelo:** qwen2.5:1.5b  
+**Versión del modelo:** qwen:4b  
 **Contenedores activos:** backend, ollama, postgres, nginx  

@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 from django.db import transaction
 from django.db.models import F, Q
+from django.db.models.functions import Coalesce
 from django.conf import settings
 
 from .models import AssignmentQueue, ChannelIntegration, ChatAuditEvent, ChatSession, ChatMessage, QueueMember
@@ -54,6 +55,10 @@ def _serialize_session(s, last_msg=None):
 
 
 def _serialize_message(m):
+    metadata = m.metadata or {}
+    origin = metadata.get('origin')
+    if not origin:
+        origin = 'bot' if m.sender_type == 'bot' else ('customer' if m.direction == 'inbound' else 'crm')
     return {
         'id':          m.id,
         'text':        m.text,
@@ -62,11 +67,18 @@ def _serialize_message(m):
         'direction':   m.direction,
         'message_type': m.message_type,
         'status':      m.status,
+        'error':       str(metadata.get('error') or '')[:500],
         'external_message_id': m.external_message_id,
+        'origin': origin,
+        'external_timestamp': m.external_timestamp,
+        'timestamp': m.external_timestamp or m.created_at,
         'attachments': [
             {
                 'id': attachment.id,
-                'url': attachment.file.url if attachment.file else '',
+                'url': (
+                    f'/api/crm-chat/whatsapp-web/attachments/{attachment.id}/'
+                    if attachment.metadata.get('protected') else (attachment.file.url if attachment.file else '')
+                ),
                 'name': attachment.original_name,
                 'mime_type': attachment.mime_type,
                 'size': attachment.size,
@@ -110,7 +122,9 @@ class SessionListCreateView(APIView):
 
         result = []
         for s in qs.order_by('-updated_at')[:100]:
-            last = s.messages.last()
+            last = s.messages.annotate(
+                activity_at=Coalesce('external_timestamp', 'created_at'),
+            ).order_by('-activity_at', '-id').first()
             result.append(_serialize_session(s, last.text if last else None))
         return Response(result)
 
@@ -259,7 +273,9 @@ class MessageListCreateView(APIView):
         if err:
             return err
 
-        qs = session.messages.all()
+        qs = session.messages.annotate(
+            activity_at=Coalesce('external_timestamp', 'created_at'),
+        ).order_by('activity_at', 'id')
         after = request.query_params.get('after')
         if after:
             try:
@@ -361,7 +377,7 @@ class AssignmentQueueListCreateView(APIView):
         channels = request.data.get('channels') or []
         if not name or not isinstance(channels, list):
             return Response({'error': 'Nombre y channels son obligatorios'}, status=400)
-        valid_channels = {'ecommerce', 'whatsapp', 'facebook', 'instagram'}
+        valid_channels = {'ecommerce', 'whatsapp', 'whatsapp_web', 'facebook', 'instagram'}
         if any(channel not in valid_channels for channel in channels):
             return Response({'error': 'Canal no permitido'}, status=400)
         queue = AssignmentQueue.objects.create(
@@ -407,7 +423,7 @@ class AssignmentQueueDetailView(AssignmentQueueListCreateView):
             queue = AssignmentQueue.objects.get(pk=pk)
         except AssignmentQueue.DoesNotExist:
             return Response({'error': 'Cola no encontrada'}, status=404)
-        valid_channels = {'ecommerce', 'whatsapp', 'facebook', 'instagram'}
+        valid_channels = {'ecommerce', 'whatsapp', 'whatsapp_web', 'facebook', 'instagram'}
         if 'name' in request.data and not str(request.data['name']).strip():
             return Response({'error': 'El nombre no puede estar vacío'}, status=400)
         if 'channels' in request.data:

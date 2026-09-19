@@ -27,12 +27,16 @@ export interface ChatMessage {
   direction: 'inbound' | 'outbound' | 'internal'
   message_type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'template' | 'interactive'
   status: 'received' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
+  error: string
   external_message_id: string | null
+  origin: 'customer' | 'mobile' | 'crm' | 'bot'
+  external_timestamp: string | null
+  timestamp: string
   attachments: ChatAttachment[]
   created_at: string
 }
 
-export type Channel = 'ecommerce' | 'whatsapp' | 'facebook' | 'instagram'
+export type Channel = 'ecommerce' | 'whatsapp' | 'whatsapp_web' | 'facebook' | 'instagram'
 
 export interface ChatAttachment {
   id: number
@@ -82,6 +86,7 @@ export interface MetaIntegration {
   has_app_secret: boolean
   has_verify_token: boolean
   managed_by_meta_oauth: boolean
+  whatsapp_coexistence: boolean
 }
 
 export interface MetaInstagramAccount {
@@ -116,7 +121,38 @@ export interface MetaConnection {
   updated_at: string
 }
 
-export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'active' | 'display_phone_number' | 'connection_status' | 'last_validated_at' | 'last_webhook_at' | 'last_error' | 'disconnected_at' | 'has_access_token' | 'has_app_secret' | 'has_verify_token' | 'managed_by_meta_oauth' | 'token_expires_at'> & {
+export interface WhatsAppCoexistenceConfig {
+  app_id: string
+  config_id: string
+  graph_api_version: string
+  embedded_signup_version: string
+  feature_type: 'whatsapp_business_app_onboarding'
+  state: string
+}
+
+export interface WhatsAppCoexistenceCompletion {
+  state: string
+  code: string
+  event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
+  waba_id: string
+  phone_number_id?: string
+  business_id?: string
+}
+
+export type WhatsAppGatewayState = {
+  connection_id: string
+  status: 'disconnected' | 'waiting_for_qr' | 'qr_ready' | 'connecting' | 'connected' | 'logged_out' | 'reconnecting' | 'error'
+  qr_data_url?: string
+  qr_expires_at?: string
+  phone_number?: string
+  last_connected_at?: string
+  last_error?: string
+  active?: boolean
+  bot_enabled?: boolean
+  experimental?: boolean
+}
+
+export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'active' | 'display_phone_number' | 'connection_status' | 'last_validated_at' | 'last_webhook_at' | 'last_error' | 'disconnected_at' | 'has_access_token' | 'has_app_secret' | 'has_verify_token' | 'managed_by_meta_oauth' | 'whatsapp_coexistence' | 'token_expires_at'> & {
   access_token?: string
   app_secret?: string
   verify_token?: string
@@ -233,6 +269,38 @@ export const adminChatService = {
 
   disconnectMetaConnection: async (id: number): Promise<void> => {
     await api.delete(`/meta/connections/${id}/`)
+  },
+
+  getWhatsAppCoexistenceConfig: async (): Promise<WhatsAppCoexistenceConfig> => {
+    const res = await api.get('/meta/whatsapp/coexistence/config/')
+    return res.data
+  },
+
+  completeWhatsAppCoexistence: async (
+    payload: WhatsAppCoexistenceCompletion,
+  ): Promise<{ connected: boolean; integration: MetaIntegration }> => {
+    const res = await api.post('/meta/whatsapp/coexistence/complete/', payload)
+    return res.data
+  },
+
+  getWhatsAppGatewayStatus: async (): Promise<WhatsAppGatewayState> => {
+    const res = await api.get('/crm-chat/whatsapp-web/status/')
+    return res.data
+  },
+
+  getWhatsAppGatewayRealtimeToken: async (): Promise<{ token: string; expires_in: number }> => {
+    const res = await api.post('/crm-chat/whatsapp-web/realtime-token/')
+    return res.data
+  },
+
+  setWhatsAppGatewayBotEnabled: async (bot_enabled: boolean): Promise<{ bot_enabled: boolean }> => {
+    const res = await api.patch('/crm-chat/whatsapp-web/status/', { bot_enabled })
+    return res.data
+  },
+
+  commandWhatsAppGateway: async (command: 'qr' | 'reconnect' | 'logout'): Promise<{ status: string }> => {
+    const res = await api.post(`/crm-chat/whatsapp-web/commands/${command}/`)
+    return res.data
   },
 }
 

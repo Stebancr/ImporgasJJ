@@ -14,16 +14,16 @@ Qué hace:
 - `-v ollama-qwen:/root/.ollama`: monta el volumen `ollama-qwen` para persistencia de datos en `/root/.ollama` dentro del contenedor.
 - `ollama/ollama`: imagen de Docker que se ejecuta.
 
-## 2) Descargar el modelo qwen2.5:1.5b dentro del contenedor
+## 2) Descargar el modelo qwen:4b dentro del contenedor
 
 Descargar el modelo usando `docker exec`:
 
 ```
-docker exec -it ollama-qwen ollama pull qwen2.5:1.5b
+docker exec -it ollama-qwen ollama pull qwen:4b
 ```
 
 Qué hace:
-- `ollama pull qwen2.5:1.5b`: descarga el modelo `qwen2.5:1.5b` en el servicio Ollama del contenedor.
+- `ollama pull qwen:4b`: descarga el modelo `qwen:4b` en el servicio Ollama del contenedor.
 
 Nota: El modelo estará disponible automáticamente vía API después de descargarlo.
 
@@ -53,7 +53,7 @@ Ejemplo de petición en formato JSON (body) que debe enviarse como `application/
 			"content": "¿Cuál es el horario?"
 		}
 	],
-	"model": "qwen2.5:1.5b",
+	"model": "qwen:4b",
 	"stream": false
 }
 ```
@@ -62,7 +62,7 @@ Ejemplo de petición con PowerShell:
 
 ```powershell
 $body = @{
-    model = 'qwen2.5:1.5b'
+    model = 'qwen:4b'
     stream = $false
     messages = @(
         @{role='system'; content='Eres un asistente de la empresa Gasoductos JJ. Solo responde usando la información proporcionada. Si no encuentras la respuesta, di ''No tengo esa información''.'},
@@ -79,7 +79,7 @@ Ejemplo de petición curl (Linux/Mac):
 ```bash
 curl -s -X POST http://localhost:11434/api/chat \
 	-H "Content-Type: application/json" \
-	-d '{"messages":[{"role":"system","content":"Eres un asistente de la empresa Gasoductos JJ. Solo responde usando la información proporcionada. Si no encuentras la respuesta, di '\''No tengo esa información'\''."},{"role":"system","content":"Información de la empresa:\nHorario: Lunes a Viernes de 8:00 a 18:00.\nTeléfono: 555-1234.\nDirección: Calle 123.\n\nResponde únicamente con esta información."},{"role":"user","content":"¿Cuál es el horario?"}],"model":"qwen2.5:1.5b","stream":false}'
+	-d '{"messages":[{"role":"system","content":"Eres un asistente de la empresa Gasoductos JJ. Solo responde usando la información proporcionada. Si no encuentras la respuesta, di '\''No tengo esa información'\''."},{"role":"system","content":"Información de la empresa:\nHorario: Lunes a Viernes de 8:00 a 18:00.\nTeléfono: 555-1234.\nDirección: Calle 123.\n\nResponde únicamente con esta información."},{"role":"user","content":"¿Cuál es el horario?"}],"model":"qwen:4b","stream":false}'
 ```
 
 Respuesta esperada (según la instrucción del sistema):

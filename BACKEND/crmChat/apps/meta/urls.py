@@ -12,6 +12,8 @@ from .views import (
     MetaConnectionListView,
     MetaOAuthCallbackView,
     MetaWebhookView,
+    WhatsAppCoexistenceCompleteView,
+    WhatsAppCoexistenceConfigView,
 )
 
 urlpatterns = [
@@ -24,4 +26,6 @@ urlpatterns = [
     path('integrations/', IntegrationListCreateView.as_view(), name='meta-integrations'),
     path('integrations/<int:pk>/', IntegrationDetailView.as_view(), name='meta-integration-detail'),
     path('integrations/<int:pk>/validate/', IntegrationValidateView.as_view(), name='meta-integration-validate'),
+    path('whatsapp/coexistence/config/', WhatsAppCoexistenceConfigView.as_view(), name='whatsapp-coexistence-config'),
+    path('whatsapp/coexistence/complete/', WhatsAppCoexistenceCompleteView.as_view(), name='whatsapp-coexistence-complete'),
 ]
