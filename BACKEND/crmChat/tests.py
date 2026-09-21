@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import requests
 from datetime import timedelta
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
@@ -49,20 +50,20 @@ from ecommerce.models import Brand, Category, Product, ProductSpec, SpecAttribut
 
 
 class ConversationStateTests(APITestCase):
-    def test_product_context_ignores_budget_and_tracks_topics(self):
+    def test_product_context_remembers_budget_and_tracks_topics(self):
         state = ollama_service.update_state('Estoy interesado en un calentador')
-        self.assertEqual(state['intent'], 'purchase')
+        self.assertEqual(state['intent'], 'recommendation')
         self.assertEqual(state['product'], 'calentador')
         self.assertFalse(state['needs_human'])
 
         state = ollama_service.update_state('Tengo un millón', state)
-        self.assertIsNone(state['budget'])
-        self.assertEqual(state['stage'], 'recommendation')
+        self.assertEqual(state['budget'], 1_000_000)
+        self.assertEqual(state['stage'], 'qualification')
 
         state = ollama_service.update_state('¿Y hacen envíos?', state)
         self.assertEqual(state['topic'], 'shipping')
         self.assertEqual(state['product'], 'calentador')
-        self.assertIsNone(state['budget'])
+        self.assertEqual(state['budget'], 1_000_000)
 
         state = ollama_service.update_state('¿Qué garantía manejan?', state)
         self.assertEqual(state['topic'], 'warranty')
@@ -150,8 +151,8 @@ class ConversationStateTests(APITestCase):
         self.assertNotEqual(new_session.id, session.id)
         self.assertEqual(new_session.status, 'bot')
         self.assertEqual(new_session.messages.filter(sender_type='user').count(), 1)
-        self.assertEqual(new_session.messages.filter(sender_type='bot').count(), 2)
-        self.assertEqual(new_session.messages.first().text, ollama_service.INITIAL_GREETING)
+        self.assertEqual(new_session.messages.filter(sender_type='bot').count(), 1)
+        self.assertFalse(new_session.messages.filter(metadata__system_event='initial_greeting').exists())
         history = bot.call_args.kwargs['conversation_history']
         self.assertNotIn('Contexto anterior', [item['content'] for item in history])
 
@@ -162,14 +163,200 @@ class ConversationStateTests(APITestCase):
         outside = ollama_service.get_bot_response('¿Quién es el presidente de Colombia?')
         self.assertIn('productos y servicios de IMPORGAS JJ', outside['response'])
         for phrase in (
-            'Quiero cotizar un calentador',
             'Necesito 10 unidades',
             'Necesito precio para una empresa',
             'Quiero hablar con una persona',
             'Cómprame 3 unidades',
-            'Quiero comprar este producto',
         ):
             self.assertTrue(ollama_service.get_bot_response(phrase)['needs_agent'], phrase)
+
+    def test_ecommerce_frontend_greeting_is_not_persisted_or_repeated(self):
+        response = self.client.post(reverse('bot-chat'), {
+            'message': 'Hola', 'user_name': 'Cliente web',
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.data['message'], ollama_service.INITIAL_GREETING)
+        session = ChatSession.objects.get(pk=response.data['session_id'])
+        self.assertEqual(session.messages.filter(sender_type='user').count(), 1)
+        self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
+        self.assertFalse(session.messages.filter(metadata__system_event='initial_greeting').exists())
+
+
+class ChatbotIntelligenceTests(APITestCase):
+    def setUp(self):
+        self.brand = Brand.objects.create(name='Marca contextual')
+        self.heaters = Category.objects.create(name='Calentadores', description='Agua caliente')
+
+    def product(self, name, description='', category=None, price=500000, stock=3, specs=None):
+        product = Product.objects.create(
+            name=name, description=description, category=category or self.heaters,
+            brand=self.brand, price=price, total_stock=stock, is_available=True,
+        )
+        for order, (attribute_name, value) in enumerate((specs or {}).items(), 1):
+            attribute, _ = SpecAttribute.objects.get_or_create(name=attribute_name, defaults={'order': order})
+            ProductSpec.objects.create(product=product, attribute=attribute, value=value)
+        return product
+
+    def complete_heater_qualification(self, state, bathrooms='2', use_case='Baño convencional'):
+        answers = {
+            'bathrooms': f'{bathrooms} duchas', 'property_type': 'Casa',
+            'use_case': use_case, 'gas_type': 'Gas natural', 'heater_type': 'De paso',
+            'brand_preference': 'Sin preferencia', 'restrictions': 'Ninguna',
+        }
+        result = {'state': state}
+        for _ in range(8):
+            pending = state.get('pending_question') or {}
+            answer = answers.get(pending.get('key'))
+            if not answer:
+                break
+            result = ollama_service.get_bot_response(answer, conversation_state=state)
+            state = result['state']
+        return result
+
+    def test_heater_qualification_remembers_bathrooms_and_recommends_matching_product(self):
+        one = self.product('Calentador Hogar Uno', 'Calentador de paso a gas natural', specs={'Baños simultáneos': '1', 'Tipo de gas': 'Natural'})
+        two = self.product('Calentador Hogar Dos', 'Calentador de paso a gas natural', specs={'Baños simultáneos': '2', 'Tipo de gas': 'Natural'})
+
+        first = ollama_service.get_bot_response('Necesito recomendación de un calentador')
+        self.assertIn('baño convencional, jacuzzi, sauna o piscina', first['response'].lower())
+        bathrooms_question = ollama_service.get_bot_response('Baño convencional', conversation_state=first['state'])
+        self.assertIn('duchas o puntos de agua', bathrooms_question['response'].lower())
+        property_question = ollama_service.get_bot_response('Para 2 baños', conversation_state=bathrooms_question['state'])
+        self.assertIn('casa, apartamento', property_question['response'].lower())
+        self.assertNotIn('cuántos baños', property_question['response'].lower())
+        second = self.complete_heater_qualification(property_question['state'])
+
+        self.assertEqual(second['state']['bathrooms'], 2)
+        self.assertIn(two.name, second['response'])
+        self.assertNotIn(one.name, second['response'])
+
+    def test_jacuzzi_pool_and_sauna_only_return_matching_catalog_items(self):
+        products = {
+            use: self.product(f'Calentador {use.title()}', f'Calentador de paso a gas natural certificado para {use}')
+            for use in ('jacuzzi', 'piscina', 'sauna')
+        }
+        for use, product in products.items():
+            with self.subTest(use=use):
+                first = ollama_service.get_bot_response(f'Recomiéndame un calentador para {use}')
+                result = self.complete_heater_qualification(first['state'], use_case=use)
+                self.assertIn(product.name, result['response'])
+                for other_use, other in products.items():
+                    if other_use != use:
+                        self.assertNotIn(other.name, result['response'])
+
+    def test_replacement_part_uses_real_compatibility_data(self):
+        parts = Category.objects.create(name='Repuestos', description='Piezas y accesorios')
+        compatible = self.product(
+            'Válvula Modelo ZX', 'Repuesto compatible únicamente con calentador Modelo ZX',
+            category=parts, price=35000,
+        )
+        result = ollama_service.get_bot_response('Busco un repuesto Válvula Modelo ZX')
+        self.assertEqual(result['state']['intent'], 'replacement_part')
+        self.assertIn(compatible.name, result['response'])
+        self.assertIn('Por qué coincide', result['response'])
+
+    def test_specific_heater_is_validated_directly_against_requested_gas(self):
+        product = self.product(
+            'Calentador Haceb 10 litros', 'Calentador de paso para gas natural y hogar',
+            specs={'Capacidad': '10 litros', 'Tipo de gas': 'Natural'},
+        )
+        compatible = ollama_service.get_bot_response(
+            'Quiero el Calentador Haceb 10 litros para gas natural',
+        )
+        incompatible = ollama_service.get_bot_response(
+            'Quiero el Calentador Haceb 10 litros para GLP',
+        )
+        self.assertIn(product.name, compatible['response'])
+        self.assertIn('Ver producto', compatible['response'])
+        self.assertNotIn(f'**{product.name}**', incompatible['response'])
+        self.assertIn('no encontré', incompatible['response'].lower())
+
+    def test_short_references_and_similar_product_keep_conversation_context(self):
+        first_product = self.product('Calentador Alfa', 'Hogar gas natural de paso', price=400000)
+        second_product = self.product('Calentador Beta', 'Hogar gas natural de paso', price=450000)
+        listed = ollama_service.get_bot_response('¿Qué calentadores me recomiendas?')
+        listed = self.complete_heater_qualification(listed['state'])
+
+        selected = ollama_service.get_bot_response('el primero', conversation_state=listed['state'])
+        self.assertEqual(selected['state']['selected_product_id'], first_product.id)
+        self.assertIn(first_product.name, selected['response'])
+
+        similar = ollama_service.get_bot_response('uno parecido', conversation_state=selected['state'])
+        self.assertNotIn(f'**{first_product.name}**', similar['response'])
+        self.assertIn(second_product.name, similar['response'])
+
+    def test_intent_can_change_without_losing_known_need(self):
+        state = ollama_service.update_state('Necesito un calentador para piscina')
+        changed = ollama_service.update_state('Ahora necesito un repuesto', state)
+        self.assertEqual(changed['intent'], 'replacement_part')
+        self.assertEqual(changed['use_case'], 'piscina')
+        self.assertEqual(changed['category'], 'Calentadores')
+
+    @patch('crmChat.ollama_service.requests.post')
+    def test_ollama_receives_recent_history_state_and_persistent_summary(self, post):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {'message': {'content': 'Atendemos según la información verificada.'}}
+        post.return_value = response
+
+        result = ollama_service.get_bot_response(
+            '¿Qué horarios manejan?',
+            conversation_history=[{'role': 'user', 'content': 'Consulta anterior'}],
+            conversation_state={'preferences': {'contact': 'mañana'}},
+            summary='El cliente ya pidió atención mañana.',
+        )
+        system_text = '\n'.join(item['content'] for item in post.call_args.kwargs['json']['messages'] if item['role'] == 'system')
+        self.assertIn('RESUMEN PERSISTENTE', system_text)
+        self.assertIn('atención mañana', system_text)
+        self.assertEqual(result['error'], None)
+
+    @patch('crmChat.ollama_service.requests.post', side_effect=requests.exceptions.Timeout)
+    def test_temporary_ollama_error_returns_safe_retry_message(self, _post):
+        result = ollama_service.get_bot_response('¿Qué horarios manejan?')
+        self.assertEqual(result['error'], 'timeout')
+        self.assertIn('tardando más', result['response'])
+
+    @override_settings(OLLAMA_QUEUE_WAIT=0)
+    def test_ollama_concurrency_lock_limits_parallel_requests(self):
+        cache.set('crm-chat:ollama:request-lock', 'another-request', timeout=30)
+        try:
+            result = ollama_service.get_bot_response('¿Qué horarios manejan?')
+        finally:
+            cache.delete('crm-chat:ollama:request-lock')
+        self.assertEqual(result['error'], 'queue_timeout')
+
+    def test_product_links_follow_environment_configuration(self):
+        product = self.product('Calentador con enlace')
+        state = {
+            'category': 'Calentadores', 'intent': 'recommendation', 'bathrooms': 1,
+            'property_type': 'casa', 'use_case': 'hogar', 'gas_type': 'natural',
+            'heater_type': 'paso', 'brand_preference': 'any', 'restrictions': ['ninguna'],
+        }
+        product.description = 'Calentador de paso a gas natural para hogar'
+        product.save(update_fields=['description'])
+        with override_settings(
+            PRODUCT_URL_TEMPLATE='http://localhost/producto/{id}',
+            EXTERNAL_PRODUCT_URL_TEMPLATE='https://www.imporgasjj.com/producto/{id}',
+        ):
+            dev = ollama_service.get_bot_response('Recomiéndame Calentador con enlace', conversation_state=state)
+            external = {
+                channel: ollama_service.get_bot_response(
+                    'Recomiéndame Calentador con enlace', conversation_state=state, channel=channel,
+                )
+                for channel in ('whatsapp', 'whatsapp_web', 'facebook', 'instagram')
+            }
+        with override_settings(
+            PRODUCT_URL_TEMPLATE='https://www.imporgasjj.com/producto/{id}',
+            EXTERNAL_PRODUCT_URL_TEMPLATE='https://www.imporgasjj.com/producto/{id}',
+        ):
+            prod = ollama_service.get_bot_response('Recomiéndame Calentador con enlace', conversation_state=state)
+        self.assertIn(f'[Ver producto →](http://localhost/producto/{product.id})', dev['response'])
+        self.assertIn(f'[Ver producto →](https://www.imporgasjj.com/producto/{product.id})', prod['response'])
+        for channel, result in external.items():
+            self.assertIn(f'Ver producto → https://www.imporgasjj.com/producto/{product.id}', result['response'], channel)
+            self.assertNotIn('[Ver producto', result['response'], channel)
+            self.assertNotIn('localhost', result['response'], channel)
+        self.assertNotIn('localhost**Ver producto', dev['response'])
 
 
 class ChatInactivityTests(APITestCase):
@@ -293,6 +480,40 @@ class ChatInactivityTests(APITestCase):
         dispatch.assert_not_called()
         self.assertFalse(ChatMessage.objects.filter(reply_to_message=inbound).exists())
 
+    @patch('crmChat.tasks.ollama_service.get_bot_response')
+    @patch('crmChat.tasks.dispatch_outbound_message')
+    def test_external_bot_creates_only_one_reply_for_same_customer_message(self, dispatch, ollama):
+        integration = ChannelIntegration.objects.create(
+            name='Facebook bot idempotente', channel='facebook', active=True,
+            external_account_id='page-bot-on', page_id='page-bot-on',
+            configuration={'bot_enabled': True},
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', status='bot', channel='facebook', integration=integration,
+            external_thread_id='psid-bot-on',
+        )
+        inbound = ChatMessage.objects.create(
+            session=session, text='Hola', sender_type='user', direction='inbound',
+            external_message_id='mid.bot-on',
+        )
+        ollama.return_value = {
+            'response': 'Respuesta controlada', 'needs_agent': False,
+            'state': {'intent': 'greeting'}, 'summary': 'intención: saludo', 'error': None,
+        }
+
+        first = generate_omnichannel_bot_reply.run(inbound.id)
+        second = generate_omnichannel_bot_reply.run(inbound.id)
+
+        self.assertIn('message_id', first)
+        self.assertEqual(second, {'duplicate': True})
+        reply = ChatMessage.objects.get(reply_to_message=inbound)
+        self.assertTrue(reply.text.startswith(ollama_service.INITIAL_GREETING))
+        self.assertEqual(reply.text.count(ollama_service.INITIAL_GREETING), 1)
+        self.assertNotIn('ChatGPT', reply.text)
+        self.assertNotIn('Ollama', reply.text)
+        self.assertEqual(ollama.call_count, 1)
+        self.assertEqual(dispatch.call_count, 1)
+
     @patch('crmChat.ollama_service.requests.post')
     def test_api_persists_structured_memory_across_turns(self, ollama_post):
         provider_response = Mock()
@@ -313,10 +534,11 @@ class ChatInactivityTests(APITestCase):
             responses[message] = response.data['message']
 
         session = ChatSession.objects.get(pk=session_id)
-        self.assertEqual(session.conversation_state['intent'], 'purchase')
+        self.assertEqual(session.conversation_state['intent'], 'recommendation')
         self.assertEqual(session.conversation_state['product'], 'celular')
-        self.assertIsNone(session.conversation_state['budget'])
+        self.assertEqual(session.conversation_state['budget'], 1_000_000)
         self.assertEqual(session.conversation_state['topic'], 'shipping')
+        self.assertEqual(session.conversation_state['last_response'], responses['¿Y hacen envíos?'])
         self.assertIn('catálogo actual', responses['¿Cuál me recomiendas?'])
         self.assertIn('No tengo información confirmada', responses['¿Y hacen envíos?'])
         ollama_service.get_bot_response(
@@ -326,7 +548,7 @@ class ChatInactivityTests(APITestCase):
                 for index in range(20)
             ],
         )
-        self.assertLessEqual(len(ollama_post.call_args.kwargs['json']['messages']), 12)
+        self.assertLessEqual(len(ollama_post.call_args.kwargs['json']['messages']), 16)
 
         response = self.client.post(reverse('bot-chat'), {
             'message': 'Quiero hablar con un asesor',
@@ -872,6 +1094,75 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(identity.contact.avatar_url, 'https://cdn.example.test/facebook.jpg')
         self.assertIsNotNone(identity.contact.last_interaction_at)
         profile.assert_called_once_with(integration, 'psid-profile')
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.facebook.services.get_sender_profile', side_effect=MetaAPIError('perfil no disponible'))
+    def test_facebook_profile_failure_uses_fallback_without_duplicates(self, profile, _read_receipt):
+        integration = ChannelIntegration.objects.create(
+            name='Facebook sin perfil', channel='facebook', active=True,
+            external_account_id='page-no-profile', page_id='page-no-profile',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+
+        def payload(message_id):
+            return {
+                'object': 'page',
+                'entry': [{'id': 'page-no-profile', 'messaging': [{
+                    'sender': {'id': 'psid-no-profile'}, 'recipient': {'id': 'page-no-profile'},
+                    'timestamp': 1_700_000_000_000,
+                    'message': {'mid': message_id, 'text': 'Mensaje de prueba'},
+                }]}],
+            }
+
+        self.assertEqual(self._signed_post(payload('mid.fb.no-profile.1')).status_code, 200)
+        self.assertEqual(self._signed_post(payload('mid.fb.no-profile.2')).status_code, 200)
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='psid-no-profile')
+        session = ChatSession.objects.get(integration=integration, external_thread_id='psid-no-profile')
+        self.assertEqual(identity.display_name, 'Usuario de Facebook')
+        self.assertEqual(identity.contact.name, 'Usuario de Facebook')
+        self.assertEqual(session.user_name, 'Usuario de Facebook')
+        self.assertEqual(identity.profile_data['profile_error'], 'graph_api_unavailable')
+        self.assertEqual(ChannelIdentity.objects.filter(integration=integration).count(), 1)
+        self.assertEqual(CRMContact.objects.filter(channel_identities__integration=integration).distinct().count(), 1)
+        self.assertEqual(ChatSession.objects.filter(integration=integration).count(), 1)
+        self.assertEqual(ChatMessage.objects.filter(session=session).count(), 2)
+        profile.assert_called_once()
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.facebook.services.get_sender_profile')
+    def test_facebook_refreshes_changed_profile_name_in_contact_and_session(self, profile, _read_receipt):
+        profile.side_effect = [
+            {'id': 'psid-renamed', 'name': 'Nombre Anterior'},
+            {'id': 'psid-renamed', 'name': 'Nombre Actualizado'},
+        ]
+        integration = ChannelIntegration.objects.create(
+            name='Facebook nombre mutable', channel='facebook', active=True,
+            external_account_id='page-renamed', page_id='page-renamed',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+
+        def payload(message_id):
+            return {
+                'object': 'page', 'entry': [{'id': 'page-renamed', 'messaging': [{
+                    'sender': {'id': 'psid-renamed'}, 'recipient': {'id': 'page-renamed'},
+                    'timestamp': 1_700_000_000_000,
+                    'message': {'mid': message_id, 'text': 'Mensaje de prueba'},
+                }]}],
+            }
+
+        self._signed_post(payload('mid.fb.rename.1'))
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='psid-renamed')
+        identity.profile_data['profile_checked_at'] = (timezone.now() - timedelta(days=2)).isoformat()
+        identity.save(update_fields=['profile_data'])
+        self._signed_post(payload('mid.fb.rename.2'))
+
+        identity.refresh_from_db()
+        identity.contact.refresh_from_db()
+        session = ChatSession.objects.get(integration=integration, external_thread_id='psid-renamed')
+        self.assertEqual(identity.display_name, 'Nombre Actualizado')
+        self.assertEqual(identity.contact.name, 'Nombre Actualizado')
+        self.assertEqual(session.user_name, 'Nombre Actualizado')
+        self.assertEqual(profile.call_count, 2)
 
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
     def test_whatsapp_requires_matching_waba_and_phone_and_reconnects_to_new_account(self, _receipt):

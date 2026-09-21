@@ -29,6 +29,7 @@ export interface ChatMessage {
   status: 'received' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
   error: string
   external_message_id: string | null
+  client_message_id: string | null
   origin: 'customer' | 'mobile' | 'crm' | 'bot'
   external_timestamp: string | null
   timestamp: string
@@ -190,8 +191,19 @@ export const adminChatService = {
     return res.data
   },
 
-  sendMessage: async (sessionId: number, text: string): Promise<ChatMessage> => {
-    const res = await api.post(`/crm-chat/sessions/${sessionId}/messages/`, { text })
+  sendMessage: async (sessionId: number, text: string, file?: File): Promise<ChatMessage> => {
+    const data = new FormData()
+    data.append('text', text)
+    data.append('origin', 'crm')
+    data.append('client_message_id', crypto.randomUUID())
+    if (file) data.append('file', file)
+    const res = await api.post(`/crm-chat/sessions/${sessionId}/messages/`, data)
+    return res.data
+  },
+
+  getAttachmentBlob: async (url: string): Promise<Blob> => {
+    const apiPath = url.replace(/^\/api/, '')
+    const res = await api.get(apiPath, { responseType: 'blob' })
     return res.data
   },
 

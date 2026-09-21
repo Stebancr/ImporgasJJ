@@ -5,6 +5,7 @@ import Layout from './components/Layout'
 import StoreProtectedRoute from './components/StoreProtectedRoute'
 import StoreTermsRoute from './components/StoreTermsRoute'
 import ScrollToTop from './components/ScrollToTop'
+import CanonicalUrl from './components/CanonicalUrl'
 import HomePage from './app/pages/HomePage'
 const ProductsPage = lazy(() => import('./app/pages/ProductsPage'))
 const ProductDetailPage = lazy(() => import('./app/pages/ProductDetailPage'))
@@ -124,6 +125,7 @@ function AdminRoutes() {
 function App() {
   return (
           <BrowserRouter>
+            <CanonicalUrl />
             <ScrollToTop />
             <Routes>
               <Route path="/admin/*" element={<div className="admin-theme"><AdminRoutes /></div>} />

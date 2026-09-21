@@ -5,8 +5,11 @@ urlpatterns = [
     # Endpoints para agentes y usuarios autenticados
     path('sessions/',               views.SessionListCreateView.as_view(), name='crm-session-list'),
     path('sessions/pending-count/', views.PendingCountView.as_view(),      name='crm-pending-count'),
+    path('contacts/', views.ContactListView.as_view(), name='crm-contact-list'),
     path('sessions/<int:pk>/',      views.SessionDetailView.as_view(),     name='crm-session-detail'),
     path('sessions/<int:pk>/messages/', views.MessageListCreateView.as_view(), name='crm-messages'),
+    path('attachments/<int:pk>/', views.ProtectedAttachmentView.as_view(), name='crm-attachment'),
+    path('attachments/<int:pk>/delivery/', views.AttachmentDeliveryView.as_view(), name='crm-attachment-delivery'),
     
     # Endpoints públicos para el bot (ecommerce)
     path('bot/chat/',               views.BotChatView.as_view(),           name='bot-chat'),

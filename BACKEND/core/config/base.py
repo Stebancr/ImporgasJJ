@@ -52,9 +52,6 @@ ALLOWED_HOSTS = [
     'testserver',
     'imporgasjj.com',
     'www.imporgasjj.com',
-    '.djsolutions.io',
-    'djsolutions.io',
-    'www.djsolutions.io',
     "2.25.225.216"
 ]
 

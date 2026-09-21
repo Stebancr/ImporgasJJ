@@ -71,8 +71,21 @@ def process_meta_webhook_task(self, event_id):
         integration = message.session.integration
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
-            generate_omnichannel_bot_reply.delay(message.id)
-            logger.info('Respuesta bot programada para message_id=%s session_id=%s.', message.id, message.session_id)
+            bot_task = generate_omnichannel_bot_reply.delay(message.id)
+            logger.info(
+                'Respuesta bot programada message_id=%s session_id=%s channel=%s task_id=%s.',
+                message.id, message.session_id, message.session.channel, bot_task.id,
+            )
+        else:
+            reason = (
+                'not_customer' if message.sender_type != 'user' else
+                'conversation_not_in_bot_mode' if message.session.status != 'bot' else
+                'bot_disabled'
+            )
+            logger.info(
+                'Respuesta bot omitida message_id=%s session_id=%s channel=%s reason=%s.',
+                message.id, message.session_id, message.session.channel, reason,
+            )
     logger.info(
         'Tarea webhook Meta completada: event_id=%s channel=%s messages=%s.',
         event_id, event.channel, len(messages),
@@ -271,27 +284,33 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         session = ChatSession.objects.select_for_update().get(pk=user_message.session_id)
         stale_before = timezone.now() - timedelta(minutes=5)
         if user_message.sender_type != 'user' or user_message.direction != 'inbound':
+            logger.info('Bot omitido message_id=%s reason=not_a_customer_message.', user_message_id)
             return {'skipped': 'not_a_customer_message'}
         if session.channel != 'ecommerce' and not user_message.external_message_id:
+            logger.info('Bot omitido message_id=%s reason=missing_meta_message_id.', user_message_id)
             return {'skipped': 'missing_meta_message_id'}
         if session.channel != 'ecommerce' and (
             not session.integration
             or not session.integration.active
             or not session.integration.configuration.get('bot_enabled', False)
         ):
+            logger.info('Bot omitido message_id=%s reason=bot_disabled.', user_message_id)
             return {'skipped': 'bot_disabled'}
         existing_reply = getattr(user_message, 'bot_reply', None)
         if existing_reply:
+            logger.info('Bot omitido message_id=%s reason=reply_exists reply_id=%s.', user_message_id, existing_reply.id)
             return {'duplicate': True}
         if session.status != 'bot':
+            logger.info('Bot omitido message_id=%s reason=conversation_not_in_bot_mode.', user_message_id)
             return {'skipped': 'conversation_not_in_bot_mode'}
         if user_message.bot_processing_at and user_message.bot_processing_at > stale_before:
+            logger.info('Bot omitido message_id=%s reason=already_processing.', user_message_id)
             return {'skipped': 'already_processing'}
         else:
             user_message.bot_processing_at = timezone.now()
             user_message.save(update_fields=['bot_processing_at'])
 
-    previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8])
+    previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:12])
     is_new_conversation = not previous
     history = [
         {
@@ -301,11 +320,16 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         for item in reversed(previous)
     ]
     try:
+        logger.info(
+            'Ejecutando Ollama message_id=%s session_id=%s channel=%s history_items=%s.',
+            user_message_id, session.id, session.channel, len(history),
+        )
         result = ollama_service.get_bot_response(
             user_message.text,
             conversation_history=history,
             conversation_state=session.conversation_state,
             summary=session.conversation_summary,
+            channel=session.channel,
         )
     except Exception:
         logger.exception('Falló Ollama para message_id=%s; no se enviará ni reintentará automáticamente.', user_message_id)
@@ -315,15 +339,18 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         session = ChatSession.objects.select_for_update().get(pk=session.pk)
         user_message = ChatMessage.objects.select_for_update().get(pk=user_message.pk)
         if session.status != 'bot' or hasattr(user_message, 'bot_reply'):
+            logger.info('Bot omitido message_id=%s reason=conversation_taken_or_replied.', user_message_id)
             return {'skipped': 'conversation_taken_or_replied'}
-        session.conversation_state = result.get('state', session.conversation_state)
+        reply_text = result.get('response', 'No pude procesar el mensaje.')
+        if is_new_conversation:
+            reply_text = ollama_service.add_initial_greeting(reply_text)
+        next_state = result.get('state', session.conversation_state)
+        next_state['last_response'] = reply_text[:2000]
+        session.conversation_state = next_state
         session.conversation_summary = result.get('summary', session.conversation_summary)
         if result.get('needs_agent'):
             session.status = 'waiting'
         session.save(update_fields=['conversation_state', 'conversation_summary', 'status', 'updated_at'])
-        reply_text = result.get('response', 'No pude procesar el mensaje.')
-        if is_new_conversation:
-            reply_text = ollama_service.add_initial_greeting(reply_text)
         reply = ChatMessage.objects.create(
             session=session, reply_to_message=user_message,
             text=reply_text,

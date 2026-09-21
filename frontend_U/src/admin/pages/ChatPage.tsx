@@ -17,6 +17,7 @@ import { crmTheme } from '../theme/crmTheme'
 import {
   adminChatService,
   type ChatMessage,
+  type ChatAttachment,
   type ChatSession,
   type SessionFilters,
 } from '../services/admin_chat'
@@ -116,6 +117,59 @@ function messageState(message: ChatMessage) {
   return null
 }
 
+function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
+  const [objectUrl, setObjectUrl] = useState('')
+  const [error, setError] = useState('')
+  const mime = attachment.mime_type || ''
+  const previewable = mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/')
+
+  useEffect(() => {
+    if (!attachment.url || !previewable) return
+    let active = true
+    let currentUrl = ''
+    adminChatService.getAttachmentBlob(attachment.url)
+      .then((blob) => {
+        if (!active) return
+        currentUrl = URL.createObjectURL(blob)
+        setObjectUrl(currentUrl)
+      })
+      .catch(() => active && setError('No fue posible cargar el archivo.'))
+    return () => {
+      active = false
+      if (currentUrl) URL.revokeObjectURL(currentUrl)
+    }
+  }, [attachment.url, previewable])
+
+  const download = async () => {
+    try {
+      setError('')
+      const blob = await adminChatService.getAttachmentBlob(attachment.url)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = attachment.name || 'adjunto'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('No fue posible descargar el archivo.')
+    }
+  }
+
+  if (!attachment.url) return <Button size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
+  return (
+    <Box sx={{ mt: 1 }}>
+      {!objectUrl && previewable && !error && <CircularProgress size={18} />}
+      {objectUrl && mime.startsWith('image/') && <Box component="img" src={objectUrl} alt={attachment.name || 'Imagen adjunta'} sx={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 1, objectFit: 'contain' }} />}
+      {objectUrl && mime.startsWith('audio/') && <Box component="audio" controls preload="metadata" src={objectUrl} sx={{ display: 'block', width: '100%', maxWidth: 360 }} />}
+      {objectUrl && mime.startsWith('video/') && <Box component="video" controls preload="metadata" src={objectUrl} sx={{ display: 'block', width: '100%', maxHeight: 360, borderRadius: 1 }} />}
+      <Button size="small" startIcon={<Paperclip size={14} />} onClick={download}>
+        {attachment.name || mime || 'Ver o descargar'}{attachment.size ? ` (${Math.ceil(attachment.size / 1024)} KB)` : ''}
+      </Button>
+      {error && <Typography variant="caption" color="error" sx={{ display: 'block' }}>{error}</Typography>}
+    </Box>
+  )
+}
+
 function ConversationMessage({ message }: { message: ChatMessage }) {
   const incoming = message.direction === 'inbound' || message.sender_type === 'user'
   const bot = message.sender_type === 'bot'
@@ -140,14 +194,7 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
           ? <BotMarkdown text={message.text} />
           : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
         )}
-        {message.attachments.map((attachment) => {
-          if (!attachment.url) return <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
-          const mime = attachment.mime_type || ''
-          if (mime.startsWith('image/')) return <Box key={attachment.id} component="a" href={attachment.url} target="_blank" rel="noreferrer" sx={{ display: 'block', mt: 1 }}><Box component="img" src={attachment.url} alt={attachment.name || 'Imagen adjunta'} loading="lazy" sx={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 1, objectFit: 'contain' }} /></Box>
-          if (mime.startsWith('audio/')) return <Box key={attachment.id} component="audio" controls preload="metadata" src={attachment.url} sx={{ display: 'block', width: '100%', maxWidth: 360, mt: 1 }} />
-          if (mime.startsWith('video/')) return <Box key={attachment.id} component="video" controls preload="metadata" src={attachment.url} sx={{ display: 'block', width: '100%', maxHeight: 360, mt: 1, borderRadius: 1 }} />
-          return <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} href={attachment.url} target="_blank" rel="noreferrer">{attachment.name || mime || 'Adjunto'}</Button>
-        })}
+        {message.attachments.map((attachment) => <AttachmentView key={attachment.id} attachment={attachment} />)}
         <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end', alignItems: 'center', mt: 0.5, opacity: 0.75 }}>
           <Typography variant="caption">{new Date(message.timestamp || message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
           {!incoming && messageState(message)}
@@ -165,6 +212,8 @@ export default function ChatPage() {
   const [search, setSearch] = useState('')
   const [unanswered, setUnanswered] = useState(false)
   const [text, setText] = useState('')
+  const [file, setFile] = useState<File | undefined>()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const messagesBoxRef = useRef<HTMLDivElement | null>(null)
   const forceScrollRef = useRef(true)
   const lastMessageIdRef = useRef<number | null>(null)
@@ -259,8 +308,8 @@ export default function ChatPage() {
   }
 
   const send = useMutation({
-    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim()),
-    onSuccess: () => { setText(''); invalidate() },
+    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim(), file),
+    onSuccess: () => { setText(''); setFile(undefined); if (fileInputRef.current) fileInputRef.current.value = ''; invalidate() },
   })
   const take = useMutation({ mutationFn: () => adminChatService.takeSession(selectedId!), onSuccess: invalidate })
   const close = useMutation({ mutationFn: () => adminChatService.closeSession(selectedId!), onSuccess: invalidate })
@@ -362,9 +411,12 @@ export default function ChatPage() {
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
               <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
+                {file && <Chip sx={{ mb: 1 }} label={`${file.name} (${Math.ceil(file.size / 1024)} KB)`} onDelete={send.isPending ? undefined : () => setFile(undefined)} />}
                 <Stack direction="row" spacing={1}>
+                  <input ref={fileInputRef} hidden type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx" onChange={(event) => setFile(event.target.files?.[0])} />
+                  <Tooltip title="Adjuntar imagen o documento"><span><IconButton aria-label="Adjuntar archivo" disabled={send.isPending || selected.status === 'closed'} onClick={() => fileInputRef.current?.click()}><Paperclip size={20} /></IconButton></span></Tooltip>
                   <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim() && !send.isPending && selected.status !== 'closed') send.mutate() } }} />
-                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={!text.trim() || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
+                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={(!text.trim() && !file) || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
                 </Stack>
               </Box>
             </Paper>

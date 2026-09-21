@@ -213,7 +213,7 @@ Resultado: APPROVED
    - Actualizar `.env` frontend y backend
 
 2. **Configurar webhook público**
-   - Usar URL HTTPS: `https://imporgasjj.com/api/webhooks/wompi`
+   - Usar URL HTTPS: `https://www.imporgasjj.com/api/webhooks/wompi`
    - Configurar en dashboard de Wompi
 
 3. **Implementar firma HMAC**

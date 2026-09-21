@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from auth.views import TokenLMSView, PasswordVersionRefreshView
+from .health import api_root
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -43,6 +44,7 @@ urlpatterns = [
     path('api/meta/facebook/', include('crmChat.apps.facebook.urls')),
     path('api/meta/instagram/', include('crmChat.apps.instagram.urls')),
     path('visits/', include('AppVisits.urls')),
+    path('', api_root, name='api-root'),
 ]
 
 # Servir archivos media en desarrollo

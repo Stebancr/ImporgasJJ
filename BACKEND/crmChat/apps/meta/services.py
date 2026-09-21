@@ -527,13 +527,27 @@ def persist_normalized_message(event):
     ).first()
     profile = {}
     resolved_sender_name = event.sender_name
+    fallback_sender_name = (
+        'Usuario de Facebook'
+        if event.channel == ChannelIntegration.CHANNEL_FACEBOOK
+        else f'Usuario de {event.channel.capitalize()}'
+    )
+    profile_checked_at = (identity.profile_data or {}).get('profile_checked_at') if identity else None
+    try:
+        profile_refresh_due = (
+            not profile_checked_at
+            or datetime.fromisoformat(str(profile_checked_at).replace('Z', '+00:00'))
+            <= datetime.now(datetime_timezone.utc) - timedelta(hours=24)
+        )
+    except (TypeError, ValueError):
+        profile_refresh_due = True
     if event.channel in {
         ChannelIntegration.CHANNEL_FACEBOOK,
         ChannelIntegration.CHANNEL_INSTAGRAM,
     } and (
         not identity
         or not identity.display_name
-        or identity.contact.name == f'Cliente {event.channel}'
+        or profile_refresh_due
     ):
         try:
             if event.channel == ChannelIntegration.CHANNEL_INSTAGRAM:
@@ -552,16 +566,37 @@ def persist_normalized_message(event):
                 event.channel, integration.id, _mask_destination(event.sender_id),
                 bool(resolved_sender_name),
             )
+            profile['profile_checked_at'] = timezone.now().isoformat()
         except MetaAPIError as exc:
             logger.warning(
                 'No fue posible enriquecer el perfil Meta: channel=%s integration_id=%s '
                 'sender=%s error=%s.',
                 event.channel, integration.id, _mask_destination(event.sender_id), str(exc)[:300],
             )
+            profile = {
+                'profile_checked_at': timezone.now().isoformat(),
+                'profile_error': 'graph_api_unavailable',
+            }
+        except Exception as exc:
+            logger.warning(
+                'Error inesperado al consultar perfil Meta: channel=%s integration_id=%s '
+                'sender=%s error_type=%s.',
+                event.channel, integration.id, _mask_destination(event.sender_id), type(exc).__name__,
+            )
+            profile = {
+                'profile_checked_at': timezone.now().isoformat(),
+                'profile_error': 'unexpected_profile_error',
+            }
+    if not resolved_sender_name and (
+        not identity
+        or not identity.display_name
+        or identity.display_name in {f'Cliente {event.channel}', fallback_sender_name}
+    ):
+        resolved_sender_name = fallback_sender_name
     contact_created = False
     if not identity:
         contact = CRMContact.objects.create(
-            name=resolved_sender_name or f'Cliente {event.channel}',
+            name=resolved_sender_name or fallback_sender_name,
             avatar_url=str(profile.get('profile_pic') or profile.get('profile_picture_url') or '')[:1000],
             last_interaction_at=_timestamp(event.timestamp) or timezone.now(),
         )
@@ -569,10 +604,10 @@ def persist_normalized_message(event):
             integration=integration,
             external_id=event.sender_id,
             contact=contact,
-            display_name=resolved_sender_name,
+            display_name=resolved_sender_name or fallback_sender_name,
             profile_data={
                 key: profile[key]
-                for key in ('id', 'name', 'first_name', 'last_name', 'username', 'profile_pic')
+                for key in ('id', 'name', 'first_name', 'last_name', 'username', 'profile_pic', 'profile_checked_at', 'profile_error')
                 if profile.get(key)
             },
         )
@@ -588,17 +623,23 @@ def persist_normalized_message(event):
         contact_update_fields.append('avatar_url')
     if contact_update_fields:
         contact.save(update_fields=[*contact_update_fields, 'updated_at'])
-    if resolved_sender_name and identity.display_name != resolved_sender_name:
-        identity.display_name = resolved_sender_name
-        identity.profile_data = {
-            **(identity.profile_data or {}),
-            **{
-                key: profile[key]
-                for key in ('id', 'name', 'first_name', 'last_name', 'username', 'profile_pic')
-                if profile.get(key)
-            },
-        }
-        identity.save(update_fields=['display_name', 'profile_data', 'updated_at'])
+    identity_updates = []
+    identity_name = resolved_sender_name or identity.display_name or fallback_sender_name
+    if identity.display_name != identity_name:
+        identity.display_name = identity_name
+        identity_updates.append('display_name')
+    safe_profile = {
+        key: profile[key]
+        for key in ('id', 'name', 'first_name', 'last_name', 'username', 'profile_pic', 'profile_checked_at', 'profile_error')
+        if profile.get(key)
+    }
+    if safe_profile:
+        merged_profile = {**(identity.profile_data or {}), **safe_profile}
+        if merged_profile != identity.profile_data:
+            identity.profile_data = merged_profile
+            identity_updates.append('profile_data')
+    if identity_updates:
+        identity.save(update_fields=[*identity_updates, 'updated_at'])
     logger.info(
         'Identidad Meta resuelta: channel=%s integration_id=%s contact_id=%s created=%s.',
         event.channel, integration.id, contact.id, contact_created,
@@ -640,6 +681,16 @@ def persist_normalized_message(event):
                 integration=integration,
                 external_thread_id=event.sender_id,
             )
+    current_name = resolved_sender_name or contact.name or fallback_sender_name
+    session_updates = []
+    if session.user_name != current_name:
+        session.user_name = current_name
+        session_updates.append('user_name')
+    if session.contact_id != contact.id:
+        session.contact = contact
+        session_updates.append('contact')
+    if session_updates:
+        session.save(update_fields=[*session_updates, 'updated_at'])
     logger.info(
         'Conversación Meta resuelta: channel=%s integration_id=%s contact_id=%s '
         'session_id=%s created=%s.',
@@ -819,8 +870,8 @@ def dispatch_outbound_message(message):
         )
         logger.info(
             'Meta aceptó el mensaje: session_id=%s message_id=%s channel=%s '
-            'external_message_id=%s status=%s',
-            session.id, message.id, session.channel, external_id or '-', message.status,
+            'external_message_id_present=true status=%s',
+            session.id, message.id, session.channel, message.status,
         )
         return message
     except Exception as exc:

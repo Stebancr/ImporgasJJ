@@ -138,7 +138,7 @@ WOMPI_INTEGRITY_SECRET=YOUR_INTEGRITY_SECRET
 2. Obtener llaves de sandbox para pruebas
 3. Configurar webhook URL:
    - **Sandbox:** `http://YOUR_NGROK_URL/api/webhooks/wompi`
-   - **Producción:** `https://imporgasjj.com/api/webhooks/wompi`
+   - **Producción:** `https://www.imporgasjj.com/api/webhooks/wompi`
 4. Activar eventos: `transaction.updated`
 
 ---
@@ -358,7 +358,7 @@ WOMPI_INTEGRITY_SECRET=prod_integrity_XXXXXXXX
 
 Configurar en dashboard de Wompi:
 ```
-https://imporgasjj.com/api/webhooks/wompi
+https://www.imporgasjj.com/api/webhooks/wompi
 ```
 
 ### Implementar Validación HMAC
@@ -585,7 +585,7 @@ if (!isLocalhost) {
 
 1. **Verificar URL del webhook en Wompi:**
    - Dashboard > Configuración > Webhooks
-   - URL: `https://imporgasjj.com/webhooks/wompi`
+   - URL: `https://www.imporgasjj.com/api/webhooks/wompi`
    - ⚠️ En localhost, Wompi NO puede enviar webhooks
 
 2. **Probar webhook manualmente:**

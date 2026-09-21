@@ -84,7 +84,7 @@ VITE_WOMPI_PUBLIC_KEY=pub_test_TU_LLAVE_AQUI
 # VITE_WOMPI_PUBLIC_KEY=pub_prod_TU_LLAVE_AQUI
 
 VITE_API_URL=http://localhost:8000/api
-VITE_WOMPI_REDIRECT_URL=https://imporgasjj.com/orden-confirmada
+VITE_WOMPI_REDIRECT_URL=https://www.imporgasjj.com/orden-confirmada
 ```
 
 ### Paso 2: Actualizar .env del Backend

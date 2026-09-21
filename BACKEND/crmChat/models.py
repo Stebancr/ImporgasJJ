@@ -436,6 +436,13 @@ class ChatMessage(models.Model):
         blank=True,
         unique=True,
     )
+    client_message_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text='Identificador idempotente generado por CRM o aplicación móvil.',
+    )
     status = models.CharField(
         max_length=20,
         choices=[

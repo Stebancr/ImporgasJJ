@@ -63,8 +63,8 @@ def send_message(message, payload):
     if not raw_external_id:
         raise MetaAPIError('WhatsApp Web no confirmó el identificador del mensaje enviado.')
     logger.info(
-        'WhatsApp Web aceptó salida: session_id=%s message_id=%s destination=%s external_id=%s.',
-        session.pk, message.pk, mask_jid(destination), raw_external_id,
+        'WhatsApp Web aceptó salida: session_id=%s message_id=%s destination=%s external_id_present=true.',
+        session.pk, message.pk, mask_jid(destination),
     )
     return {
         **response,

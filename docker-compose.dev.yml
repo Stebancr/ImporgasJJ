@@ -27,8 +27,10 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+      - OLLAMA_QUEUE_WAIT=${OLLAMA_QUEUE_WAIT:-20}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
+      - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
       # Relay definido en emails/docker-compose.yml; se respeta EMAIL_* si
       # el despliegue aporta credenciales o un proveedor SMTP distinto.
       - EMAIL_HOST=${EMAIL_HOST:-smtp}
@@ -66,8 +68,10 @@ services:
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
+      - OLLAMA_QUEUE_WAIT=${OLLAMA_QUEUE_WAIT:-20}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
+      - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
     depends_on:
       backend:
         condition: service_started
