@@ -119,17 +119,28 @@ class MetaWebhookView(APIView):
         mode = request.query_params.get('hub.mode')
         token = request.query_params.get('hub.verify_token', '')
         challenge = request.query_params.get('hub.challenge', '')
-        if mode == 'subscribe' and verify_webhook_token(token, self.forced_channel):
-            return HttpResponse(challenge, content_type='text/plain', status=200)
-        logger.warning(
-            'Verificación webhook Meta rechazada: channel=%s mode_valid=%s '
-            'token_present=%s challenge_present=%s',
+        mode_valid = mode == 'subscribe'
+        token_match = verify_webhook_token(token, self.forced_channel) if token else False
+        challenge_present = challenge != ''
+        accepted = mode_valid and token_match and challenge_present
+        status_code = status.HTTP_200_OK if accepted else status.HTTP_403_FORBIDDEN
+        log = logger.info if accepted else logger.warning
+        log(
+            'Meta webhook verification method=GET path=%s channel=%s '
+            'mode_present=%s mode_valid=%s challenge_present=%s '
+            'token_present=%s token_match=%s status=%s.',
+            request.path,
             self.forced_channel or 'unified',
-            mode == 'subscribe',
+            mode is not None,
+            mode_valid,
+            challenge_present,
             bool(token),
-            bool(challenge),
+            token_match,
+            status_code,
         )
-        return Response({'detail': 'Verificación rechazada.'}, status=status.HTTP_403_FORBIDDEN)
+        if accepted:
+            return HttpResponse(challenge, content_type='text/plain', status=200)
+        return HttpResponse('Verification rejected.', content_type='text/plain', status=status_code)
 
     def post(self, request):
         signature_header = request.headers.get('X-Hub-Signature-256', '')

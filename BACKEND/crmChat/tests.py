@@ -823,6 +823,21 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'123456')
 
+    def test_verification_requires_subscribe_mode_and_nonempty_challenge(self):
+        missing_challenge = self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'verify-test',
+        })
+        wrong_mode = self.client.get('/api/meta/instagram/webhook/', {
+            'hub.mode': 'unsubscribe',
+            'hub.verify_token': 'verify-test',
+            'hub.challenge': 'must-not-return',
+        })
+        for response in (missing_challenge, wrong_mode):
+            self.assertEqual(response.status_code, 403)
+            self.assertTrue(response['Content-Type'].startswith('text/plain'))
+            self.assertNotIn(b'must-not-return', response.content)
+
     def test_api_prefixed_whatsapp_alias_verifies_for_direct_backend_proxy(self):
         """Acepta el prefijo /api cuando un proxy externo no lo elimina."""
 

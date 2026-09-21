@@ -54,10 +54,18 @@ endpoint común usa el token global. Los nombres
 `META_WEBHOOK_messages_TOKEN_INSTAGRAM` y
 `META_WEBHOOK_messages_TOKEN_Facebook` no son válidos.
 
-Docker Compose carga `.envdev` con `format: raw`; no se deben envolver estos
-valores en comillas porque las comillas se convertirían en parte del token. El
-GET utiliza exclusivamente `hub.mode`, `hub.challenge` y `hub.verify_token`.
-Los parámetros con guion bajo se ignoran.
+Docker Compose carga `.envdev` y `.env.prod` en formato literal; no se deben
+envolver estos valores en comillas porque las comillas se convertirían en
+parte del token. Un valor como `""` es un token de dos caracteres, no un valor
+vacío. En producción se recomiendan tokens aleatorios y diferentes por canal.
+El GET utiliza exclusivamente `hub.mode`, `hub.challenge` y
+`hub.verify_token`. Los parámetros con guion bajo se ignoran.
+
+El handshake solo responde `200 text/plain` cuando `hub.mode=subscribe`, el
+token corresponde al canal y `hub.challenge` está presente. La respuesta es el
+challenge exacto, sin JSON ni transformaciones. Cualquier otra combinación
+responde `403 text/plain`. El GET no requiere JWT ni firma; los POST continúan
+exigiendo `X-Hub-Signature-256`.
 
 ## Credenciales necesarias
 
