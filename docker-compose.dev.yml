@@ -27,6 +27,8 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       # Relay definido en emails/docker-compose.yml; se respeta EMAIL_* si
       # el despliegue aporta credenciales o un proveedor SMTP distinto.
       - EMAIL_HOST=${EMAIL_HOST:-smtp}
@@ -64,6 +66,8 @@ services:
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
     depends_on:
       backend:
         condition: service_started
@@ -108,6 +112,7 @@ services:
     environment:
       - NODE_ENV=development
       - VITE_API_URL=/api
+      - VITE_PUBLIC_APP_URL=${VITE_PUBLIC_APP_URL:-http://localhost}
     command: sh -c "npm install && npm run dev"
     networks:
       - shared_net

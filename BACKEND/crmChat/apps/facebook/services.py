@@ -27,3 +27,15 @@ def sender_action(integration, recipient_id, action):
     if action not in {'mark_seen', 'typing_on', 'typing_off'}:
         raise ValueError('Sender action no soportada.')
     return _send(integration, recipient_id, {'sender_action': action})
+
+
+def get_sender_profile(integration, sender_id):
+    """Consulta el perfil Page-scoped sin registrar un fallo opcional como caída del canal."""
+
+    return graph_request(
+        integration,
+        'GET',
+        sender_id,
+        params={'fields': 'id,name,first_name,last_name,profile_pic'},
+        record_error=False,
+    )

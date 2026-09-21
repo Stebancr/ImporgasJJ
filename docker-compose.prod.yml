@@ -16,6 +16,8 @@ x-backend-environment: &backend-environment
   CELERY_RESULT_BACKEND: redis://redis:6379/0
   OLLAMA_API_URL: http://ollama:11434/api/chat
   OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen:4b}
+  FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-https://djsolutions.io}
+  PRODUCT_URL_TEMPLATE: ${PRODUCT_URL_TEMPLATE:-https://djsolutions.io/producto/{id}}
 
 x-backend-service: &backend-service
   build:
@@ -93,6 +95,7 @@ services:
       dockerfile: Dockerfile.prod
       args:
         VITE_API_URL: /api
+        VITE_PUBLIC_APP_URL: ${VITE_PUBLIC_APP_URL:-https://djsolutions.io}
         VITE_WOMPI_PUBLIC_KEY: ${VITE_WOMPI_PUBLIC_KEY:-}
     container_name: imporgas-prod-frontend
     restart: unless-stopped

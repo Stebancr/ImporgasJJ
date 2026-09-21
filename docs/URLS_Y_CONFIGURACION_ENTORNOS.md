@@ -64,6 +64,9 @@ Los números internos provienen de `docker-compose.dev.yml`, `docker-compose.dat
 | `ALLOWED_HOSTS` | localhost, servicios Docker y host del túnel en `.envdev` | lista explícita en `settings_production.py` |
 | `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` | orígenes locales con esquema | HTTPS explícitos en `settings_production.py`; CSRF admite `https://*.djsolutions.io` |
 | `VITE_API_URL` | `/api` | `/api` en el build de PROD |
+| `VITE_PUBLIC_APP_URL` | `http://localhost` | `https://djsolutions.io` |
+| `FRONTEND_PUBLIC_URL` | `http://localhost` | `https://djsolutions.io` |
+| `PRODUCT_URL_TEMPLATE` | `http://localhost/producto/{id}` | `https://djsolutions.io/producto/{id}` |
 | `VITE_WOMPI_PUBLIC_KEY`, `WOMPI_PUBLIC_KEY` | llaves públicas de prueba | llave pública de producción; la privada nunca se pasa a Vite |
 | `WOMPI_API_URL` | sandbox explícito en Compose | producción en `.env.prod.example` |
 | `META_REDIRECT_URI`, `INSTAGRAM_OAUTH_REDIRECT_URI` | HTTPS del túnel DEV | HTTPS del dominio registrado en Meta PROD |
@@ -73,7 +76,7 @@ Los números internos provienen de `docker-compose.dev.yml`, `docker-compose.dat
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | acceso Django a la base DEV | acceso Django a la base PROD |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | inicialización del servicio DEV; solo `POSTGRES_PASSWORD` viene de `.env` | inicialización del servicio PROD desde `.env.prod` |
 
-El frontend construye llamadas a la API con `VITE_API_URL=/api`, por lo que usa el host desde el que se abrió. Las URLs para compartir productos usan `window.location.origin`. Las direcciones de Meta Graph, Instagram y del checkout alojado de Wompi son endpoints externos del proveedor, no orígenes de la aplicación. La estructura antigua `BACKEND/core/config/dev.py` no es el módulo de settings seleccionado por estos Compose; `nginx/nginx.prod.conf` es una configuración antigua y tampoco está montada en el Compose PROD activo.
+El frontend construye llamadas a la API con `VITE_API_URL=/api`, por lo que usa el host desde el que se abrió. El chatbot construye las fichas públicas con `PRODUCT_URL_TEMPLATE`, cuyo marcador `{id}` es obligatorio; así los enlaces enviados por canales externos no dependen del navegador del agente. Las direcciones de Meta Graph, Instagram y del checkout alojado de Wompi son endpoints externos del proveedor, no orígenes de la aplicación. La estructura antigua `BACKEND/core/config/dev.py` no es el módulo de settings seleccionado por estos Compose; `nginx/nginx.prod.conf` es una configuración antigua y tampoco está montada en el Compose PROD activo.
 
 En DEV se corrigió la carga accidental de `.env` por el backend y Celery: ahora leen `.envdev`. El archivo `.envdev` local debe contener únicamente las llaves Wompi de prueba, la contraseña de la **base DEV existente** y callbacks al túnel DEV. El ejemplo PROD es una plantilla; verificar los valores reales de `.env.prod` en el servidor antes de desplegar. El repositorio no permite comprobar que Meta haya registrado las URLs correctas o que el proxy público enrute `imporgasjj.com`.
 

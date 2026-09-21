@@ -527,13 +527,19 @@ def persist_normalized_message(event):
     ).first()
     profile = {}
     resolved_sender_name = event.sender_name
-    if event.channel == ChannelIntegration.CHANNEL_INSTAGRAM and (
+    if event.channel in {
+        ChannelIntegration.CHANNEL_FACEBOOK,
+        ChannelIntegration.CHANNEL_INSTAGRAM,
+    } and (
         not identity
         or not identity.display_name
         or identity.contact.name == f'Cliente {event.channel}'
     ):
         try:
-            from crmChat.apps.instagram.services import get_sender_profile
+            if event.channel == ChannelIntegration.CHANNEL_INSTAGRAM:
+                from crmChat.apps.instagram.services import get_sender_profile
+            else:
+                from crmChat.apps.facebook.services import get_sender_profile
 
             profile = get_sender_profile(integration, event.sender_id)
             resolved_sender_name = (
@@ -556,7 +562,8 @@ def persist_normalized_message(event):
     if not identity:
         contact = CRMContact.objects.create(
             name=resolved_sender_name or f'Cliente {event.channel}',
-            avatar_url=str(profile.get('profile_pic') or '')[:1000],
+            avatar_url=str(profile.get('profile_pic') or profile.get('profile_picture_url') or '')[:1000],
+            last_interaction_at=_timestamp(event.timestamp) or timezone.now(),
         )
         identity = ChannelIdentity.objects.create(
             integration=integration,
@@ -565,7 +572,7 @@ def persist_normalized_message(event):
             display_name=resolved_sender_name,
             profile_data={
                 key: profile[key]
-                for key in ('id', 'name', 'username', 'profile_pic')
+                for key in ('id', 'name', 'first_name', 'last_name', 'username', 'profile_pic')
                 if profile.get(key)
             },
         )
@@ -575,7 +582,7 @@ def persist_normalized_message(event):
     if resolved_sender_name and contact.name != resolved_sender_name:
         contact.name = resolved_sender_name
         contact_update_fields.append('name')
-    profile_picture = str(profile.get('profile_pic') or '')[:1000]
+    profile_picture = str(profile.get('profile_pic') or profile.get('profile_picture_url') or '')[:1000]
     if profile_picture and contact.avatar_url != profile_picture:
         contact.avatar_url = profile_picture
         contact_update_fields.append('avatar_url')
@@ -587,7 +594,7 @@ def persist_normalized_message(event):
             **(identity.profile_data or {}),
             **{
                 key: profile[key]
-                for key in ('id', 'name', 'username', 'profile_pic')
+                for key in ('id', 'name', 'first_name', 'last_name', 'username', 'profile_pic')
                 if profile.get(key)
             },
         }
@@ -669,6 +676,8 @@ def persist_normalized_message(event):
     session.inactivity_warning_at = None
     session.unread_by_agent += 1
     session.save(update_fields=['last_customer_message_at', 'inactivity_warning_at', 'unread_by_agent', 'updated_at'])
+    contact.last_interaction_at = session.last_customer_message_at
+    contact.save(update_fields=['last_interaction_at', 'updated_at'])
     logger.info(
         'Mensaje Meta persistido: channel=%s integration_id=%s contact_id=%s '
         'session_id=%s message_id=%s type=%s attachments=%s.',

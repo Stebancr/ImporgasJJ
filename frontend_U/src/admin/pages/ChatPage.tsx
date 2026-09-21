@@ -7,7 +7,7 @@ import {
   ThemeProvider, Tooltip, Typography,
 } from '@mui/material'
 import {
-  ArrowDown, Bell, BellOff, Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
+  ArrowDown, ArrowLeft, Bell, BellOff, Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
   UserCheck, XCircle,
 } from 'lucide-react'
 
@@ -51,8 +51,8 @@ function BotMarkdown({ text }: { text: string }) {
   return (
     <Box>
       {lines.map((line, i) => {
-        // Link de producto: /producto/123
-        const productMatch = line.trim().match(/^\/producto\/(\d+)$/)
+        // Link público de producto, absoluto o relativo.
+        const productMatch = line.trim().match(/^(https?:\/\/[^\s]+\/producto\/\d+|\/producto\/\d+)$/)
         if (productMatch) {
           return (
             <Box key={i} sx={{ mt: 0.75 }}>
@@ -140,15 +140,14 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
           ? <BotMarkdown text={message.text} />
           : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
         )}
-        {message.attachments.map((attachment) => (
-          attachment.url ? (
-            <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} href={attachment.url} target="_blank">
-              {attachment.name || attachment.mime_type || 'Adjunto'}
-            </Button>
-          ) : (
-            <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
-          )
-        ))}
+        {message.attachments.map((attachment) => {
+          if (!attachment.url) return <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
+          const mime = attachment.mime_type || ''
+          if (mime.startsWith('image/')) return <Box key={attachment.id} component="a" href={attachment.url} target="_blank" rel="noreferrer" sx={{ display: 'block', mt: 1 }}><Box component="img" src={attachment.url} alt={attachment.name || 'Imagen adjunta'} loading="lazy" sx={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 1, objectFit: 'contain' }} /></Box>
+          if (mime.startsWith('audio/')) return <Box key={attachment.id} component="audio" controls preload="metadata" src={attachment.url} sx={{ display: 'block', width: '100%', maxWidth: 360, mt: 1 }} />
+          if (mime.startsWith('video/')) return <Box key={attachment.id} component="video" controls preload="metadata" src={attachment.url} sx={{ display: 'block', width: '100%', maxHeight: 360, mt: 1, borderRadius: 1 }} />
+          return <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} href={attachment.url} target="_blank" rel="noreferrer">{attachment.name || mime || 'Adjunto'}</Button>
+        })}
         <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end', alignItems: 'center', mt: 0.5, opacity: 0.75 }}>
           <Typography variant="caption">{new Date(message.timestamp || message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
           {!incoming && messageState(message)}
@@ -276,7 +275,7 @@ export default function ChatPage() {
 
   return (
     <ThemeProvider theme={crmTheme}>
-      <Stack spacing={2} sx={{ minHeight: 'calc(100dvh - 8rem)', height: { xs: 'auto', lg: 'calc(100dvh - 8rem)' }, minWidth: 0, color: '#0f172a' }}>
+      <Stack spacing={2} sx={{ minHeight: { xs: 0, lg: 'calc(100dvh - 8rem)' }, height: { xs: 'auto', lg: 'calc(100dvh - 8rem)' }, minWidth: 0, maxWidth: '100%', overflowX: 'hidden', color: '#0f172a' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, gap: 1 }}>
           <Box>
             <Typography variant="h5" sx={{ fontWeight: 800 }}>Bandeja omnicanal</Typography>
@@ -291,7 +290,7 @@ export default function ChatPage() {
         </Stack>
 
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 320 }, maxHeight: { xs: 400, lg: 'none' }, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 320 }, height: { xs: 'min(58dvh, 560px)', lg: 'auto' }, maxHeight: { xs: 560, lg: 'none' }, flexShrink: 0, minHeight: 0, display: { xs: selected ? 'none' : 'flex', lg: 'flex' }, flexDirection: 'column', overflow: 'hidden' }}>
             <Stack spacing={1} sx={{ p: 1.5, borderBottom: '1px solid #e2e8f0' }}>
               <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => setSearch(event.target.value)} />
               <Stack direction="row" spacing={1}>
@@ -333,12 +332,12 @@ export default function ChatPage() {
           </Paper>
 
           {!selected ? (
-            <Paper variant="outlined" sx={{ flex: 1, display: 'grid', placeItems: 'center', color: '#64748b' }}><Stack sx={{ alignItems: 'center' }}><Inbox size={48} /><Typography>Selecciona una conversación</Typography></Stack></Paper>
+            <Paper variant="outlined" sx={{ flex: 1, display: { xs: 'none', lg: 'grid' }, placeItems: 'center', color: '#64748b' }}><Stack sx={{ alignItems: 'center' }}><Inbox size={48} /><Typography>Selecciona una conversación</Typography></Stack></Paper>
           ) : (
-            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, minHeight: { xs: 480, lg: 0 }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box><Typography sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, height: { xs: 'min(72dvh, 720px)', lg: 'auto' }, minHeight: { xs: 480, lg: 0 }, maxHeight: { xs: '72dvh', lg: 'none' }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <Stack direction={{ xs: 'column', md: 'row' }} sx={{ position: 'sticky', top: 0, zIndex: 2, bgcolor: '#fff', justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}><IconButton aria-label="Volver a conversaciones" onClick={() => setSelectedId(null)} sx={{ display: { xs: 'inline-flex', lg: 'none' } }}><ArrowLeft size={19} /></IconButton><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography noWrap variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
+                <Stack direction="row" useFlexGap spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                   <TextField
                     select
                     size="small"
@@ -361,7 +360,7 @@ export default function ChatPage() {
                 {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
-              <Box sx={{ p: 1.5, borderTop: '1px solid #e2e8f0' }}>
+              <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
                 <Stack direction="row" spacing={1}>
                   <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim() && !send.isPending && selected.status !== 'closed') send.mutate() } }} />

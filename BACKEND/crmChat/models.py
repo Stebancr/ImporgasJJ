@@ -24,6 +24,7 @@ class CRMContact(models.Model):
     phone = models.CharField(max_length=40, blank=True)
     email = models.EmailField(blank=True)
     avatar_url = models.URLField(max_length=1000, blank=True)
+    last_interaction_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

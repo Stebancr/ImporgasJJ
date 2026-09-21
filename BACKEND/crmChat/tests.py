@@ -45,7 +45,7 @@ from .tasks import (
 )
 from core.asgi import application
 from core.logging_filters import redact_webhook_tokens
-from ecommerce.models import Brand, Category, Product
+from ecommerce.models import Brand, Category, Product, ProductSpec, SpecAttribute
 
 
 class ConversationStateTests(APITestCase):
@@ -96,6 +96,31 @@ class ConversationStateTests(APITestCase):
             result = ollama_service.get_bot_response(phrase, conversation_state=listed['state'])
             self.assertTrue(result['needs_agent'], phrase)
             self.assertEqual(result['state']['selected_product_id'], product.id)
+
+    @override_settings(PRODUCT_URL_TEMPLATE='https://shop.example.test/producto/{id}')
+    def test_future_category_uses_database_specs_and_public_links(self):
+        category = Category.objects.create(name='Hornos especiales', description='Equipos para cocción')
+        brand = Brand.objects.create(name='Marca dinámica')
+        gas = SpecAttribute.objects.create(name='Tipo de gas', order=1)
+        products = []
+        for index, value in enumerate(('Natural', 'GLP'), 1):
+            product = Product.objects.create(
+                name=f'Horno futuro {index}', description='Horno empotrable', price=100000 + index,
+                category=category, brand=brand, total_stock=2, is_available=True,
+            )
+            ProductSpec.objects.create(product=product, attribute=gas, value=value)
+            products.append(product)
+
+        question = ollama_service.get_bot_response('¿Cuál horno especial me recomiendas?')
+        self.assertIn('tipo de gas', question['response'].lower())
+        self.assertEqual(question['state']['asked_attributes'], ['Tipo de gas'])
+
+        result = ollama_service.get_bot_response(
+            'Gas natural', conversation_state=question['state'],
+        )
+        self.assertEqual(len(result['state']['recent_products']), 1)
+        self.assertIn(f'https://shop.example.test/producto/{products[0].id}', result['response'])
+        self.assertNotIn(f'/producto/{products[1].id}', result['response'])
 
     def test_unavailable_product_reports_stock(self):
         category = Category.objects.create(name='Reguladores')
@@ -815,7 +840,38 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(identity.display_name, 'Cliente Instagram Real')
         self.assertEqual(identity.contact.name, 'Cliente Instagram Real')
         self.assertEqual(identity.contact.avatar_url, 'https://cdn.example.test/profile.jpg')
+        self.assertIsNotNone(identity.contact.last_interaction_at)
         self.assertEqual(profile.call_count, 1)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.facebook.services.get_sender_profile')
+    def test_facebook_enriches_contact_profile_and_last_interaction(self, profile, _read_receipt):
+        profile.return_value = {
+            'id': 'psid-profile', 'name': 'Cliente Facebook Real',
+            'first_name': 'Cliente', 'last_name': 'Facebook',
+            'profile_pic': 'https://cdn.example.test/facebook.jpg',
+        }
+        integration = ChannelIntegration.objects.create(
+            name='Facebook perfil', channel='facebook', active=True,
+            external_account_id='page-profile', page_id='page-profile',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+        payload = {
+            'object': 'page',
+            'entry': [{'id': 'page-profile', 'messaging': [{
+                'sender': {'id': 'psid-profile'}, 'recipient': {'id': 'page-profile'},
+                'timestamp': 1_700_000_000_000,
+                'message': {'mid': 'mid.fb.profile.1', 'text': 'Hola'},
+            }]}],
+        }
+        self.assertEqual(self._signed_post(payload).status_code, 200)
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='psid-profile')
+        session = ChatSession.objects.get(integration=integration)
+        self.assertEqual(session.user_name, 'Cliente Facebook Real')
+        self.assertEqual(identity.display_name, 'Cliente Facebook Real')
+        self.assertEqual(identity.contact.avatar_url, 'https://cdn.example.test/facebook.jpg')
+        self.assertIsNotNone(identity.contact.last_interaction_at)
+        profile.assert_called_once_with(integration, 'psid-profile')
 
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
     def test_whatsapp_requires_matching_waba_and_phone_and_reconnects_to_new_account(self, _receipt):
