@@ -467,6 +467,10 @@ META_INSTAGRAM_WEBHOOK_URL = config(
     'META_INSTAGRAM_WEBHOOK_URL',
     default=f'{META_PUBLIC_BASE_URL}/api/meta/instagram/webhook/' if META_PUBLIC_BASE_URL else '',
 )
+META_WHATSAPP_WEBHOOK_URL = config(
+    'META_WHATSAPP_WEBHOOK_URL',
+    default=f'{META_PUBLIC_BASE_URL}/api/meta/whatsapp/webhook/' if META_PUBLIC_BASE_URL else '',
+)
 META_OAUTH_AUTHORIZE_URL = config('META_OAUTH_AUTHORIZE_URL', default='https://www.facebook.com')
 META_OAUTH_STATE_MAX_AGE = config('META_OAUTH_STATE_MAX_AGE', default=600, cast=int)
 META_OAUTH_SCOPES = config(

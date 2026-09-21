@@ -10,6 +10,11 @@ DEBUG = False
 ROOT_URLCONF = 'core.urls_production'
 
 ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    'backend',
+    'nginx',
+    'imporgasjj.com',
     'www.imporgasjj.com',
     '2.25.225.216',
 ]

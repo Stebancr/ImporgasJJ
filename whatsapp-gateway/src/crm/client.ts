@@ -16,6 +16,7 @@ export async function crmPost<T>(path: string, body: unknown): Promise<T> {
         headers: {
           Authorization: `Bearer ${env.CRM_INTERNAL_SERVICE_TOKEN}`,
           'Content-Type': 'application/json',
+          'X-Forwarded-Proto': 'https',
           'X-WhatsApp-Gateway-Timestamp': timestamp,
           'X-WhatsApp-Gateway-Request-ID': requestId,
           'X-WhatsApp-Gateway-Signature': signature,

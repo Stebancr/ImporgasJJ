@@ -151,8 +151,11 @@ services:
       traefik.http.routers.imporgas-http.rule: Host(`www.imporgasjj.com`) || Host(`imporgasjj.com`) || Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
       traefik.http.routers.imporgas-http.priority: "100"
       traefik.http.routers.imporgas-http.entrypoints: http
-      traefik.http.routers.imporgas-http.middlewares: imporgas-https
+      traefik.http.routers.imporgas-http.middlewares: imporgas-www,imporgas-https
       traefik.http.routers.imporgas-http.service: imporgas
+      traefik.http.middlewares.imporgas-www.redirectregex.regex: ^http://(?:imporgasjj\.com|djsolutions\.io|www\.djsolutions\.io)(.*)
+      traefik.http.middlewares.imporgas-www.redirectregex.replacement: https://www.imporgasjj.com$${1}
+      traefik.http.middlewares.imporgas-www.redirectregex.permanent: "true"
       traefik.http.middlewares.imporgas-https.redirectscheme.scheme: https
       traefik.http.middlewares.imporgas-https.redirectscheme.permanent: "true"
       traefik.http.routers.imporgas-https.rule: Host(`www.imporgasjj.com`) || Host(`imporgasjj.com`) || Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
