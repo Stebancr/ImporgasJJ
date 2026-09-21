@@ -35,8 +35,8 @@
 - Desarrollo: `FRONTEND_PUBLIC_URL=http://localhost` y `PRODUCT_URL_TEMPLATE=http://localhost/producto/{id}`.
 - Producción: `FRONTEND_PUBLIC_URL=https://www.imporgasjj.com` y `PRODUCT_URL_TEMPLATE=https://www.imporgasjj.com/producto/{id}`.
 - Canales externos en ambos entornos: `EXTERNAL_PRODUCT_URL_TEMPLATE=https://www.imporgasjj.com/producto/{id}`. Debe ser HTTPS y no acepta hosts locales o internos.
-- Modelo: `qwen:4b`, `OLLAMA_NUM_CTX=4096`, `OLLAMA_TIMEOUT=90` y `OLLAMA_QUEUE_WAIT=20`.
-- Un bloqueo distribuido en Redis permite una solicitud simultánea a Ollama; las demás esperan hasta `OLLAMA_QUEUE_WAIT`.
+- Modelo: `qwen:4b`, `OLLAMA_NUM_CTX=4096`, `OLLAMA_TIMEOUT=90`, `OLLAMA_NUM_PARALLEL=2` y `OLLAMA_MAX_QUEUE=64`.
+- Ollama procesa hasta dos inferencias en paralelo y administra su propia cola. Las conversaciones no comparten un bloqueo global en Django o Redis.
 
 ## Verificación
 

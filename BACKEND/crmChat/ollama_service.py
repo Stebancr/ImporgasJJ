@@ -2,14 +2,11 @@
 import json
 import logging
 import re
-import time
 import unicodedata
-import uuid
 from difflib import get_close_matches
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
 
 
 logger = logging.getLogger(__name__)
@@ -270,7 +267,12 @@ REGLAS ESTRICTAS:
             return 'sauna'
         if 'otro uso' in normalized:
             return 'otro'
-        if any(term in normalized for term in ('ducha', 'bano convencional', 'hogar', 'lavamanos', 'residencial')):
+        if any(term in normalized for term in ('ducha', 'bano convencional', 'bano normal', 'hogar', 'lavamanos', 'residencial')):
+            return 'hogar'
+        # Una respuesta breve se interpreta con la pregunta pendiente. "Baño"
+        # es la forma natural de elegir "baño convencional". Sauna y baño
+        # turco ya se resuelven arriba para no confundir esos usos.
+        if re.search(r'\bbanos?\b', normalized):
             return 'hogar'
         return None
 
@@ -1314,22 +1316,6 @@ REGLAS ESTRICTAS:
                 'num_ctx': self.num_ctx,
             },
         }
-        lock_key = 'crm-chat:ollama:request-lock'
-        lock_token = str(uuid.uuid4())
-        wait_until = time.monotonic() + max(0, settings.OLLAMA_QUEUE_WAIT)
-        acquired = cache.add(lock_key, lock_token, timeout=self.timeout + settings.OLLAMA_QUEUE_WAIT + 10)
-        while not acquired and time.monotonic() < wait_until:
-            time.sleep(0.2)
-            acquired = cache.add(lock_key, lock_token, timeout=self.timeout + settings.OLLAMA_QUEUE_WAIT + 10)
-        if not acquired:
-            logger.warning('Ollama ocupado: se agotó la espera de la cola local.')
-            return {
-                'response': 'El asesor comercial virtual está atendiendo otra consulta. Inténtalo nuevamente en unos segundos.',
-                'needs_agent': False,
-                'state': state,
-                'summary': state_summary,
-                'error': 'queue_timeout',
-            }
         try:
             logger.info('Petición a Ollama: modelo=%s mensajes=%s', self.model, len(messages))
             response = requests.post(self.api_url, json=payload, timeout=self.timeout)
@@ -1376,9 +1362,6 @@ REGLAS ESTRICTAS:
                 'summary': state_summary,
                 'error': 'ollama_error',
             }
-        finally:
-            if cache.get(lock_key) == lock_token:
-                cache.delete(lock_key)
 
 
 ollama_service = OllamaService()

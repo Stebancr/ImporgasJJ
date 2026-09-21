@@ -230,6 +230,15 @@ class ChatbotIntelligenceTests(APITestCase):
         self.assertIn(two.name, second['response'])
         self.assertNotIn(one.name, second['response'])
 
+    def test_short_bathroom_answer_uses_the_pending_question_context(self):
+        for answer in ('baño', 'para el baño', 'un baño normal'):
+            with self.subTest(answer=answer):
+                first = ollama_service.get_bot_response('Necesito recomendación de un calentador')
+                result = ollama_service.get_bot_response(answer, conversation_state=first['state'])
+                self.assertEqual(result['state']['use_case'], 'hogar')
+                self.assertEqual(result['state']['pending_question']['key'], 'bathrooms')
+                self.assertIn('duchas o puntos de agua', result['response'].lower())
+
     def test_jacuzzi_pool_and_sauna_only_return_matching_catalog_items(self):
         products = {
             use: self.product(f'Calentador {use.title()}', f'Calentador de paso a gas natural certificado para {use}')
@@ -316,14 +325,20 @@ class ChatbotIntelligenceTests(APITestCase):
         self.assertEqual(result['error'], 'timeout')
         self.assertIn('tardando más', result['response'])
 
-    @override_settings(OLLAMA_QUEUE_WAIT=0)
-    def test_ollama_concurrency_lock_limits_parallel_requests(self):
+    @patch('crmChat.ollama_service.requests.post')
+    def test_legacy_global_lock_does_not_block_an_ollama_request(self, post):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {'message': {'content': 'Respuesta concurrente.'}}
+        post.return_value = response
         cache.set('crm-chat:ollama:request-lock', 'another-request', timeout=30)
         try:
             result = ollama_service.get_bot_response('¿Qué horarios manejan?')
         finally:
             cache.delete('crm-chat:ollama:request-lock')
-        self.assertEqual(result['error'], 'queue_timeout')
+        self.assertIsNone(result['error'])
+        self.assertEqual(result['response'], 'Respuesta concurrente.')
+        post.assert_called_once()
 
     def test_product_links_follow_environment_configuration(self):
         product = self.product('Calentador con enlace')

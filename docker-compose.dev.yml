@@ -27,7 +27,6 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
-      - OLLAMA_QUEUE_WAIT=${OLLAMA_QUEUE_WAIT:-20}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
@@ -70,7 +69,6 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
-      - OLLAMA_QUEUE_WAIT=${OLLAMA_QUEUE_WAIT:-20}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
@@ -227,6 +225,9 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
+    environment:
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+      - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-64}
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
