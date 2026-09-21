@@ -132,7 +132,7 @@ function CartPage() {
 
             {/* Features Banner */}
             <div className="bg-white rounded-2xl border border-[#E5E7EB] p-4 sm:p-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-[#D1FAE5] rounded-xl flex items-center justify-center">
                     <ShieldCheck className="w-5 h-5 text-[#059669]" />
@@ -163,8 +163,8 @@ function CartPage() {
               {/* Coupon Code */}
               <div className="mb-6">
                 <label className="block text-sm font-medium text-[#4B5563] mb-2">Codigo de descuento</label>
-                <div className="flex gap-2">
-                  <div className="flex-1 relative">
+                <div className="flex flex-col min-[400px]:flex-row gap-2">
+                  <div className="min-w-0 flex-1 relative">
                     <input
                       type="text"
                       value={couponCode}

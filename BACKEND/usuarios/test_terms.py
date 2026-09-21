@@ -41,6 +41,25 @@ class PublicTermsRegistrationTests(APITestCase):
         self.assertEqual(profile_response.status_code, 200)
         self.assertEqual(profile_response.data['terms_version'], CURRENT_TERMS_VERSION)
 
+    def test_customer_can_register_and_log_in_with_email_longer_than_thirty_characters(self):
+        email = 'cliente.carrito.registro.prueba@example.com'
+        response = self.client.post(reverse('register-users'), {
+            **self.payload, 'usuario': email, 'correo': email,
+            'terms_accepted': True, 'terms_version': CURRENT_TERMS_VERSION,
+        }, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Usuario.objects.get(cedula=self.payload['cedula']).correo, email)
+        token = self.client.post(reverse('token_obtain_pair'), {
+            'usuario': email, 'password': self.payload['password'],
+        }, format='json')
+        self.assertEqual(token.status_code, 200)
+
+    def test_token_endpoint_accepts_post_without_trailing_slash(self):
+        response = self.client.post('/auth/token', {
+            'usuario': self.payload['usuario'], 'password': 'invalid-for-route-check',
+        }, format='json')
+        self.assertEqual(response.status_code, 401)
+
     def test_existing_user_can_accept_current_version(self):
         profile = Usuario.objects.create(cedula='legacy', nombre_completo='Cliente Anterior')
         user = Credenciales.objects.create(usuario='legacy', usuario_rel=profile, estado=1, tipo_usuario=0)

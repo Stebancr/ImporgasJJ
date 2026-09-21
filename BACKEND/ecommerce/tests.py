@@ -54,6 +54,7 @@ class ProductReviewAPITests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
 
+@override_settings(CASH_ON_DELIVERY_ENABLED=True)
 class EcommercePurchaseFlowTests(APITestCase):
     def setUp(self):
         profile = Usuario.objects.create(
@@ -75,6 +76,13 @@ class EcommercePurchaseFlowTests(APITestCase):
             'city': 'Bogotá', 'department': 'Bogotá D.C.', 'payment_method': 'cash',
             'items': [{'product_id': self.product.id, 'quantity': 2}],
         }
+
+    @override_settings(CASH_ON_DELIVERY_ENABLED=False)
+    def test_disabled_cash_method_is_rejected_by_backend(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(reverse('order-list'), self.payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
 
     def test_catalog_detail_cart_payload_cash_order_and_tracking(self):
         listing = self.client.get(reverse('product-list'))
@@ -113,10 +121,20 @@ class EcommercePurchaseFlowTests(APITestCase):
         changed = self.client.patch(item_url, {'quantity': 3}, format='json')
         self.assertEqual(changed.status_code, 200)
         self.assertEqual(changed.data['items'][0]['quantity'], 3)
-        self.assertEqual(self.client.patch(item_url, {'quantity': 5}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(item_url, {'quantity': 1000}, format='json').status_code, 400)
         self.assertEqual(CartItem.objects.get(user=self.user).quantity, 3)
         self.assertEqual(self.client.delete(item_url).status_code, 204)
         self.assertFalse(CartItem.objects.exists())
+
+    def test_repeated_addition_updates_single_cart_line_and_quantity(self):
+        self.client.force_authenticate(self.user)
+        cart_url = reverse('cart')
+        first = self.client.post(cart_url, {'product_id': self.product.id, 'quantity': 1}, format='json')
+        second = self.client.post(cart_url, {'product_id': self.product.id, 'quantity': 2}, format='json')
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.data['items'][0]['quantity'], 3)
+        self.assertEqual(CartItem.objects.filter(user=self.user, product=self.product).count(), 1)
 
     def test_zero_quantity_never_creates_order(self):
         self.client.force_authenticate(self.user)
@@ -210,6 +228,37 @@ class WompiPaymentTests(APITestCase):
         self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 200)
         self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 200)
         self.assertEqual(Order.objects.filter(wompi_reference=intent.reference).count(), 1)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.total_stock, 9)
+
+    def test_zero_and_negative_stock_can_be_ordered_only_after_approval(self):
+        ProductStock.objects.filter(product=self.product).update(quantity=0)
+        self.product.total_stock = 0
+        self.product.save(update_fields=['total_stock'])
+        cart_response = self.client.post(reverse('cart'), {'product_id': self.product.pk, 'quantity': 2}, format='json')
+        self.assertEqual(cart_response.status_code, 201)
+        for number, quantity, expected in ((1, 2, -2), (2, 3, -5)):
+            with self.subTest(number=number):
+                reference = f'REF-NEGATIVE-{number}'
+                response = self.client.post(reverse('order-list'), {
+                    'customer_name': 'Cliente Wompi', 'customer_email': 'wompi@example.com',
+                    'shipping_address': 'Dirección de prueba', 'payment_method': 'wompi',
+                    'wompi_reference': reference,
+                    'items': [{'product_id': self.product.pk, 'quantity': quantity}],
+                }, format='json')
+                self.assertEqual(response.status_code, 201)
+                self.product.refresh_from_db()
+                self.assertEqual(self.product.total_stock, 0 if number == 1 else -2)
+                intent = WompiPaymentIntent.objects.get(reference=reference)
+                payload = self.signed_payload(intent, 'APPROVED')
+                self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 200)
+                self.assertEqual(self.client.post(reverse('wompi-webhook'), payload, format='json').status_code, 200)
+                self.product.refresh_from_db()
+                self.assertEqual(self.product.total_stock, expected)
+                self.assertEqual(Order.objects.filter(wompi_reference=reference).count(), 1)
+                detail = self.client.get(reverse('product-detail', args=[self.product.pk]))
+                self.assertEqual(detail.data['data']['total_stock'], 0)
+                self.assertNotIn('stock_entries', detail.data['data'])
 
     def test_checkout_creates_intent_and_order_only_after_approval(self):
         payload = {

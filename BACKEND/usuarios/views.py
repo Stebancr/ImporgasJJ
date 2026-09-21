@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import serializers
+import re
 from usuarios.permissions import IsSuperAdmin, IsAdminUser, IsUsuarioEspecial, IsSuperUserOrAdmin
 from usuarios.models import Usuario, Credenciales, Cargo, Niveles, Regional
 from usuarios.terms import CURRENT_TERMS_VERSION
@@ -25,6 +27,8 @@ class Perfil(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, id=None):
+        if id is not None and int(getattr(request.user, 'tipo_usuario', 0) or 0) == 0:
+            return Response({'error': 'No autorizado.'}, status=403)
         if id is not None:
             usuario = Usuario.objects.select_related('cargo', 'nivel', 'regional').filter(id=id).first()
         else:
@@ -43,7 +47,6 @@ class Perfil(APIView):
             "nombre_completo": usuario.nombre_completo,
             "correo": usuario.correo,
             "telefono": usuario.telefono,
-            "sede": usuario.sede,
             "estado": usuario.estado,
             "nombre_cargo": usuario.cargo.nombrecargo if usuario.cargo else None,
             "nombre_nivel": usuario.nivel.nombrenivel if usuario.nivel else None,
@@ -57,12 +60,45 @@ class Perfil(APIView):
             location = getattr(request.user, "location", None)
             data["location_id"] = location.id if location else None
             data["location_name"] = location.name if location else None
+        if int(getattr(request.user, 'tipo_usuario', 0) or 0) > 0:
+            data['sede'] = usuario.sede
         return Response(data)
+
+    @transaction.atomic
+    def put(self, request, id=None):
+        if id is not None or int(getattr(request.user, 'tipo_usuario', 0) or 0) != 0:
+            return Response({'error': 'No autorizado.'}, status=403)
+        profile = getattr(request.user, 'usuario_rel', None)
+        if not profile:
+            return Response({'error': 'Perfil no encontrado.'}, status=404)
+        name = request.data.get('nombre_completo', '')
+        email = request.data.get('correo', '')
+        phone = request.data.get('telefono', '')
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            return Response({'nombre_completo': 'Ingresa un nombre válido.'}, status=400)
+        try:
+            email = serializers.EmailField(max_length=254).run_validation(email).strip().lower()
+        except serializers.ValidationError:
+            return Response({'correo': 'Ingresa un correo válido.'}, status=400)
+        if not isinstance(phone, str) or (phone and not re.fullmatch(r'[0-9]{7,15}', phone)):
+            return Response({'telefono': 'Ingresa entre 7 y 15 dígitos.'}, status=400)
+        if Credenciales.objects.filter(usuario__iexact=email).exclude(pk=request.user.pk).exists():
+            return Response({'correo': 'Este correo ya está en uso.'}, status=400)
+        profile.nombre_completo = name.strip()
+        profile.correo = email
+        profile.telefono = phone
+        profile.save(update_fields=['nombre_completo', 'correo', 'telefono', 'fecha_actualizacion'])
+        if request.user.usuario.lower() != email:
+            request.user.usuario = email
+            request.user.save(update_fields=['usuario'])
+        return Response({'nombre_completo': profile.nombre_completo, 'correo': profile.correo, 'telefono': profile.telefono})
 
     def patch(self, request, id=None):
         """Alterna el estado del usuario (0 <-> 1). Requiere id."""
         if id is None:
             return Response({"error": "Se requiere el id del usuario"}, status=400)
+        if int(getattr(request.user, 'tipo_usuario', 0) or 0) not in (1, 4):
+            return Response({'error': 'No autorizado.'}, status=403)
 
         usuario = Usuario.objects.filter(id=id).first()
         if not usuario:
@@ -130,7 +166,6 @@ class registerUsers(APIView):
                     nombre_completo=payload.get('nombre_completo', '').strip(),
                     correo=payload.get('correo') or '',
                     telefono=payload.get('telefono') or '',
-                    sede=payload.get('sede') or None,
                     cargo_id=cargo_id,
                     nivel_id=nivel_id,
                     regional_id=regional_id,

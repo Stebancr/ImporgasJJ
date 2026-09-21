@@ -7,7 +7,7 @@ import {
   ThemeProvider, Tooltip, Typography,
 } from '@mui/material'
 import {
-  ArrowDown, Bell, BellOff, Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
+  ArrowDown, ArrowLeft, Bell, BellOff, Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
   UserCheck, XCircle,
 } from 'lucide-react'
 
@@ -17,6 +17,7 @@ import { crmTheme } from '../theme/crmTheme'
 import {
   adminChatService,
   type ChatMessage,
+  type ChatAttachment,
   type ChatSession,
   type SessionFilters,
 } from '../services/admin_chat'
@@ -51,8 +52,8 @@ function BotMarkdown({ text }: { text: string }) {
   return (
     <Box>
       {lines.map((line, i) => {
-        // Link de producto: /producto/123
-        const productMatch = line.trim().match(/^\/producto\/(\d+)$/)
+        // Link público de producto, absoluto o relativo.
+        const productMatch = line.trim().match(/^(https?:\/\/[^\s]+\/producto\/\d+|\/producto\/\d+)$/)
         if (productMatch) {
           return (
             <Box key={i} sx={{ mt: 0.75 }}>
@@ -103,16 +104,76 @@ function BotMarkdown({ text }: { text: string }) {
 }
 
 function messageState(message: ChatMessage) {
-  if (message.status === 'failed') return <XCircle size={13} color="#dc2626" />
+  if (message.status === 'failed') return (
+    <Tooltip title={message.error || 'Meta rechazó el envío'} arrow>
+      <Box component="span" sx={{ display: 'inline-flex', cursor: 'help' }}>
+        <XCircle size={13} color="#dc2626" />
+      </Box>
+    </Tooltip>
+  )
   if (message.status === 'read') return <CheckCheck size={13} color="#2563eb" />
   if (message.status === 'delivered') return <CheckCheck size={13} />
   if (['sent', 'received'].includes(message.status)) return <Check size={13} />
   return null
 }
 
+function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
+  const [objectUrl, setObjectUrl] = useState('')
+  const [error, setError] = useState('')
+  const mime = attachment.mime_type || ''
+  const previewable = mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/')
+
+  useEffect(() => {
+    if (!attachment.url || !previewable) return
+    let active = true
+    let currentUrl = ''
+    adminChatService.getAttachmentBlob(attachment.url)
+      .then((blob) => {
+        if (!active) return
+        currentUrl = URL.createObjectURL(blob)
+        setObjectUrl(currentUrl)
+      })
+      .catch(() => active && setError('No fue posible cargar el archivo.'))
+    return () => {
+      active = false
+      if (currentUrl) URL.revokeObjectURL(currentUrl)
+    }
+  }, [attachment.url, previewable])
+
+  const download = async () => {
+    try {
+      setError('')
+      const blob = await adminChatService.getAttachmentBlob(attachment.url)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = attachment.name || 'adjunto'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('No fue posible descargar el archivo.')
+    }
+  }
+
+  if (!attachment.url) return <Button size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
+  return (
+    <Box sx={{ mt: 1 }}>
+      {!objectUrl && previewable && !error && <CircularProgress size={18} />}
+      {objectUrl && mime.startsWith('image/') && <Box component="img" src={objectUrl} alt={attachment.name || 'Imagen adjunta'} sx={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 1, objectFit: 'contain' }} />}
+      {objectUrl && mime.startsWith('audio/') && <Box component="audio" controls preload="metadata" src={objectUrl} sx={{ display: 'block', width: '100%', maxWidth: 360 }} />}
+      {objectUrl && mime.startsWith('video/') && <Box component="video" controls preload="metadata" src={objectUrl} sx={{ display: 'block', width: '100%', maxHeight: 360, borderRadius: 1 }} />}
+      <Button size="small" startIcon={<Paperclip size={14} />} onClick={download}>
+        {attachment.name || mime || 'Ver o descargar'}{attachment.size ? ` (${Math.ceil(attachment.size / 1024)} KB)` : ''}
+      </Button>
+      {error && <Typography variant="caption" color="error" sx={{ display: 'block' }}>{error}</Typography>}
+    </Box>
+  )
+}
+
 function ConversationMessage({ message }: { message: ChatMessage }) {
   const incoming = message.direction === 'inbound' || message.sender_type === 'user'
   const bot = message.sender_type === 'bot'
+  const originLabel = bot ? 'Ollama' : message.origin === 'mobile' ? 'Celular' : message.origin === 'crm' ? 'CRM' : 'Cliente'
   return (
     <Stack direction="row" spacing={1} sx={{ justifyContent: incoming ? 'flex-start' : 'flex-end' }}>
       {incoming && <Avatar sx={{ width: 28, height: 28, bgcolor: '#ffedd5', color: '#b45309', fontSize: 13 }}>C</Avatar>}
@@ -125,22 +186,17 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
           borderRadius: incoming ? '4px 14px 14px 14px' : '14px 4px 14px 14px',
         }}
       >
-        {bot && <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', mb: 0.75 }}><Bot size={13} /><Typography variant="caption" sx={{ fontWeight: 700 }}>Ollama</Typography></Stack>}
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', mb: 0.75 }}>
+          {bot && <Bot size={13} />}
+          <Typography variant="caption" sx={{ fontWeight: 700 }}>{originLabel}</Typography>
+        </Stack>
         {message.text && (bot
           ? <BotMarkdown text={message.text} />
           : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
         )}
-        {message.attachments.map((attachment) => (
-          attachment.url ? (
-            <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} href={attachment.url} target="_blank">
-              {attachment.name || attachment.mime_type || 'Adjunto'}
-            </Button>
-          ) : (
-            <Button key={attachment.id} size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
-          )
-        ))}
+        {message.attachments.map((attachment) => <AttachmentView key={attachment.id} attachment={attachment} />)}
         <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end', alignItems: 'center', mt: 0.5, opacity: 0.75 }}>
-          <Typography variant="caption">{new Date(message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
+          <Typography variant="caption">{new Date(message.timestamp || message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
           {!incoming && messageState(message)}
         </Stack>
       </Paper>
@@ -156,6 +212,8 @@ export default function ChatPage() {
   const [search, setSearch] = useState('')
   const [unanswered, setUnanswered] = useState(false)
   const [text, setText] = useState('')
+  const [file, setFile] = useState<File | undefined>()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const messagesBoxRef = useRef<HTMLDivElement | null>(null)
   const forceScrollRef = useRef(true)
   const lastMessageIdRef = useRef<number | null>(null)
@@ -183,6 +241,14 @@ export default function ChatPage() {
     enabled: selectedId !== null,
     refetchInterval: 30_000,
   })
+  const orderedMessages = useMemo(() => {
+    const unique = new Map<number, ChatMessage>()
+    for (const message of messages.data?.messages || []) unique.set(message.id, message)
+    return [...unique.values()].sort((left, right) => {
+      const difference = new Date(left.timestamp || left.created_at).getTime() - new Date(right.timestamp || right.created_at).getTime()
+      return difference || left.id - right.id
+    })
+  }, [messages.data?.messages])
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
@@ -212,8 +278,8 @@ export default function ChatPage() {
   }, [selectedId])
 
   useLayoutEffect(() => {
-    if (!messages.data?.messages.length) return
-    const lastId = messages.data.messages.at(-1)!.id
+    if (!orderedMessages.length) return
+    const lastId = orderedMessages.at(-1)!.id
     if (lastMessageIdRef.current === lastId) return
     lastMessageIdRef.current = lastId
     if (forceScrollRef.current || nearBottom) {
@@ -222,7 +288,7 @@ export default function ChatPage() {
     } else {
       setHasNewMessage(true)
     }
-  }, [messages.data?.messages, nearBottom, scrollToLatest])
+  }, [orderedMessages, nearBottom, scrollToLatest])
 
   const toggleNotifications = async () => {
     if (!notificationsSupported) return
@@ -242,8 +308,8 @@ export default function ChatPage() {
   }
 
   const send = useMutation({
-    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim()),
-    onSuccess: () => { setText(''); invalidate() },
+    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim(), file),
+    onSuccess: () => { setText(''); setFile(undefined); if (fileInputRef.current) fileInputRef.current.value = ''; invalidate() },
   })
   const take = useMutation({ mutationFn: () => adminChatService.takeSession(selectedId!), onSuccess: invalidate })
   const close = useMutation({ mutationFn: () => adminChatService.closeSession(selectedId!), onSuccess: invalidate })
@@ -258,7 +324,7 @@ export default function ChatPage() {
 
   return (
     <ThemeProvider theme={crmTheme}>
-      <Stack spacing={2} sx={{ minHeight: 'calc(100dvh - 8rem)', height: { xs: 'auto', lg: 'calc(100dvh - 8rem)' }, minWidth: 0, color: '#0f172a' }}>
+      <Stack spacing={2} sx={{ minHeight: { xs: 0, lg: 'calc(100dvh - 8rem)' }, height: { xs: 'auto', lg: 'calc(100dvh - 8rem)' }, minWidth: 0, maxWidth: '100%', overflowX: 'hidden', color: '#0f172a' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, gap: 1 }}>
           <Box>
             <Typography variant="h5" sx={{ fontWeight: 800 }}>Bandeja omnicanal</Typography>
@@ -273,12 +339,12 @@ export default function ChatPage() {
         </Stack>
 
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 320 }, maxHeight: { xs: 400, lg: 'none' }, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 320 }, height: { xs: 'min(58dvh, 560px)', lg: 'auto' }, maxHeight: { xs: 560, lg: 'none' }, flexShrink: 0, minHeight: 0, display: { xs: selected ? 'none' : 'flex', lg: 'flex' }, flexDirection: 'column', overflow: 'hidden' }}>
             <Stack spacing={1} sx={{ p: 1.5, borderBottom: '1px solid #e2e8f0' }}>
               <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => setSearch(event.target.value)} />
               <Stack direction="row" spacing={1}>
                 <TextField select size="small" label="Canal" value={channel} onChange={(event) => setChannel(event.target.value)} fullWidth>
-                  <MenuItem value="all">Todos</MenuItem><MenuItem value="whatsapp">WhatsApp</MenuItem><MenuItem value="facebook">Facebook</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
+                  <MenuItem value="all">Todos</MenuItem><MenuItem value="whatsapp">WhatsApp Cloud</MenuItem><MenuItem value="whatsapp_web">WhatsApp Web experimental</MenuItem><MenuItem value="facebook">Facebook</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
                 </TextField>
                 <TextField select size="small" label="Estado" value={status} onChange={(event) => setStatus(event.target.value)} fullWidth>
                   <MenuItem value="all">Todos</MenuItem><MenuItem value="waiting">Pendientes</MenuItem><MenuItem value="active">Abiertos</MenuItem><MenuItem value="closed">Cerrados</MenuItem><MenuItem value="bot">Con bot</MenuItem>
@@ -315,12 +381,12 @@ export default function ChatPage() {
           </Paper>
 
           {!selected ? (
-            <Paper variant="outlined" sx={{ flex: 1, display: 'grid', placeItems: 'center', color: '#64748b' }}><Stack sx={{ alignItems: 'center' }}><Inbox size={48} /><Typography>Selecciona una conversación</Typography></Stack></Paper>
+            <Paper variant="outlined" sx={{ flex: 1, display: { xs: 'none', lg: 'grid' }, placeItems: 'center', color: '#64748b' }}><Stack sx={{ alignItems: 'center' }}><Inbox size={48} /><Typography>Selecciona una conversación</Typography></Stack></Paper>
           ) : (
-            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, minHeight: { xs: 480, lg: 0 }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box><Typography sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, height: { xs: 'min(72dvh, 720px)', lg: 'auto' }, minHeight: { xs: 480, lg: 0 }, maxHeight: { xs: '72dvh', lg: 'none' }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <Stack direction={{ xs: 'column', md: 'row' }} sx={{ position: 'sticky', top: 0, zIndex: 2, bgcolor: '#fff', justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}><IconButton aria-label="Volver a conversaciones" onClick={() => setSelectedId(null)} sx={{ display: { xs: 'inline-flex', lg: 'none' } }}><ArrowLeft size={19} /></IconButton><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography noWrap variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
+                <Stack direction="row" useFlexGap spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                   <TextField
                     select
                     size="small"
@@ -340,14 +406,17 @@ export default function ChatPage() {
               </Stack>
               <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
-                {messages.data?.messages.map((message) => <ConversationMessage key={message.id} message={message} />)}
+                {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
-              <Box sx={{ p: 1.5, borderTop: '1px solid #e2e8f0' }}>
+              <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
+                {file && <Chip sx={{ mb: 1 }} label={`${file.name} (${Math.ceil(file.size / 1024)} KB)`} onDelete={send.isPending ? undefined : () => setFile(undefined)} />}
                 <Stack direction="row" spacing={1}>
+                  <input ref={fileInputRef} hidden type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx" onChange={(event) => setFile(event.target.files?.[0])} />
+                  <Tooltip title="Adjuntar imagen o documento"><span><IconButton aria-label="Adjuntar archivo" disabled={send.isPending || selected.status === 'closed'} onClick={() => fileInputRef.current?.click()}><Paperclip size={20} /></IconButton></span></Tooltip>
                   <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim() && !send.isPending && selected.status !== 'closed') send.mutate() } }} />
-                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={!text.trim() || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
+                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={(!text.trim() && !file) || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
                 </Stack>
               </Box>
             </Paper>

@@ -34,65 +34,38 @@ const quickReplies = [
 // ─── BotMessageText: renderiza texto con markdown y links ─────────────────────
 
 function BotMessageText({ text }: { text: string }) {
-  // 1. Convertir **texto** en <strong>
-  // 2. Convertir /producto/{id} en Link clicable
-  
   const renderLine = (line: string, lineIdx: number) => {
-    // Dividir por /producto/ID y **negrilla**
     const tokens: React.ReactNode[] = []
-    let remaining = line
     let tokenKey = 0
+    const pattern = /(\[([^\]]+)\]\(((?:https?:\/\/|\/)[^)]+)\)|\*\*([^*]+)\*\*|(https?:\/\/[^\s]+\/producto\/\d+|\/producto\/\d+))/g
+    let cursor = 0
+    let match: RegExpExecArray | null
 
-    while (remaining) {
-      // Buscar link de producto
-      const productMatch = remaining.match(/(\/producto\/\d+)/)
-      // Buscar negrilla
-      const boldMatch = remaining.match(/\*\*([^*]+)\*\*/)
-
-      // Determinar cuál viene primero
-      const productIndex = productMatch ? remaining.indexOf(productMatch[0]) : -1
-      const boldIndex = boldMatch ? remaining.indexOf(boldMatch[0]) : -1
-
-      if (productIndex >= 0 && (boldIndex < 0 || productIndex < boldIndex)) {
-        // Agregar texto antes del link
-        if (productIndex > 0) {
-          tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining.slice(0, productIndex)}</span>)
-        }
-        // Agregar link
-        tokens.push(
-          <Link
-            key={`${lineIdx}-${tokenKey++}`}
-            to={productMatch![0]}
-            className="text-[#001575] underline underline-offset-2 font-medium hover:text-[#0020aa]"
-          >
-            Ver producto →
-          </Link>
-        )
-        remaining = remaining.slice(productIndex + productMatch![0].length)
-      } else if (boldIndex >= 0) {
-        // Agregar texto antes de la negrilla
-        if (boldIndex > 0) {
-          tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining.slice(0, boldIndex)}</span>)
-        }
-        // Agregar negrilla
-        tokens.push(
-          <strong key={`${lineIdx}-${tokenKey++}`} className="font-semibold">
-            {boldMatch![1]}
-          </strong>
-        )
-        remaining = remaining.slice(boldIndex + boldMatch![0].length)
-      } else {
-        // No más matches, agregar el resto
-        tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{remaining}</span>)
-        break
+    while ((match = pattern.exec(line)) !== null) {
+      if (match.index > cursor) {
+        tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{line.slice(cursor, match.index)}</span>)
       }
+      if (match[4]) {
+        tokens.push(<strong key={`${lineIdx}-${tokenKey++}`} className="font-semibold">{match[4]}</strong>)
+      } else {
+        const href = match[3] || match[5]
+        const label = match[2] || 'Ver producto →'
+        const classes = 'text-[#001575] underline underline-offset-2 font-medium hover:text-[#0020aa]'
+        tokens.push(href.startsWith('/') ? (
+          <Link key={`${lineIdx}-${tokenKey++}`} to={href} className={classes}>{label}</Link>
+        ) : (
+          <a key={`${lineIdx}-${tokenKey++}`} href={href} target="_blank" rel="noopener noreferrer" className={classes}>{label}</a>
+        ))
+      }
+      cursor = pattern.lastIndex
     }
-
+    if (cursor < line.length) {
+      tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{line.slice(cursor)}</span>)
+    }
     return <>{tokens}</>
   }
 
-  // Dividir por líneas para preservar saltos
-  const lines = text.replace(/\[([^\]]+)\]\((\/producto\/\d+)\)/g, '$2').split(/\r?\n/)
+  const lines = text.split(/\r?\n/)
   return (
     <div className="text-sm leading-relaxed break-words whitespace-pre-wrap">
       {lines.map((line, i) => (
@@ -109,7 +82,7 @@ function Chatbot() {
 
   const [isOpen, setIsOpen]         = useState(false)
   const [messages, setMessages]     = useState<Message[]>([
-    { id: 1, text: 'Hola, gracias por comunicarte con IMPORGAS JJ. Soy tu asesor comercial virtual. ¿En qué puedo ayudarte el día de hoy?', isBot: true, timestamp: new Date() },
+    { id: 1, text: 'Muchas gracias por comunicarse con ImporGas JJ, especialistas en Gas y Climatización.\n\nSoy el asesor comercial virtual de ImporGas JJ. ¿Cómo podemos ayudarte?', isBot: true, timestamp: new Date() },
   ])
   const [inputValue, setInputValue] = useState('')
   const [isTyping, setIsTyping]     = useState(false)

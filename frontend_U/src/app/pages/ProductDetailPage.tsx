@@ -23,7 +23,7 @@ const fallbackProduct: Product = {
   reviewsCount: 0,
   stock: 0,
   specifications: {},
-  isAvailable: true,
+  isAvailable: false,
 }
 
 function ProductDetailPage() {
@@ -37,9 +37,10 @@ function ProductDetailPage() {
   const [activeTab, setActiveTab] = useState<'description' | 'specs' | 'reviews'>('description')
   const [product, setProduct] = useState<Product>(fallbackProduct)
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([])
-  const [_isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(true)
   const [addedToCart, setAddedToCart] = useState(false)
   const [favLoading, setFavLoading] = useState(false)
+  const [shareNotice, setShareNotice] = useState('')
 
   const reloadProduct = useCallback(() => {
     if (!id) return
@@ -90,10 +91,44 @@ function ProductDetailPage() {
   }
 
   const handleAddToCart = async () => {
-    if (!product.isAvailable || product.stock < 1 || quantity < 1) return
+    if (isLoading || !product.isAvailable || quantity < 1) return
     if (await addToCart(product, quantity)) {
       setAddedToCart(true)
       setTimeout(() => setAddedToCart(false), 2000)
+    }
+  }
+
+  const handleShare = async () => {
+    if (!id || isLoading) return
+    const url = new URL(`/producto/${encodeURIComponent(product.id)}`, window.location.origin).href
+    try {
+      const mobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches)
+      if (mobileDevice && navigator.share) {
+        try {
+          await navigator.share({ title: product.name, text: product.description.slice(0, 160), url })
+          setShareNotice('Producto compartido')
+          return
+        } catch (error) {
+          if ((error as DOMException).name === 'AbortError') return
+        }
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+      } else {
+        const field = document.createElement('textarea')
+        field.value = url
+        field.style.position = 'fixed'
+        field.style.opacity = '0'
+        document.body.appendChild(field)
+        field.select()
+        const copied = document.execCommand('copy')
+        field.remove()
+        if (!copied) throw new Error('Clipboard unavailable')
+      }
+      setShareNotice('Enlace copiado')
+    } catch {
+      setShareNotice('No se pudo compartir el enlace')
     }
   }
 
@@ -109,7 +144,7 @@ function ProductDetailPage() {
     <div className="product-detail-page bg-gray-50 min-h-screen py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Breadcrumb */}
-        <nav className="flex items-center gap-2 text-sm mb-8">
+        <nav className="flex flex-wrap items-center gap-2 text-sm mb-8">
           <Link to="/" className="text-gray-500 hover:text-blue-600">Inicio</Link>
           <span className="text-gray-400">/</span>
           <Link to="/productos" className="text-gray-500 hover:text-blue-600">Productos</Link>
@@ -118,18 +153,18 @@ function ProductDetailPage() {
             {product.category}
           </Link>
           <span className="text-gray-400">/</span>
-          <span className="text-gray-900">{product.name}</span>
+          <span className="min-w-0 max-w-full break-words text-gray-900">{product.name}</span>
         </nav>
 
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="grid lg:grid-cols-2 gap-8 p-6 lg:p-8">
+          <div className="grid lg:grid-cols-2 gap-8 p-4 sm:p-6 lg:p-8">
             {/* Image Gallery */}
             <div>
               <div className="relative aspect-square bg-gray-100 rounded-xl overflow-hidden mb-4">
                 <img
                   src={product.images[selectedImage]}
                   alt={product.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
                 {product.discount && (
                   <span className="absolute top-4 left-4 bg-red-500 text-white text-sm font-semibold px-3 py-1 rounded-full">
@@ -158,7 +193,7 @@ function ProductDetailPage() {
                       selectedImage === index ? 'border-blue-600' : 'border-transparent'
                     }`}
                   >
-                    <img src={image} alt={`${product.name} ${index + 1}`} className="w-full h-full object-cover" />
+                    <img src={image} alt={`${product.name} ${index + 1}`} className="w-full h-full object-contain" />
                   </button>
                 ))}
               </div>
@@ -183,11 +218,12 @@ function ProductDetailPage() {
                   >
                     <Heart className={`w-5 h-5 ${isWishlisted ? 'fill-current text-red-500' : ''}`} />
                   </button>
-                  <button className="p-2 border rounded-lg hover:bg-gray-50 transition-colors">
+                  <button type="button" onClick={handleShare} aria-label="Compartir producto" className="p-2 border rounded-lg hover:bg-gray-50 transition-colors">
                     <Share2 className="w-5 h-5 text-gray-600" />
                   </button>
                 </div>
               </div>
+              {shareNotice && <p role="status" className="text-sm text-blue-700 mb-3">{shareNotice}</p>}
 
               {/* Rating */}
               <div className="flex items-center gap-2 mb-6">
@@ -203,7 +239,7 @@ function ProductDetailPage() {
               </div>
 
               {/* Price */}
-              <div className="flex items-baseline gap-3 mb-6">
+              <div className="flex flex-wrap items-baseline gap-3 mb-6">
                 <span className="text-3xl font-bold text-gray-900">{formatPrice(product.price)}</span>
                 {product.originalPrice && (
                   <span className="text-xl text-gray-400 line-through">{formatPrice(product.originalPrice)}</span>
@@ -212,13 +248,15 @@ function ProductDetailPage() {
 
               {/* Stock Status */}
               <div className="flex items-center gap-2 mb-6">
-                {product.isAvailable && product.stock > 0 ? (
+                {isLoading ? (
+                  <span className="text-gray-500">Cargando disponibilidad...</span>
+                ) : product.isAvailable && product.stock > 0 ? (
                   <>
                     <Check className="w-5 h-5 text-green-500" />
                     <span className="text-green-600 font-medium">En stock ({product.stock} disponibles)</span>
                   </>
                 ) : (
-                  <span className="text-red-600 font-medium">Agotado</span>
+                  <span className={product.isAvailable ? 'text-blue-600 font-medium' : 'text-red-600 font-medium'}>{product.isAvailable ? 'Disponible para pedido' : 'No disponible'}</span>
                 )}
               </div>
 
@@ -233,7 +271,7 @@ function ProductDetailPage() {
                   </button>
                   <span className="w-16 text-center font-medium">{quantity}</span>
                   <button
-                    onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
+                    onClick={() => setQuantity(Math.min(999, quantity + 1))}
                     className="p-3 hover:bg-gray-50 transition-colors"
                    aria-label="Agregar">
                     <Plus className="w-5 h-5" />
@@ -241,7 +279,7 @@ function ProductDetailPage() {
                 </div>
                 <button
                   onClick={handleAddToCart}
-                  disabled={!product.isAvailable || product.stock < 1}
+                  disabled={isLoading || !product.isAvailable}
                   style={{ backgroundColor: addedToCart ? '#16a34a' : '#2563eb' }}
                   className="flex-1 flex items-center justify-center gap-2 py-3 px-8 rounded-lg font-semibold text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
                 >
@@ -260,7 +298,7 @@ function ProductDetailPage() {
               </div>
 
               {/* Benefits */}
-              <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-xl">
+              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-xl">
                 <div className="flex items-center gap-3">
                   <Truck className="w-6 h-6 text-blue-600" />
                   <div>
@@ -281,12 +319,12 @@ function ProductDetailPage() {
 
           {/* Tabs */}
           <div className="border-t">
-            <div className="flex border-b">
+            <div className="flex flex-wrap border-b">
               {(['description', 'specs', 'reviews'] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-6 py-4 font-medium transition-colors ${
+                  className={`min-h-11 flex-1 px-3 py-3 text-sm sm:px-6 sm:py-4 sm:text-base font-medium transition-colors ${
                     activeTab === tab
                       ? 'text-blue-600 border-b-2 border-blue-600'
                       : 'text-gray-600 hover:text-gray-900'

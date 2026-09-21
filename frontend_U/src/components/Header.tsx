@@ -95,7 +95,7 @@ export default function Header() {
 
   return (
     <>
-      <header className={`sticky top-0 z-50 transition-all duration-300 ${isScrolled ? 'shadow-lg shadow-black/10' : ''}`}>
+      <header className={`sticky top-0 z-50 transition-all duration-300`}>
 
         {/* Top bar */}
         <div className="hidden lg:block bg-[#001575] text-white">
@@ -123,7 +123,7 @@ export default function Header() {
         </div>
 
         {/* Main header */}
-        <div className={`bg-white transition-all duration-300 ${isScrolled ? 'bg-white/97 backdrop-blur-lg' : ''}`}>
+        <div className={`bg-white transition-all duration-300`}>
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center gap-2 sm:gap-4 h-16 lg:h-20">
 
@@ -320,11 +320,11 @@ export default function Header() {
       )}
 
       {/* Floating call button mobile */}
-      <a href="tel:+573165266734"
+      {!(['/checkout', '/login', '/perfil/editar'].includes(location.pathname) || location.pathname.startsWith('/restablecer-contrasena/')) && <a href="tel:+573165266734"
         className="fixed bottom-24 right-4 z-40 lg:hidden w-14 h-14 bg-[#F58634] hover:bg-[#d4711e] text-[#00104f] rounded-full shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95"
         aria-label="Llamar a ImporGas JJ">
         <Phone className="w-6 h-6" />
-      </a>
+      </a>}
     </>
   )
 }

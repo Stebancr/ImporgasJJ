@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { ShoppingCart, Star, Heart, Eye } from 'lucide-react'
+import { ShoppingCart, Star, Heart, Eye, Check } from 'lucide-react'
 import { useState } from 'react'
 import { Product } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -16,6 +16,7 @@ function ProductCard({ product }: ProductCardProps) {
   const { addToCart } = useCart()
   const { isFavorite, addToFavorites, removeByProduct } = useFavorites()
   const [favLoading, setFavLoading] = useState(false)
+  const [addedToCart, setAddedToCart] = useState(false)
 
   const isWishlisted = isFavorite(parseInt(product.id))
 
@@ -50,6 +51,8 @@ function ProductCard({ product }: ProductCardProps) {
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault()
     addToCart(product, 1)
+    setAddedToCart(true)
+    setTimeout(() => setAddedToCart(false), 2000)
   }
 
   return (
@@ -111,7 +114,7 @@ function ProductCard({ product }: ProductCardProps) {
         </div>
 
         {/* Out of Stock Overlay */}
-        {(!product.isAvailable || product.stock < 1) && (
+        {!product.isAvailable && (
           <div className="absolute inset-0 bg-[#1A1D21]/60 backdrop-blur-sm flex items-center justify-center">
             <span className="px-4 py-2 bg-white text-[#1A1D21] font-semibold rounded-lg shadow-lg">
               Agotado
@@ -129,7 +132,7 @@ function ProductCard({ product }: ProductCardProps) {
             {product.brand}
           </span>
           <span className="text-xs text-[#6B7280]">
-            {product.stock > 0 ? `${product.stock} disponibles` : 'Sin stock'}
+            {product.isAvailable ? (product.stock > 0 ? `${product.stock} disponibles` : 'Disponible para pedido') : 'No disponible'}
           </span>
         </div>
 
@@ -174,11 +177,24 @@ function ProductCard({ product }: ProductCardProps) {
         {/* Mobile: always-visible add-to-cart */}
         <button
           onClick={handleAddToCart}
-          disabled={!product.isAvailable || product.stock < 1}
-          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#001575] to-[#00104f] text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition-all"
+          disabled={!product.isAvailable}
+          className={`w-full flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all ${
+            addedToCart
+              ? 'bg-gradient-to-r from-[#10B981] to-[#059669] scale-95'
+              : 'bg-gradient-to-r from-[#001575] to-[#00104f] active:scale-95'
+          }`}
         >
-          <ShoppingCart className="w-4 h-4" />
-          <span>{product.isAvailable ? 'Agregar al carrito' : 'Agotado'}</span>
+          {addedToCart ? (
+            <>
+              <Check className="w-4 h-4" />
+              <span>¡Agregado!</span>
+            </>
+          ) : (
+            <>
+              <ShoppingCart className="w-4 h-4" />
+              <span>{product.isAvailable ? 'Agregar al carrito' : 'Agotado'}</span>
+            </>
+          )}
         </button>
       </div>
     </div>

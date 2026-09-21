@@ -5,11 +5,23 @@ import {
   Alert, Box, Button, Card, CardContent, Checkbox, Chip, Divider, FormControlLabel,
   MenuItem, Stack, Switch, TextField, ThemeProvider, Typography,
 } from '@mui/material'
-import { adminChatService, type MetaConnection, type MetaIntegrationInput } from '../services/admin_chat'
+import { adminChatService, type MetaConnection, type MetaIntegration, type MetaIntegrationInput } from '../services/admin_chat'
+import { launchWhatsAppCoexistence } from '../services/whatsappEmbeddedSignup'
+import WhatsAppWebGatewayCard from '../components/WhatsAppWebGatewayCard'
 import { crmTheme } from '../theme/crmTheme'
 
+const whatsappCoexistenceError = (reason: any): string => {
+  const status = reason.response?.status
+  const data = reason.response?.data ?? {}
+  if (status === 401) return 'La sesión administrativa expiró. Inicia sesión nuevamente antes de conectar WhatsApp.'
+  if (status === 403) return 'La cuenta autenticada no tiene permisos administrativos para conectar WhatsApp.'
+  if (status === 503) return data.detail ?? 'La configuración de WhatsApp Coexistence está incompleta en el backend.'
+  const requestId = data.request_id ? ` Referencia Meta: ${data.request_id}.` : ''
+  return `${data.detail ?? reason.message ?? 'No fue posible conectar WhatsApp Business.'}${requestId}`
+}
+
 const emptyForm: MetaIntegrationInput = {
-  name: '', channel: 'whatsapp', active: false, app_id: '', external_account_id: '',
+  name: '', channel: 'whatsapp', app_id: '', external_account_id: '', business_id: '',
   phone_number_id: '', page_id: '', instagram_account_id: '', graph_api_version: '',
   configuration: { bot_enabled: false },
 }
@@ -43,7 +55,14 @@ export default function MetaIntegrationsPage() {
     },
     onError: (reason: any) => setError(JSON.stringify(reason.response?.data ?? 'No fue posible actualizar.')),
   })
-  const validate = useMutation({ mutationFn: adminChatService.validateIntegration })
+  const validate = useMutation({
+    mutationFn: ({ id, activate }: { id: number; activate: boolean }) => adminChatService.validateIntegration(id, activate),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ['meta-integrations'] })
+      setError('')
+    },
+    onError: (reason: any) => setError(reason.response?.data?.detail ?? 'Meta no pudo validar la cuenta.'),
+  })
   const instagramOAuth = useMutation({
     mutationFn: adminChatService.startInstagramOAuth,
     onSuccess: ({ authorization_url }) => window.location.assign(authorization_url),
@@ -75,6 +94,31 @@ export default function MetaIntegrationsPage() {
     },
     onError: (reason: any) => setError(reason.response?.data?.detail ?? 'No fue posible desconectar la cuenta.'),
   })
+  const disconnectIntegration = useMutation({
+    mutationFn: adminChatService.disconnectIntegration,
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ['meta-integrations'] })
+      setEditingId(null)
+      setCredentialEdit({})
+      setError('')
+    },
+    onError: (reason: any) => setError(reason.response?.data?.detail ?? 'No fue posible desconectar.'),
+  })
+  const whatsappCoexistence = useMutation({
+    mutationFn: async () => {
+      const configuration = await adminChatService.getWhatsAppCoexistenceConfig()
+      const signup = await launchWhatsAppCoexistence(configuration)
+      return adminChatService.completeWhatsAppCoexistence({
+        ...signup,
+        state: configuration.state,
+      })
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: ['meta-integrations'] })
+      setError('')
+    },
+    onError: (reason: any) => setError(whatsappCoexistenceError(reason)),
+  })
   useEffect(() => {
     if (!connections.data) return
     setSelectedPages(Object.fromEntries(connections.data.map((connection) => [
@@ -99,11 +143,21 @@ export default function MetaIntegrationsPage() {
     setter({ ...values, [connectionId]: current.includes(id) ? current.filter((value) => value !== id) : [...current, id] })
   }
   const connectionStatus = (connection: MetaConnection) => {
+    if (connection.token_status === 'revoked') return { label: 'Desconectada', color: 'default' as const }
     if (connection.token_status === 'expired') return { label: 'Token expirado', color: 'error' as const }
     if (connection.token_status === 'error') return { label: 'Error', color: 'error' as const }
-    if (connection.is_active) return { label: 'Conectado', color: 'success' as const }
+    if (connection.is_active) return { label: 'Cuentas autorizadas', color: 'info' as const }
     return { label: 'Pendiente de selección', color: 'warning' as const }
   }
+  const integrationStatus = (integration: MetaIntegration) => {
+    if (integration.connection_status === 'error') return { label: 'Validación fallida', color: 'error' as const }
+    if (integration.connection_status === 'disconnected') return { label: 'Desconectada', color: 'default' as const }
+    if (integration.active && integration.connection_status === 'connected') return { label: 'Mensajería comprobada', color: 'success' as const }
+    if (integration.active && integration.last_webhook_at) return { label: 'Webhook recibido; falta envío', color: 'info' as const }
+    if (integration.active) return { label: 'Graph validado; esperando webhook', color: 'warning' as const }
+    return { label: 'Pendiente de validar', color: 'warning' as const }
+  }
+  const maskId = (id: string) => id ? `${'•'.repeat(Math.max(0, id.length - 4))}${id.slice(-4)}` : 'Sin configurar'
   const set = (name: keyof MetaIntegrationInput, value: unknown) => setForm((current) => ({ ...current, [name]: value }))
   const setCredential = (name: keyof MetaIntegrationInput, value: unknown) => {
     setCredentialEdit((current) => ({ ...current, [name]: value }))
@@ -150,18 +204,19 @@ export default function MetaIntegrationsPage() {
             <Stack spacing={2}>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
                 <Box sx={{ flex: 1 }}>
-                  <Typography sx={{ fontWeight: 700 }}>Cuenta Meta {connection.facebook_user_id}</Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{connection.token_status === 'revoked' ? 'Cuenta Meta desvinculada' : `Cuenta Meta ${connection.facebook_user_id}`}</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {connection.facebook_pages.length} página(s) disponible(s)
+                    {connection.token_status === 'revoked' ? 'Conectar otra cuenta' : `${connection.facebook_pages.length} página(s) disponible(s)`}
                   </Typography>
                 </Box>
                 <Chip size="small" label={statusInfo.label} color={statusInfo.color} />
               </Stack>
               <Divider />
-              {connection.facebook_pages.length === 0 && (
+              {connection.token_status === 'revoked' && <Alert severity="info">Cuenta desconectada. Conecta otra cuenta con Meta para volver a recibir mensajes.</Alert>}
+              {connection.token_status !== 'revoked' && connection.facebook_pages.length === 0 && (
                 <Alert severity="warning">Meta no devolvió páginas administradas. Verifica roles y permisos de la cuenta.</Alert>
               )}
-              {connection.facebook_pages.map((page) => (
+              {connection.token_status !== 'revoked' && connection.facebook_pages.map((page) => (
                 <Box key={page.page_id} sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
                   <FormControlLabel
                     control={<Checkbox checked={(selectedPages[connection.id] ?? []).includes(page.page_id)} onChange={() => toggle(selectedPages, setSelectedPages, connection.id, page.page_id)} />}
@@ -176,7 +231,7 @@ export default function MetaIntegrationsPage() {
                   )}
                 </Box>
               ))}
-              <Stack direction="row" spacing={1}>
+              {connection.token_status !== 'revoked' && <Stack direction="row" spacing={1}>
                 <Button
                   variant="contained"
                   disabled={selectAccounts.isPending || connection.facebook_pages.length === 0}
@@ -191,17 +246,43 @@ export default function MetaIntegrationsPage() {
                   disabled={disconnect.isPending}
                   onClick={() => window.confirm('¿Desconectar esta cuenta de Meta? Las conversaciones existentes se conservarán.') && disconnect.mutate(connection.id)}
                 >Desconectar</Button>
-              </Stack>
+              </Stack>}
             </Stack>
           </CardContent></Card>
         )
       })}
-      <Divider><Chip label="Configuración manual heredada" size="small" /></Divider>
+      <Divider><Chip label="WhatsApp Business" size="small" /></Divider>
+      <Card variant="outlined"><CardContent>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ alignItems: { md: 'center' } }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6">WhatsApp Business App con coexistencia</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Conecta mediante el flujo oficial de Meta el número que ya utilizas en la aplicación WhatsApp Business. Durante el proceso se escanea el código que muestra Meta. La aplicación móvil y el CRM podrán conservar el mismo número.
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Esta conexión solo autoriza la cuenta y el webhook. No envía mensajes de prueba, plantillas ni campañas; Ollama queda desactivado hasta que lo habilites para respuestas reactivas.
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            color="success"
+            disabled={whatsappCoexistence.isPending}
+            onClick={() => whatsappCoexistence.mutate()}
+          >
+            {whatsappCoexistence.isPending ? 'Conectando…' : 'Conectar WhatsApp existente'}
+          </Button>
+        </Stack>
+      </CardContent></Card>
+      <WhatsAppWebGatewayCard />
+      <Divider><Chip label="Configuración manual y estado por canal" size="small" /></Divider>
       {new URLSearchParams(window.location.search).get('instagram_oauth') === 'success' && (
-        <Alert severity="success">Instagram quedó conectado. Ya puede validar y activar el canal.</Alert>
+        <Alert severity="info">Instagram devolvió un token y una cuenta profesional. Valida la integración antes de activarla; la mensajería se confirma al recibir y responder un mensaje real.</Alert>
       )}
       <Card variant="outlined"><CardContent>
-        <Typography variant="h6" gutterBottom>Nueva integración</Typography>
+        <Typography variant="h6" gutterBottom>Nueva integración manual</Typography>
+        {form.channel === 'whatsapp' && <Alert severity="info" sx={{ mb: 2 }}>
+          WhatsApp Cloud API se configura manualmente: WABA ID, Phone Number ID y token. Guardar no activa el número. Después usa “Validar y activar”; el backend comprobará la cuenta y los permisos sin enviar mensajes de prueba.
+        </Alert>}
         <Stack spacing={2}>
           <TextField label="Nombre" value={form.name} onChange={(event) => set('name', event.target.value)} required />
           <TextField select label="Canal" value={form.channel} onChange={(event) => set('channel', event.target.value)}>
@@ -209,8 +290,9 @@ export default function MetaIntegrationsPage() {
           </TextField>
           <TextField label="Versión Graph API" placeholder="Definida en Meta for Developers" value={form.graph_api_version} onChange={(event) => set('graph_api_version', event.target.value)} />
           <TextField label="App ID" value={form.app_id} onChange={(event) => set('app_id', event.target.value)} />
-          <TextField label="WABA / cuenta externa ID" value={form.external_account_id} onChange={(event) => set('external_account_id', event.target.value)} />
+          <TextField label={form.channel === 'whatsapp' ? 'WABA ID' : 'Cuenta externa ID'} value={form.external_account_id} onChange={(event) => set('external_account_id', event.target.value)} />
           {form.channel === 'whatsapp' && <TextField label="Phone Number ID" value={form.phone_number_id} onChange={(event) => set('phone_number_id', event.target.value)} />}
+          {form.channel === 'whatsapp' && <TextField label="Business ID (opcional)" value={form.business_id} onChange={(event) => set('business_id', event.target.value)} />}
           {form.channel === 'facebook' && <TextField label="Page ID" value={form.page_id} onChange={(event) => set('page_id', event.target.value)} />}
           {form.channel === 'instagram' && <TextField label="Instagram Professional Account ID" value={form.instagram_account_id} onChange={(event) => set('instagram_account_id', event.target.value)} />}
           <TextField label="Access Token" type="password" autoComplete="new-password" onChange={(event) => set('access_token', event.target.value)} helperText="Solo se envía al backend; después no se mostrará." />
@@ -221,22 +303,51 @@ export default function MetaIntegrationsPage() {
         </Stack>
       </CardContent></Card>
       <Stack spacing={1}>
-        {validate.data && <Alert severity={validate.data.valid ? 'success' : 'error'}>{validate.data.valid ? `Conexión válida: ${validate.data.name || validate.data.remote_id}` : validate.data.detail}</Alert>}
-        {integrations.data?.map((integration) => (
+        {validate.data && <Alert severity={validate.data.valid ? 'info' : 'error'}>{validate.data.valid ? `Graph confirmó la cuenta ${validate.data.name || validate.data.remote_id}. La recepción y el envío se verifican con una conversación real.` : validate.data.detail}</Alert>}
+        {(['facebook', 'instagram', 'whatsapp'] as const).map((channel) => <Stack key={channel} spacing={1}>
+          <Typography variant="h6" sx={{ mt: 2 }}>{channel === 'facebook' ? 'Facebook Messenger' : channel === 'instagram' ? 'Instagram Professional' : 'WhatsApp Business Cloud API'}</Typography>
+          {!integrations.data?.some((item) => item.channel === channel) && <Typography variant="body2" color="text.secondary">No hay cuentas configuradas.</Typography>}
+          {integrations.data?.filter((item) => item.channel === channel).map((integration) => (
           <Card key={integration.id} variant="outlined"><CardContent>
+            <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} sx={{ alignItems: { md: 'center' }, gap: 2 }}>
-              <Box sx={{ flex: 1 }}><Typography sx={{ fontWeight: 700 }}>{integration.name}</Typography><Typography variant="body2" color="text.secondary">{integration.channel} · {integration.graph_api_version || 'sin versión'}</Typography></Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography sx={{ fontWeight: 700 }}>{integration.name}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {integration.connection_status === 'disconnected' ? 'Cuenta anterior desvinculada; historial conservado' : (
+                  integration.channel === 'whatsapp'
+                    ? `${integration.display_phone_number || 'Número pendiente'} · WABA ${integration.external_account_id || 'sin ID'} · Phone ID ${maskId(integration.phone_number_id)}`
+                    : integration.channel === 'facebook'
+                      ? `Página ${integration.page_id || 'sin ID'}`
+                      : `Cuenta ${integration.instagram_account_id || 'sin ID'}`)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Última validación: {integration.last_validated_at ? new Date(integration.last_validated_at).toLocaleString() : 'pendiente'}
+                </Typography>
+              </Box>
+              <Chip label={integrationStatus(integration).label} color={integrationStatus(integration).color} size="small" />
               <Chip label={integration.has_access_token ? 'Token configurado' : 'Sin token'} color={integration.has_access_token ? 'success' : 'warning'} size="small" />
+              {integration.channel === 'whatsapp' && integration.whatsapp_coexistence && <Chip label="Coexistencia" color="success" variant="outlined" size="small" />}
               {integration.managed_by_meta_oauth && <Chip label="Gestionado por OAuth Meta" color="info" size="small" />}
-              <Button size="small" variant="outlined" onClick={() => validate.mutate(integration.id)}>Probar</Button>
+              <Button size="small" variant="outlined" disabled={validate.isPending || !integration.has_access_token} onClick={() => validate.mutate({ id: integration.id, activate: false })}>Validar Graph</Button>
+              {!integration.active && integration.has_access_token && <Button size="small" variant="contained" disabled={validate.isPending} onClick={() => validate.mutate({ id: integration.id, activate: true })}>Validar y activar</Button>}
               {integration.channel === 'instagram' && !integration.managed_by_meta_oauth && (
                 <Button size="small" variant="contained" disabled={instagramOAuth.isPending} onClick={() => instagramOAuth.mutate(integration.id)}>
                   Conectar Instagram
                 </Button>
               )}
-              <Button size="small" onClick={() => { setEditingId(integration.id); setCredentialEdit({}) }}>Rotar credenciales</Button>
-              <Switch checked={integration.active} onChange={(event) => update.mutate({ id: integration.id, payload: { active: event.target.checked } })} />
+              {!integration.managed_by_meta_oauth && !integration.whatsapp_coexistence && <Button size="small" onClick={() => { setEditingId(integration.id); setCredentialEdit({}) }}>Rotar credenciales</Button>}
+              {!integration.managed_by_meta_oauth && <Button size="small" color="error" disabled={disconnectIntegration.isPending || integration.connection_status === 'disconnected'} onClick={() => window.confirm('¿Desconectar esta cuenta? Sus conversaciones se conservarán.') && disconnectIntegration.mutate(integration.id)}>Desconectar</Button>}
             </Stack>
+            {integration.active && <FormControlLabel
+              control={<Switch checked={Boolean(integration.configuration.bot_enabled)} disabled={update.isPending} onChange={(event) => update.mutate({
+                id: integration.id,
+                payload: { configuration: { ...integration.configuration, bot_enabled: event.target.checked } },
+              })} />}
+              label="Permitir respuestas reactivas de Ollama en esta cuenta"
+            />}
+            {integration.last_error && <Alert severity="error">{integration.last_error}</Alert>}
+            {integration.connection_status === 'disconnected' && <Alert severity="info">La cuenta anterior ya no puede enviar. Para usar otra cuenta, crea una integración nueva; el historial permanece disponible.</Alert>}
             {editingId === integration.id && (
               <Stack spacing={1.5} sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
                 <Alert severity="info">Los valores actuales no se muestran. Complete únicamente los que desea reemplazar.</Alert>
@@ -251,8 +362,10 @@ export default function MetaIntegrationsPage() {
                 </Stack>
               </Stack>
             )}
+            </Stack>
           </CardContent></Card>
         ))}
+        </Stack>)}
       </Stack>
     </Stack>
     </ThemeProvider>

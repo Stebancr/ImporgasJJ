@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import requests
 from datetime import timedelta
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
@@ -9,6 +10,7 @@ from cryptography.fernet import Fernet
 from asgiref.sync import async_to_sync
 from channels.testing import WebsocketCommunicator
 from django.test import override_settings
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 from django.utils import timezone
@@ -32,8 +34,8 @@ from .models import (
 from usuarios.models import Credenciales
 from .assignment import assign_session_automatically
 from .apps.meta.webhooks import normalize_payload
-from .apps.meta.services import MetaAPIError, dispatch_outbound_message, secret_store
-from .apps.meta.oauth import REQUIRED_SCOPES
+from .apps.meta.services import MetaAPIError, dispatch_outbound_message, graph_request, secret_store, disconnect_integration
+from .apps.meta.oauth import REQUIRED_SCOPES, ensure_oauth_webhook_subscriptions, get_page_details
 from .ollama_service import ollama_service
 from .tasks import (
     _assert_public_https,
@@ -43,24 +45,25 @@ from .tasks import (
     INACTIVITY_WARNING_TEXT,
 )
 from core.asgi import application
-from ecommerce.models import Brand, Category, Product
+from core.logging_filters import redact_webhook_tokens
+from ecommerce.models import Brand, Category, Product, ProductSpec, SpecAttribute
 
 
 class ConversationStateTests(APITestCase):
-    def test_product_context_ignores_budget_and_tracks_topics(self):
+    def test_product_context_remembers_budget_and_tracks_topics(self):
         state = ollama_service.update_state('Estoy interesado en un calentador')
-        self.assertEqual(state['intent'], 'purchase')
+        self.assertEqual(state['intent'], 'recommendation')
         self.assertEqual(state['product'], 'calentador')
         self.assertFalse(state['needs_human'])
 
         state = ollama_service.update_state('Tengo un millón', state)
-        self.assertIsNone(state['budget'])
-        self.assertEqual(state['stage'], 'recommendation')
+        self.assertEqual(state['budget'], 1_000_000)
+        self.assertEqual(state['stage'], 'qualification')
 
         state = ollama_service.update_state('¿Y hacen envíos?', state)
         self.assertEqual(state['topic'], 'shipping')
         self.assertEqual(state['product'], 'calentador')
-        self.assertIsNone(state['budget'])
+        self.assertEqual(state['budget'], 1_000_000)
 
         state = ollama_service.update_state('¿Qué garantía manejan?', state)
         self.assertEqual(state['topic'], 'warranty')
@@ -95,6 +98,31 @@ class ConversationStateTests(APITestCase):
             self.assertTrue(result['needs_agent'], phrase)
             self.assertEqual(result['state']['selected_product_id'], product.id)
 
+    @override_settings(PRODUCT_URL_TEMPLATE='https://shop.example.test/producto/{id}')
+    def test_future_category_uses_database_specs_and_public_links(self):
+        category = Category.objects.create(name='Hornos especiales', description='Equipos para cocción')
+        brand = Brand.objects.create(name='Marca dinámica')
+        gas = SpecAttribute.objects.create(name='Tipo de gas', order=1)
+        products = []
+        for index, value in enumerate(('Natural', 'GLP'), 1):
+            product = Product.objects.create(
+                name=f'Horno futuro {index}', description='Horno empotrable', price=100000 + index,
+                category=category, brand=brand, total_stock=2, is_available=True,
+            )
+            ProductSpec.objects.create(product=product, attribute=gas, value=value)
+            products.append(product)
+
+        question = ollama_service.get_bot_response('¿Cuál horno especial me recomiendas?')
+        self.assertIn('tipo de gas', question['response'].lower())
+        self.assertEqual(question['state']['asked_attributes'], ['Tipo de gas'])
+
+        result = ollama_service.get_bot_response(
+            'Gas natural', conversation_state=question['state'],
+        )
+        self.assertEqual(len(result['state']['recent_products']), 1)
+        self.assertIn(f'https://shop.example.test/producto/{products[0].id}', result['response'])
+        self.assertNotIn(f'/producto/{products[1].id}', result['response'])
+
     def test_unavailable_product_reports_stock(self):
         category = Category.objects.create(name='Reguladores')
         brand = Brand.objects.create(name='Marca prueba')
@@ -123,8 +151,8 @@ class ConversationStateTests(APITestCase):
         self.assertNotEqual(new_session.id, session.id)
         self.assertEqual(new_session.status, 'bot')
         self.assertEqual(new_session.messages.filter(sender_type='user').count(), 1)
-        self.assertEqual(new_session.messages.filter(sender_type='bot').count(), 2)
-        self.assertEqual(new_session.messages.first().text, ollama_service.INITIAL_GREETING)
+        self.assertEqual(new_session.messages.filter(sender_type='bot').count(), 1)
+        self.assertFalse(new_session.messages.filter(metadata__system_event='initial_greeting').exists())
         history = bot.call_args.kwargs['conversation_history']
         self.assertNotIn('Contexto anterior', [item['content'] for item in history])
 
@@ -135,14 +163,200 @@ class ConversationStateTests(APITestCase):
         outside = ollama_service.get_bot_response('¿Quién es el presidente de Colombia?')
         self.assertIn('productos y servicios de IMPORGAS JJ', outside['response'])
         for phrase in (
-            'Quiero cotizar un calentador',
             'Necesito 10 unidades',
             'Necesito precio para una empresa',
             'Quiero hablar con una persona',
             'Cómprame 3 unidades',
-            'Quiero comprar este producto',
         ):
             self.assertTrue(ollama_service.get_bot_response(phrase)['needs_agent'], phrase)
+
+    def test_ecommerce_frontend_greeting_is_not_persisted_or_repeated(self):
+        response = self.client.post(reverse('bot-chat'), {
+            'message': 'Hola', 'user_name': 'Cliente web',
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.data['message'], ollama_service.INITIAL_GREETING)
+        session = ChatSession.objects.get(pk=response.data['session_id'])
+        self.assertEqual(session.messages.filter(sender_type='user').count(), 1)
+        self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
+        self.assertFalse(session.messages.filter(metadata__system_event='initial_greeting').exists())
+
+
+class ChatbotIntelligenceTests(APITestCase):
+    def setUp(self):
+        self.brand = Brand.objects.create(name='Marca contextual')
+        self.heaters = Category.objects.create(name='Calentadores', description='Agua caliente')
+
+    def product(self, name, description='', category=None, price=500000, stock=3, specs=None):
+        product = Product.objects.create(
+            name=name, description=description, category=category or self.heaters,
+            brand=self.brand, price=price, total_stock=stock, is_available=True,
+        )
+        for order, (attribute_name, value) in enumerate((specs or {}).items(), 1):
+            attribute, _ = SpecAttribute.objects.get_or_create(name=attribute_name, defaults={'order': order})
+            ProductSpec.objects.create(product=product, attribute=attribute, value=value)
+        return product
+
+    def complete_heater_qualification(self, state, bathrooms='2', use_case='Baño convencional'):
+        answers = {
+            'bathrooms': f'{bathrooms} duchas', 'property_type': 'Casa',
+            'use_case': use_case, 'gas_type': 'Gas natural', 'heater_type': 'De paso',
+            'brand_preference': 'Sin preferencia', 'restrictions': 'Ninguna',
+        }
+        result = {'state': state}
+        for _ in range(8):
+            pending = state.get('pending_question') or {}
+            answer = answers.get(pending.get('key'))
+            if not answer:
+                break
+            result = ollama_service.get_bot_response(answer, conversation_state=state)
+            state = result['state']
+        return result
+
+    def test_heater_qualification_remembers_bathrooms_and_recommends_matching_product(self):
+        one = self.product('Calentador Hogar Uno', 'Calentador de paso a gas natural', specs={'Baños simultáneos': '1', 'Tipo de gas': 'Natural'})
+        two = self.product('Calentador Hogar Dos', 'Calentador de paso a gas natural', specs={'Baños simultáneos': '2', 'Tipo de gas': 'Natural'})
+
+        first = ollama_service.get_bot_response('Necesito recomendación de un calentador')
+        self.assertIn('baño convencional, jacuzzi, sauna o piscina', first['response'].lower())
+        bathrooms_question = ollama_service.get_bot_response('Baño convencional', conversation_state=first['state'])
+        self.assertIn('duchas o puntos de agua', bathrooms_question['response'].lower())
+        property_question = ollama_service.get_bot_response('Para 2 baños', conversation_state=bathrooms_question['state'])
+        self.assertIn('casa, apartamento', property_question['response'].lower())
+        self.assertNotIn('cuántos baños', property_question['response'].lower())
+        second = self.complete_heater_qualification(property_question['state'])
+
+        self.assertEqual(second['state']['bathrooms'], 2)
+        self.assertIn(two.name, second['response'])
+        self.assertNotIn(one.name, second['response'])
+
+    def test_jacuzzi_pool_and_sauna_only_return_matching_catalog_items(self):
+        products = {
+            use: self.product(f'Calentador {use.title()}', f'Calentador de paso a gas natural certificado para {use}')
+            for use in ('jacuzzi', 'piscina', 'sauna')
+        }
+        for use, product in products.items():
+            with self.subTest(use=use):
+                first = ollama_service.get_bot_response(f'Recomiéndame un calentador para {use}')
+                result = self.complete_heater_qualification(first['state'], use_case=use)
+                self.assertIn(product.name, result['response'])
+                for other_use, other in products.items():
+                    if other_use != use:
+                        self.assertNotIn(other.name, result['response'])
+
+    def test_replacement_part_uses_real_compatibility_data(self):
+        parts = Category.objects.create(name='Repuestos', description='Piezas y accesorios')
+        compatible = self.product(
+            'Válvula Modelo ZX', 'Repuesto compatible únicamente con calentador Modelo ZX',
+            category=parts, price=35000,
+        )
+        result = ollama_service.get_bot_response('Busco un repuesto Válvula Modelo ZX')
+        self.assertEqual(result['state']['intent'], 'replacement_part')
+        self.assertIn(compatible.name, result['response'])
+        self.assertIn('Por qué coincide', result['response'])
+
+    def test_specific_heater_is_validated_directly_against_requested_gas(self):
+        product = self.product(
+            'Calentador Haceb 10 litros', 'Calentador de paso para gas natural y hogar',
+            specs={'Capacidad': '10 litros', 'Tipo de gas': 'Natural'},
+        )
+        compatible = ollama_service.get_bot_response(
+            'Quiero el Calentador Haceb 10 litros para gas natural',
+        )
+        incompatible = ollama_service.get_bot_response(
+            'Quiero el Calentador Haceb 10 litros para GLP',
+        )
+        self.assertIn(product.name, compatible['response'])
+        self.assertIn('Ver producto', compatible['response'])
+        self.assertNotIn(f'**{product.name}**', incompatible['response'])
+        self.assertIn('no encontré', incompatible['response'].lower())
+
+    def test_short_references_and_similar_product_keep_conversation_context(self):
+        first_product = self.product('Calentador Alfa', 'Hogar gas natural de paso', price=400000)
+        second_product = self.product('Calentador Beta', 'Hogar gas natural de paso', price=450000)
+        listed = ollama_service.get_bot_response('¿Qué calentadores me recomiendas?')
+        listed = self.complete_heater_qualification(listed['state'])
+
+        selected = ollama_service.get_bot_response('el primero', conversation_state=listed['state'])
+        self.assertEqual(selected['state']['selected_product_id'], first_product.id)
+        self.assertIn(first_product.name, selected['response'])
+
+        similar = ollama_service.get_bot_response('uno parecido', conversation_state=selected['state'])
+        self.assertNotIn(f'**{first_product.name}**', similar['response'])
+        self.assertIn(second_product.name, similar['response'])
+
+    def test_intent_can_change_without_losing_known_need(self):
+        state = ollama_service.update_state('Necesito un calentador para piscina')
+        changed = ollama_service.update_state('Ahora necesito un repuesto', state)
+        self.assertEqual(changed['intent'], 'replacement_part')
+        self.assertEqual(changed['use_case'], 'piscina')
+        self.assertEqual(changed['category'], 'Calentadores')
+
+    @patch('crmChat.ollama_service.requests.post')
+    def test_ollama_receives_recent_history_state_and_persistent_summary(self, post):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {'message': {'content': 'Atendemos según la información verificada.'}}
+        post.return_value = response
+
+        result = ollama_service.get_bot_response(
+            '¿Qué horarios manejan?',
+            conversation_history=[{'role': 'user', 'content': 'Consulta anterior'}],
+            conversation_state={'preferences': {'contact': 'mañana'}},
+            summary='El cliente ya pidió atención mañana.',
+        )
+        system_text = '\n'.join(item['content'] for item in post.call_args.kwargs['json']['messages'] if item['role'] == 'system')
+        self.assertIn('RESUMEN PERSISTENTE', system_text)
+        self.assertIn('atención mañana', system_text)
+        self.assertEqual(result['error'], None)
+
+    @patch('crmChat.ollama_service.requests.post', side_effect=requests.exceptions.Timeout)
+    def test_temporary_ollama_error_returns_safe_retry_message(self, _post):
+        result = ollama_service.get_bot_response('¿Qué horarios manejan?')
+        self.assertEqual(result['error'], 'timeout')
+        self.assertIn('tardando más', result['response'])
+
+    @override_settings(OLLAMA_QUEUE_WAIT=0)
+    def test_ollama_concurrency_lock_limits_parallel_requests(self):
+        cache.set('crm-chat:ollama:request-lock', 'another-request', timeout=30)
+        try:
+            result = ollama_service.get_bot_response('¿Qué horarios manejan?')
+        finally:
+            cache.delete('crm-chat:ollama:request-lock')
+        self.assertEqual(result['error'], 'queue_timeout')
+
+    def test_product_links_follow_environment_configuration(self):
+        product = self.product('Calentador con enlace')
+        state = {
+            'category': 'Calentadores', 'intent': 'recommendation', 'bathrooms': 1,
+            'property_type': 'casa', 'use_case': 'hogar', 'gas_type': 'natural',
+            'heater_type': 'paso', 'brand_preference': 'any', 'restrictions': ['ninguna'],
+        }
+        product.description = 'Calentador de paso a gas natural para hogar'
+        product.save(update_fields=['description'])
+        with override_settings(
+            PRODUCT_URL_TEMPLATE='http://localhost/producto/{id}',
+            EXTERNAL_PRODUCT_URL_TEMPLATE='https://www.imporgasjj.com/producto/{id}',
+        ):
+            dev = ollama_service.get_bot_response('Recomiéndame Calentador con enlace', conversation_state=state)
+            external = {
+                channel: ollama_service.get_bot_response(
+                    'Recomiéndame Calentador con enlace', conversation_state=state, channel=channel,
+                )
+                for channel in ('whatsapp', 'whatsapp_web', 'facebook', 'instagram')
+            }
+        with override_settings(
+            PRODUCT_URL_TEMPLATE='https://www.imporgasjj.com/producto/{id}',
+            EXTERNAL_PRODUCT_URL_TEMPLATE='https://www.imporgasjj.com/producto/{id}',
+        ):
+            prod = ollama_service.get_bot_response('Recomiéndame Calentador con enlace', conversation_state=state)
+        self.assertIn(f'[Ver producto →](http://localhost/producto/{product.id})', dev['response'])
+        self.assertIn(f'[Ver producto →](https://www.imporgasjj.com/producto/{product.id})', prod['response'])
+        for channel, result in external.items():
+            self.assertIn(f'Ver producto → https://www.imporgasjj.com/producto/{product.id}', result['response'], channel)
+            self.assertNotIn('[Ver producto', result['response'], channel)
+            self.assertNotIn('localhost', result['response'], channel)
+        self.assertNotIn('localhost**Ver producto', dev['response'])
 
 
 class ChatInactivityTests(APITestCase):
@@ -266,6 +480,40 @@ class ChatInactivityTests(APITestCase):
         dispatch.assert_not_called()
         self.assertFalse(ChatMessage.objects.filter(reply_to_message=inbound).exists())
 
+    @patch('crmChat.tasks.ollama_service.get_bot_response')
+    @patch('crmChat.tasks.dispatch_outbound_message')
+    def test_external_bot_creates_only_one_reply_for_same_customer_message(self, dispatch, ollama):
+        integration = ChannelIntegration.objects.create(
+            name='Facebook bot idempotente', channel='facebook', active=True,
+            external_account_id='page-bot-on', page_id='page-bot-on',
+            configuration={'bot_enabled': True},
+        )
+        session = ChatSession.objects.create(
+            user_name='Cliente', status='bot', channel='facebook', integration=integration,
+            external_thread_id='psid-bot-on',
+        )
+        inbound = ChatMessage.objects.create(
+            session=session, text='Hola', sender_type='user', direction='inbound',
+            external_message_id='mid.bot-on',
+        )
+        ollama.return_value = {
+            'response': 'Respuesta controlada', 'needs_agent': False,
+            'state': {'intent': 'greeting'}, 'summary': 'intención: saludo', 'error': None,
+        }
+
+        first = generate_omnichannel_bot_reply.run(inbound.id)
+        second = generate_omnichannel_bot_reply.run(inbound.id)
+
+        self.assertIn('message_id', first)
+        self.assertEqual(second, {'duplicate': True})
+        reply = ChatMessage.objects.get(reply_to_message=inbound)
+        self.assertTrue(reply.text.startswith(ollama_service.INITIAL_GREETING))
+        self.assertEqual(reply.text.count(ollama_service.INITIAL_GREETING), 1)
+        self.assertNotIn('ChatGPT', reply.text)
+        self.assertNotIn('Ollama', reply.text)
+        self.assertEqual(ollama.call_count, 1)
+        self.assertEqual(dispatch.call_count, 1)
+
     @patch('crmChat.ollama_service.requests.post')
     def test_api_persists_structured_memory_across_turns(self, ollama_post):
         provider_response = Mock()
@@ -286,10 +534,11 @@ class ChatInactivityTests(APITestCase):
             responses[message] = response.data['message']
 
         session = ChatSession.objects.get(pk=session_id)
-        self.assertEqual(session.conversation_state['intent'], 'purchase')
+        self.assertEqual(session.conversation_state['intent'], 'recommendation')
         self.assertEqual(session.conversation_state['product'], 'celular')
-        self.assertIsNone(session.conversation_state['budget'])
+        self.assertEqual(session.conversation_state['budget'], 1_000_000)
         self.assertEqual(session.conversation_state['topic'], 'shipping')
+        self.assertEqual(session.conversation_state['last_response'], responses['¿Y hacen envíos?'])
         self.assertIn('catálogo actual', responses['¿Cuál me recomiendas?'])
         self.assertIn('No tengo información confirmada', responses['¿Y hacen envíos?'])
         ollama_service.get_bot_response(
@@ -299,7 +548,7 @@ class ChatInactivityTests(APITestCase):
                 for index in range(20)
             ],
         )
-        self.assertLessEqual(len(ollama_post.call_args.kwargs['json']['messages']), 12)
+        self.assertLessEqual(len(ollama_post.call_args.kwargs['json']['messages']), 16)
 
         response = self.client.post(reverse('bot-chat'), {
             'message': 'Quiero hablar con un asesor',
@@ -321,6 +570,29 @@ class ChatInactivityTests(APITestCase):
 
 
 class OmnichannelModelTests(APITestCase):
+    @override_settings(
+        META_GRAPH_API_URL='https://graph.facebook.test',
+        META_CREDENTIALS_ENCRYPTION_KEY=Fernet.generate_key().decode('ascii'),
+    )
+    @patch('crmChat.apps.meta.services.requests.request')
+    def test_graph_error_is_saved_on_integration_without_exposing_token(self, request_mock):
+        token = 'private-page-token'
+        integration = ChannelIntegration.objects.create(
+            name='Facebook error', channel='facebook', active=True,
+            external_account_id='page-error', page_id='page-error', graph_api_version='v26.0',
+            access_token_encrypted=secret_store.encrypt(token),
+        )
+        request_mock.return_value = Mock(
+            ok=False, status_code=400, content=b'json', headers={},
+            json=lambda: {'error': {'code': 100, 'type': 'OAuthException', 'message': 'Campo inválido'}},
+        )
+        with self.assertRaises(MetaAPIError):
+            graph_request(integration, 'GET', 'page-error')
+        integration.refresh_from_db()
+        self.assertEqual(integration.connection_status, 'error')
+        self.assertIn('código 100', integration.last_error)
+        self.assertNotIn(token, integration.last_error)
+
     """Protege compatibilidad e idempotencia del esquema omnicanal."""
 
     def test_existing_conversation_defaults_to_ecommerce(self):
@@ -562,9 +834,114 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'direct-backend-challenge')
 
+    @override_settings(
+        META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='ig-special-+%<token>',
+        META_WEBHOOK_VERIFY_TOKEN_FACEBOOK='fb-special-token',
+        META_WEBHOOK_VERIFY_TOKEN_WHATSAPP='wa-special-token',
+    )
+    def test_typed_webhooks_use_only_their_channel_token(self):
+        instagram = self.client.get('/api/meta/instagram/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'ig-special-+%<token>',
+            'hub.challenge': 'instagram-challenge',
+        })
+        self.assertEqual(instagram.status_code, 200)
+        self.assertEqual(instagram.content, b'instagram-challenge')
+        self.assertTrue(instagram['Content-Type'].startswith('text/plain'))
+
+        facebook = self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'fb-special-token',
+            'hub.challenge': 'facebook-challenge',
+        })
+        self.assertEqual(facebook.status_code, 200)
+        self.assertEqual(facebook.content, b'facebook-challenge')
+        self.assertEqual(self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'ig-special-+%<token>',
+            'hub.challenge': 'must-not-return',
+        }).status_code, 403)
+
+    @override_settings(META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='instagram-secret')
+    def test_instagram_rejects_invalid_empty_and_non_official_parameters(self):
+        for candidate in ('wrong-token', ''):
+            response = self.client.get('/api/meta/instagram/webhook/', {
+                'hub.mode': 'subscribe',
+                'hub.verify_token': candidate,
+                'hub.challenge': 'must-not-return',
+            })
+            self.assertEqual(response.status_code, 403)
+            self.assertNotIn(candidate or 'instagram-secret', response.content.decode())
+        underscored = self.client.get('/api/meta/instagram/webhook/', {
+            'hub_mode': 'subscribe',
+            'hub_verify_token': 'instagram-secret',
+            'hub_challenge': 'must-not-return',
+        })
+        self.assertEqual(underscored.status_code, 403)
+
+    def test_unified_webhook_uses_global_token_and_rejects_unknown_payload(self):
+        accepted = self.client.get(reverse('meta-webhook'), {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'verify-test',
+            'hub.challenge': 'global-challenge',
+        })
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.content, b'global-challenge')
+        self.assertEqual(self.client.get(reverse('meta-webhook'), {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'wrong-global',
+            'hub.challenge': 'must-not-return',
+        }).status_code, 403)
+
+        body = json.dumps({'object': 'unknown', 'entry': []}).encode()
+        signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+        response = self.client.post(
+            reverse('meta-webhook'), data=body, content_type='application/json',
+            HTTP_X_HUB_SIGNATURE_256=signature,
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @override_settings(
+        META_WEBHOOK_VERIFY_TOKEN='',
+        META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='',
+    )
+    def test_hashed_integration_token_fallback_is_scoped_to_channel(self):
+        token = 'stored-instagram-token'
+        ChannelIntegration.objects.create(
+            name='Instagram hash', channel='instagram', active=True,
+            verify_token_digest=secret_store.digest(token),
+        )
+        self.assertEqual(self.client.get('/api/meta/instagram/webhook/', {
+            'hub.mode': 'subscribe', 'hub.verify_token': token, 'hub.challenge': 'ok',
+        }).status_code, 200)
+        self.assertEqual(self.client.get('/api/meta/facebook/webhook/', {
+            'hub.mode': 'subscribe', 'hub.verify_token': token, 'hub.challenge': 'no',
+        }).status_code, 403)
+
+    def test_access_log_redaction_hides_both_meta_parameter_spellings(self):
+        token = 'never-log-this-token'
+        line = (
+            f'GET /api/meta/instagram/webhook/?hub.verify_token={token}'
+            f'&hub_verify_token={token}&hub.challenge=123 HTTP/1.1'
+        )
+        redacted = redact_webhook_tokens(line)
+        self.assertNotIn(token, redacted)
+        self.assertEqual(redacted.count('[REDACTED]'), 2)
+
     def test_invalid_signature_is_rejected(self):
         response = self._signed_post(signature='sha256=bad')
         self.assertEqual(response.status_code, 401)
+        self.assertFalse(WebhookEvent.objects.exists())
+
+    def test_invalid_payload_and_wrong_channel_alias_return_400(self):
+        self.assertEqual(self._signed_post(payload={'object': 'whatsapp_business_account', 'entry': 'invalid'}).status_code, 400)
+        body = json.dumps(self.payload, separators=(',', ':')).encode()
+        signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+        response = self.client.post(
+            '/api/meta/instagram/webhook/', data=body, content_type='application/json',
+            HTTP_X_HUB_SIGNATURE_256=signature,
+        )
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(WebhookEvent.objects.exists())
 
     @patch('crmChat.apps.meta.views.process_meta_webhook_task.delay')
@@ -591,7 +968,235 @@ class MetaWebhookTests(APITestCase):
         self.assertEqual(message.text, 'Hola desde WhatsApp')
         self.assertEqual(message.direction, 'inbound')
         self.assertEqual(message.session.channel, 'whatsapp')
+        self.assertEqual(WebhookEvent.objects.get().integration_id, self.integration.id)
         read_receipt.assert_called_once_with(message.id)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    def test_facebook_and_instagram_signed_events_create_crm_conversations(self, read_receipt):
+        cases = (
+            ('facebook', 'page-test', 'psid-test', '/api/meta/facebook/webhook/'),
+            ('instagram', 'ig-test', 'igsid-test', '/api/meta/instagram/webhook/'),
+        )
+        for channel, account_id, sender_id, endpoint in cases:
+            with self.subTest(channel=channel):
+                integration = ChannelIntegration.objects.create(
+                    name=f'{channel} pruebas', channel=channel, active=True,
+                    external_account_id=account_id,
+                    page_id=account_id if channel == 'facebook' else 'page-for-instagram',
+                    instagram_account_id=account_id if channel == 'instagram' else '',
+                    graph_api_version='v-test', configuration={'bot_enabled': False},
+                )
+                payload = {
+                    'object': 'page' if channel == 'facebook' else 'instagram',
+                    'entry': [{
+                        'id': account_id,
+                        'messaging': [{
+                            'sender': {'id': sender_id},
+                            'recipient': {'id': account_id},
+                            'timestamp': 1_700_000_000_000,
+                            'message': {'mid': f'mid.{channel}.test', 'text': f'Prueba {channel}'},
+                        }],
+                    }],
+                }
+                body = json.dumps(payload, separators=(',', ':')).encode()
+                signature = 'sha256=' + hmac.new(b'app-secret-test', body, hashlib.sha256).hexdigest()
+                with self.assertLogs('crmChat', level='INFO') as logs:
+                    response = self.client.post(
+                        endpoint, data=body, content_type='application/json',
+                        HTTP_X_HUB_SIGNATURE_256=signature,
+                    )
+                self.assertEqual(response.status_code, 200)
+                message = ChatMessage.objects.get(external_message_id=f'mid.{channel}.test')
+                self.assertEqual(message.session.channel, channel)
+                self.assertEqual(message.session.integration_id, integration.id)
+                self.assertEqual(message.direction, 'inbound')
+                integration.refresh_from_db()
+                self.assertEqual(integration.connection_status, 'connected')
+                self.assertIsNotNone(integration.last_webhook_at)
+                rendered_logs = '\n'.join(logs.output)
+                self.assertIn('Webhook Meta recibido', rendered_logs)
+                self.assertIn('Mensaje Meta persistido', rendered_logs)
+        self.assertEqual(read_receipt.call_count, 2)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.instagram.services.get_sender_profile')
+    def test_instagram_enriches_profile_and_reopens_same_conversation(self, profile, _read_receipt):
+        profile.return_value = {
+            'id': 'igsid-customer',
+            'name': 'Cliente Instagram Real',
+            'username': 'cliente_real',
+            'profile_pic': 'https://cdn.example.test/profile.jpg',
+        }
+        integration = ChannelIntegration.objects.create(
+            name='Instagram perfil', channel='instagram', active=True,
+            external_account_id='ig-profile', instagram_account_id='ig-profile',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+
+        def payload(message_id, text):
+            return {
+                'object': 'instagram',
+                'entry': [{
+                    'id': 'ig-profile',
+                    'messaging': [{
+                        'sender': {'id': 'igsid-customer'},
+                        'recipient': {'id': 'ig-profile'},
+                        'timestamp': 1_700_000_000_000,
+                        'message': {'mid': message_id, 'text': text},
+                    }],
+                }],
+            }
+
+        self.assertEqual(self._signed_post(payload('mid.ig.profile.1', 'Primer mensaje')).status_code, 200)
+        session = ChatSession.objects.get(integration=integration)
+        session.status = 'closed'
+        session.save(update_fields=['status'])
+
+        self.assertEqual(self._signed_post(payload('mid.ig.profile.2', 'Segundo mensaje')).status_code, 200)
+        session.refresh_from_db()
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='igsid-customer')
+        self.assertEqual(ChatSession.objects.filter(integration=integration).count(), 1)
+        self.assertEqual(session.status, 'bot')
+        self.assertEqual(session.messages.count(), 2)
+        self.assertEqual(session.user_name, 'Cliente Instagram Real')
+        self.assertEqual(identity.display_name, 'Cliente Instagram Real')
+        self.assertEqual(identity.contact.name, 'Cliente Instagram Real')
+        self.assertEqual(identity.contact.avatar_url, 'https://cdn.example.test/profile.jpg')
+        self.assertIsNotNone(identity.contact.last_interaction_at)
+        self.assertEqual(profile.call_count, 1)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.facebook.services.get_sender_profile')
+    def test_facebook_enriches_contact_profile_and_last_interaction(self, profile, _read_receipt):
+        profile.return_value = {
+            'id': 'psid-profile', 'name': 'Cliente Facebook Real',
+            'first_name': 'Cliente', 'last_name': 'Facebook',
+            'profile_pic': 'https://cdn.example.test/facebook.jpg',
+        }
+        integration = ChannelIntegration.objects.create(
+            name='Facebook perfil', channel='facebook', active=True,
+            external_account_id='page-profile', page_id='page-profile',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+        payload = {
+            'object': 'page',
+            'entry': [{'id': 'page-profile', 'messaging': [{
+                'sender': {'id': 'psid-profile'}, 'recipient': {'id': 'page-profile'},
+                'timestamp': 1_700_000_000_000,
+                'message': {'mid': 'mid.fb.profile.1', 'text': 'Hola'},
+            }]}],
+        }
+        self.assertEqual(self._signed_post(payload).status_code, 200)
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='psid-profile')
+        session = ChatSession.objects.get(integration=integration)
+        self.assertEqual(session.user_name, 'Cliente Facebook Real')
+        self.assertEqual(identity.display_name, 'Cliente Facebook Real')
+        self.assertEqual(identity.contact.avatar_url, 'https://cdn.example.test/facebook.jpg')
+        self.assertIsNotNone(identity.contact.last_interaction_at)
+        profile.assert_called_once_with(integration, 'psid-profile')
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.facebook.services.get_sender_profile', side_effect=MetaAPIError('perfil no disponible'))
+    def test_facebook_profile_failure_uses_fallback_without_duplicates(self, profile, _read_receipt):
+        integration = ChannelIntegration.objects.create(
+            name='Facebook sin perfil', channel='facebook', active=True,
+            external_account_id='page-no-profile', page_id='page-no-profile',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+
+        def payload(message_id):
+            return {
+                'object': 'page',
+                'entry': [{'id': 'page-no-profile', 'messaging': [{
+                    'sender': {'id': 'psid-no-profile'}, 'recipient': {'id': 'page-no-profile'},
+                    'timestamp': 1_700_000_000_000,
+                    'message': {'mid': message_id, 'text': 'Mensaje de prueba'},
+                }]}],
+            }
+
+        self.assertEqual(self._signed_post(payload('mid.fb.no-profile.1')).status_code, 200)
+        self.assertEqual(self._signed_post(payload('mid.fb.no-profile.2')).status_code, 200)
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='psid-no-profile')
+        session = ChatSession.objects.get(integration=integration, external_thread_id='psid-no-profile')
+        self.assertEqual(identity.display_name, 'Usuario de Facebook')
+        self.assertEqual(identity.contact.name, 'Usuario de Facebook')
+        self.assertEqual(session.user_name, 'Usuario de Facebook')
+        self.assertEqual(identity.profile_data['profile_error'], 'graph_api_unavailable')
+        self.assertEqual(ChannelIdentity.objects.filter(integration=integration).count(), 1)
+        self.assertEqual(CRMContact.objects.filter(channel_identities__integration=integration).distinct().count(), 1)
+        self.assertEqual(ChatSession.objects.filter(integration=integration).count(), 1)
+        self.assertEqual(ChatMessage.objects.filter(session=session).count(), 2)
+        profile.assert_called_once()
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    @patch('crmChat.apps.facebook.services.get_sender_profile')
+    def test_facebook_refreshes_changed_profile_name_in_contact_and_session(self, profile, _read_receipt):
+        profile.side_effect = [
+            {'id': 'psid-renamed', 'name': 'Nombre Anterior'},
+            {'id': 'psid-renamed', 'name': 'Nombre Actualizado'},
+        ]
+        integration = ChannelIntegration.objects.create(
+            name='Facebook nombre mutable', channel='facebook', active=True,
+            external_account_id='page-renamed', page_id='page-renamed',
+            graph_api_version='v-test', configuration={'bot_enabled': False},
+        )
+
+        def payload(message_id):
+            return {
+                'object': 'page', 'entry': [{'id': 'page-renamed', 'messaging': [{
+                    'sender': {'id': 'psid-renamed'}, 'recipient': {'id': 'page-renamed'},
+                    'timestamp': 1_700_000_000_000,
+                    'message': {'mid': message_id, 'text': 'Mensaje de prueba'},
+                }]}],
+            }
+
+        self._signed_post(payload('mid.fb.rename.1'))
+        identity = ChannelIdentity.objects.get(integration=integration, external_id='psid-renamed')
+        identity.profile_data['profile_checked_at'] = (timezone.now() - timedelta(days=2)).isoformat()
+        identity.save(update_fields=['profile_data'])
+        self._signed_post(payload('mid.fb.rename.2'))
+
+        identity.refresh_from_db()
+        identity.contact.refresh_from_db()
+        session = ChatSession.objects.get(integration=integration, external_thread_id='psid-renamed')
+        self.assertEqual(identity.display_name, 'Nombre Actualizado')
+        self.assertEqual(identity.contact.name, 'Nombre Actualizado')
+        self.assertEqual(session.user_name, 'Nombre Actualizado')
+        self.assertEqual(profile.call_count, 2)
+
+    @patch('crmChat.tasks.send_meta_read_receipt.delay')
+    def test_whatsapp_requires_matching_waba_and_phone_and_reconnects_to_new_account(self, _receipt):
+        self.assertEqual(self._signed_post().status_code, 200)
+        old_session = ChatSession.objects.get(channel='whatsapp')
+        disconnect_integration(self.integration)
+        self.integration.refresh_from_db()
+        self.assertFalse(self.integration.active)
+        self.assertEqual(old_session.messages.count(), 1)
+
+        rejected = json.loads(json.dumps(self.payload))
+        rejected['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.old-after-disconnect'
+        self.assertEqual(self._signed_post(rejected).status_code, 200)
+        self.assertFalse(ChatMessage.objects.filter(external_message_id='wamid.old-after-disconnect').exists())
+
+        new_integration = ChannelIntegration.objects.create(
+            name='Número nuevo', channel='whatsapp', active=True,
+            external_account_id='waba-2', phone_number_id='phone-2',
+        )
+        new_payload = json.loads(json.dumps(self.payload))
+        new_payload['entry'][0]['id'] = 'waba-2'
+        new_payload['entry'][0]['changes'][0]['value']['metadata']['phone_number_id'] = 'phone-2'
+        new_payload['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.new-account'
+        self.assertEqual(self._signed_post(new_payload).status_code, 200)
+        new_message = ChatMessage.objects.get(external_message_id='wamid.new-account')
+        self.assertEqual(new_message.session.integration_id, new_integration.pk)
+        old_session.refresh_from_db()
+        self.assertEqual(old_session.integration_id, self.integration.pk)
+
+        mismatched = json.loads(json.dumps(new_payload))
+        mismatched['entry'][0]['id'] = 'waba-1'
+        mismatched['entry'][0]['changes'][0]['value']['messages'][0]['id'] = 'wamid.mixed-ids'
+        self.assertEqual(self._signed_post(mismatched).status_code, 200)
+        self.assertFalse(ChatMessage.objects.filter(external_message_id='wamid.mixed-ids').exists())
 
     @patch('crmChat.tasks.send_meta_read_receipt.delay')
     def test_new_inbound_message_creates_new_whatsapp_session_without_old_history(self, _receipt):
@@ -650,6 +1255,9 @@ class MetaWebhookTests(APITestCase):
     META_GRAPH_API_URL='https://graph.facebook.test',
     META_GRAPH_API_VERSION='v26.0',
     META_REDIRECT_URI='https://crm.example.test/api/meta/callback/',
+    META_FACEBOOK_WEBHOOK_URL='https://crm.example.test/api/meta/facebook/webhook/',
+    META_INSTAGRAM_WEBHOOK_URL='https://crm.example.test/api/meta/instagram/webhook/',
+    META_WEBHOOK_VERIFY_TOKEN='webhook-verify-test',
     META_OAUTH_AUTHORIZE_URL='https://www.facebook.com',
     META_OAUTH_SCOPES=','.join(sorted(REQUIRED_SCOPES)),
     META_OAUTH_FRONTEND_REDIRECT='/admin/chat/integraciones',
@@ -659,13 +1267,93 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
     """Prueba OAuth/selección sin ejecutar solicitudes reales contra Meta."""
 
     def setUp(self):
+        cache.clear()
         self.admin_user = Credenciales.objects.create(usuario='oauth_admin', tipo_usuario=1, estado=1)
         self.other_admin = Credenciales.objects.create(usuario='oauth_other', tipo_usuario=1, estado=1)
         self.client.force_authenticate(self.admin_user)
 
+    @patch('crmChat.apps.instagram.services.graph_request')
+    def test_instagram_facebook_login_sends_through_linked_page(self, graph_request_mock):
+        from crmChat.apps.instagram.services import send_text
+
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user,
+            facebook_user_id='facebook-routing',
+            access_token_encrypted='encrypted-user-token',
+        )
+        page = MetaFacebookPage.objects.create(
+            connection=connection,
+            page_id='page-routing',
+            page_name='Página routing',
+            page_access_token_encrypted='encrypted-page-token',
+        )
+        integration = ChannelIntegration.objects.create(
+            name='Instagram routing', channel='instagram', active=True,
+            instagram_account_id='ig-routing', external_account_id='ig-routing',
+            graph_api_version='v-test', meta_connection=connection, meta_facebook_page=page,
+        )
+        graph_request_mock.return_value = {'message_id': 'mid.sent'}
+
+        send_text(integration, 'igsid-recipient', 'Respuesta reactiva')
+
+        args, kwargs = graph_request_mock.call_args
+        self.assertEqual(args[1:3], ('POST', 'page-routing/messages'))
+        self.assertIsNone(kwargs['base_url'])
+        self.assertEqual(kwargs['json_body']['messaging_type'], 'RESPONSE')
+        self.assertEqual(kwargs['json_body']['recipient']['id'], 'igsid-recipient')
+
+    @patch('crmChat.apps.instagram.services.graph_request')
+    def test_instagram_login_keeps_native_send_endpoint(self, graph_request_mock):
+        from crmChat.apps.instagram.services import send_text
+
+        integration = ChannelIntegration.objects.create(
+            name='Instagram Login', channel='instagram', active=True,
+            instagram_account_id='ig-native', external_account_id='ig-native',
+            graph_api_version='v-test', configuration={},
+        )
+        graph_request_mock.return_value = {'message_id': 'mid.sent'}
+
+        send_text(integration, 'igsid-recipient', 'Respuesta reactiva')
+
+        args, kwargs = graph_request_mock.call_args
+        self.assertEqual(args[1:3], ('POST', 'ig-native/messages'))
+        self.assertEqual(kwargs['base_url'], 'https://graph.instagram.com')
+        self.assertNotIn('messaging_type', kwargs['json_body'])
+
     @staticmethod
     def _response(data, ok=True, status_code=200):
         return Mock(ok=ok, status_code=status_code, content=b'json', json=lambda: data)
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_page_details_reads_tasks_from_managed_pages_inventory(self, request_mock):
+        request_mock.return_value = self._response({'data': [{
+            'id': 'page-1', 'name': 'Página Uno', 'access_token': 'page-token',
+            'tasks': ['MESSAGING'], 'instagram_business_account': {'id': 'instagram-1'},
+        }]})
+        page = get_page_details('page-1', 'user-token')
+        self.assertEqual(page['tasks'], ['MESSAGING'])
+        requested_url = request_mock.call_args.args[1]
+        requested_fields = request_mock.call_args.kwargs['params']['fields']
+        self.assertTrue(requested_url.endswith('/me/accounts'))
+        self.assertIn('tasks', requested_fields)
+
+    @patch('crmChat.apps.meta.oauth.requests.request')
+    def test_selected_accounts_subscribe_app_objects_and_page_fields(self, request_mock):
+        request_mock.return_value = self._response({'success': True})
+        ensure_oauth_webhook_subscriptions(
+            'page-1', 'page-token', facebook=True, instagram=True,
+        )
+        self.assertEqual(request_mock.call_count, 3)
+        page_app = request_mock.call_args_list[0].kwargs['data']
+        instagram_app = request_mock.call_args_list[1].kwargs['data']
+        page_activation = request_mock.call_args_list[2].kwargs['data']
+        self.assertEqual(page_app['object'], 'page')
+        self.assertEqual(page_app['callback_url'], 'https://crm.example.test/api/meta/facebook/webhook/')
+        self.assertIn('message_reads', page_app['fields'])
+        self.assertNotIn('messaging_reads', page_app['fields'])
+        self.assertEqual(instagram_app['object'], 'instagram')
+        self.assertEqual(instagram_app['callback_url'], 'https://crm.example.test/api/meta/instagram/webhook/')
+        self.assertIn('messages', page_activation['subscribed_fields'])
 
     def test_oauth_start_generates_unique_state_without_whatsapp_scopes(self):
         first = self.client.get(reverse('meta-connect'))
@@ -748,7 +1436,20 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         self.assertNotIn('sensitive', response['Location'])
         self.assertFalse(MetaConnection.objects.exists())
 
-    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(self):
+    @patch('crmChat.apps.meta.oauth.ensure_oauth_webhook_subscriptions')
+    @patch('crmChat.apps.meta.oauth.get_instagram_account')
+    @patch('crmChat.apps.meta.oauth.get_page_details')
+    @patch('crmChat.apps.meta.oauth.validate_access_token')
+    def test_selection_creates_channel_adapters_and_disconnect_is_non_destructive(
+        self, validate_token, page_details, instagram_details, ensure_subscriptions,
+    ):
+        validate_token.return_value = {'is_valid': True, 'user_id': 'facebook-user-selection', 'scopes': sorted(REQUIRED_SCOPES)}
+        page_details.return_value = {
+            'id': 'page-selection', 'name': 'Página Selección',
+            'access_token': 'fresh-page-token', 'tasks': ['MESSAGING'],
+            'instagram_business_account': {'id': 'instagram-selection'},
+        }
+        instagram_details.return_value = {'id': 'instagram-selection', 'username': 'seleccion'}
         connection = MetaConnection.objects.create(
             created_by=self.admin_user,
             facebook_user_id='facebook-user-selection',
@@ -779,15 +1480,45 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         instagram_payload = next(item for item in integrations.data if item['channel'] == 'instagram')
         self.assertTrue(instagram_payload['has_access_token'])
         self.assertTrue(instagram_payload['managed_by_meta_oauth'])
+        ensure_subscriptions.assert_called_once_with(
+            page.page_id, 'fresh-page-token', facebook=True, instagram=True,
+        )
 
         disconnected = self.client.delete(reverse('meta-connection-detail', args=[connection.pk]))
         self.assertEqual(disconnected.status_code, 204)
         self.assertEqual(ChannelIntegration.objects.filter(active=True).count(), 0)
-        self.assertTrue(ChannelIntegration.objects.filter(meta_connection=connection).exists())
+        self.assertTrue(ChannelIntegration.objects.filter(channel='facebook', external_account_id=page.page_id).exists())
+        self.assertTrue(ChannelIntegration.objects.filter(channel='instagram', external_account_id=instagram.instagram_account_id).exists())
         connection.refresh_from_db()
         page.refresh_from_db()
         self.assertEqual(connection.access_token_encrypted, '')
         self.assertEqual(page.page_access_token_encrypted, '')
+
+    @patch('crmChat.apps.meta.oauth.get_page_details')
+    @patch('crmChat.apps.meta.oauth.validate_access_token')
+    @patch('crmChat.apps.meta.views.MetaConnectionAccountsView.get_throttles', return_value=[])
+    def test_selection_rejects_page_without_messaging_task_and_other_user_token(self, _throttles, validate_token, page_details):
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user, facebook_user_id='owner-one',
+            access_token_encrypted=secret_store.encrypt('user-token'),
+        )
+        page = MetaFacebookPage.objects.create(
+            connection=connection, page_id='page-available',
+            page_access_token_encrypted=secret_store.encrypt('page-token'),
+        )
+        url = reverse('meta-connection-accounts', args=[connection.pk])
+        selection = {'facebook_page_ids': [page.page_id]}
+        validate_token.return_value = {'is_valid': True, 'user_id': 'someone-else', 'scopes': sorted(REQUIRED_SCOPES)}
+        self.assertEqual(self.client.post(url, selection, format='json').status_code, 400)
+        page_details.assert_not_called()
+        self.assertFalse(ChannelIntegration.objects.filter(channel='facebook', active=True).exists())
+
+        validate_token.return_value['user_id'] = 'owner-one'
+        page_details.return_value = {'id': page.page_id, 'access_token': 'new-page-token', 'tasks': []}
+        response = self.client.post(url, selection, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('tarea de mensajería', response.data['detail'])
+        self.assertFalse(ChannelIntegration.objects.filter(channel='facebook', active=True).exists())
 
     def test_connection_cannot_be_read_or_disconnected_by_another_admin(self):
         connection = MetaConnection.objects.create(
@@ -799,10 +1530,207 @@ class MetaFacebookInstagramOAuthTests(APITestCase):
         self.assertEqual(self.client.get(reverse('meta-connection-accounts', args=[connection.pk])).status_code, 404)
         self.assertEqual(self.client.delete(reverse('meta-connection-detail', args=[connection.pk])).status_code, 404)
 
+    def test_disconnect_invalidates_pending_oauth_state(self):
+        start = self.client.get(reverse('meta-connect'))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        connection = MetaConnection.objects.create(
+            created_by=self.admin_user, facebook_user_id='account-to-disconnect',
+            access_token_encrypted=secret_store.encrypt('old-user-token'),
+        )
+        self.assertEqual(self.client.delete(reverse('meta-connection-detail', args=[connection.pk])).status_code, 204)
+        with patch('crmChat.apps.meta.oauth.requests.request') as graph_request:
+            callback = self.client.get(reverse('meta-callback'), {'code': 'stale-code', 'state': state})
+            self.assertIn('meta_oauth=invalid_state', callback['Location'])
+            graph_request.assert_not_called()
+
     def test_cancelled_callback_does_not_create_connection(self):
         response = self.client.get(reverse('meta-callback'), {'error': 'access_denied'})
         self.assertIn('meta_oauth=denied', response['Location'])
         self.assertFalse(MetaConnection.objects.exists())
+
+
+@override_settings(
+    META_APP_ID='whatsapp-app-id',
+    META_APP_SECRET='whatsapp-app-secret',
+    META_GRAPH_API_URL='https://graph.facebook.test',
+    META_GRAPH_API_VERSION='v26.0',
+    META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID='coexistence-config-id',
+    META_WHATSAPP_EMBEDDED_SIGNUP_VERSION='4',
+    META_CREDENTIALS_ENCRYPTION_KEY=Fernet.generate_key().decode('ascii'),
+)
+class WhatsAppCoexistenceTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.admin = Credenciales.objects.create(usuario='coexistence_admin', tipo_usuario=1, estado=1)
+        self.client.force_authenticate(self.admin)
+
+    def test_configuration_is_admin_only_and_contains_no_secret(self):
+        response = self.client.get(reverse('whatsapp-coexistence-config'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['app_id'], 'whatsapp-app-id')
+        self.assertEqual(response.data['config_id'], 'coexistence-config-id')
+        self.assertEqual(response.data['feature_type'], 'whatsapp_business_app_onboarding')
+        self.assertNotIn('secret', json.dumps(response.data).lower())
+
+        user = Credenciales.objects.create(usuario='coexistence_customer', tipo_usuario=2, estado=1)
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.get(reverse('whatsapp-coexistence-config')).status_code, 403)
+
+    @patch('crmChat.apps.whatsapp.coexistence.validate_integration_connection')
+    @patch('crmChat.apps.whatsapp.coexistence.graph_request')
+    @patch('crmChat.apps.whatsapp.coexistence.validate_whatsapp_token_permissions')
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_signup_connects_existing_business_app_without_sending_messages(
+        self, token_request, validate_token, graph_request, validate_connection,
+    ):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=True, status_code=200, content=b'json',
+            json=lambda: {'access_token': 'coexistence-private-token'},
+        )
+        graph_request.side_effect = [
+            {
+                'id': '1111111111', 'name': 'IMPORGAS JJ',
+                'owner_business_info': {'id': '3333333333', 'name': 'IMPORGAS JJ'},
+            },
+            {'data': [{
+                'id': '2222222222', 'display_phone_number': '+57 300 111 2233',
+                'verified_name': 'IMPORGAS JJ', 'platform_type': 'CLOUD_API',
+            }]},
+            {'success': True},
+        ]
+        validate_connection.return_value = {
+            'valid': True, 'remote_id': '2222222222',
+            'display_phone_number': '+57 300 111 2233', 'name': 'IMPORGAS JJ',
+        }
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'],
+            'code': 'one-use-authorization-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '1111111111',
+            'phone_number_id': '2222222222',
+            'business_id': '3333333333',
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['integration']['whatsapp_coexistence'])
+        integration = ChannelIntegration.objects.get(channel='whatsapp')
+        self.assertTrue(integration.active)
+        self.assertEqual(integration.external_account_id, '1111111111')
+        self.assertEqual(integration.phone_number_id, '2222222222')
+        self.assertTrue(integration.configuration['coexistence'])
+        self.assertFalse(integration.configuration['bot_enabled'])
+        self.assertEqual(secret_store.decrypt(integration.access_token_encrypted), 'coexistence-private-token')
+        self.assertNotIn('coexistence-private-token', json.dumps(response.data))
+        validate_token.assert_called_once_with(integration)
+        self.assertEqual(graph_request.call_args_list[0].args[2], '1111111111')
+        self.assertEqual(graph_request.call_args_list[1].args[2], '1111111111/phone_numbers')
+        self.assertEqual(graph_request.call_args_list[2].args[1:3], ('POST', '1111111111/subscribed_apps'))
+        self.assertFalse(any('/messages' in str(call) for call in graph_request.call_args_list))
+        self.assertTrue(ChatAuditEvent.objects.filter(action='whatsapp.coexistence_connected').exists())
+
+        replay = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'replayed-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '1111111111', 'phone_number_id': '2222222222',
+        }, format='json')
+        self.assertEqual(replay.status_code, 400)
+        self.assertIn('expiró', replay.data['detail'])
+        self.assertEqual(token_request.call_count, 1)
+
+    @patch('crmChat.apps.whatsapp.coexistence.graph_request')
+    @patch('crmChat.apps.whatsapp.coexistence.validate_whatsapp_token_permissions')
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_failed_subscription_stays_inactive_and_records_safe_error(
+        self, token_request, _validate_token, graph_request,
+    ):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=True, status_code=200, content=b'json', json=lambda: {'access_token': 'private-token'},
+        )
+        graph_request.side_effect = [
+            {
+                'id': '4444444444', 'name': 'IMPORGAS JJ',
+                'owner_business_info': {'id': '6666666666', 'name': 'IMPORGAS JJ'},
+            },
+            {'data': [{'id': '5555555555', 'display_phone_number': '+57 300 000 0000'}]},
+            {'success': False},
+        ]
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'valid-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '4444444444', 'phone_number_id': '5555555555',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        integration = ChannelIntegration.objects.get(external_account_id='4444444444')
+        self.assertFalse(integration.active)
+        self.assertEqual(integration.connection_status, 'error')
+        self.assertNotIn('private-token', integration.last_error)
+        self.assertNotIn('private-token', json.dumps(response.data))
+
+    @patch('crmChat.apps.whatsapp.coexistence.graph_request')
+    @patch('crmChat.apps.whatsapp.coexistence.validate_whatsapp_token_permissions')
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_business_id_must_own_the_authorized_waba(
+        self, token_request, _validate_token, graph_request,
+    ):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=True, status_code=200, content=b'json', json=lambda: {'access_token': 'private-token'},
+        )
+        graph_request.return_value = {
+            'id': '7777777777',
+            'owner_business_info': {'id': '8888888888', 'name': 'Negocio autorizado'},
+        }
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'valid-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '7777777777', 'phone_number_id': '9999999999',
+            'business_id': '6666666666',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('no es el propietario', response.data['detail'])
+        integration = ChannelIntegration.objects.get(external_account_id='7777777777')
+        self.assertFalse(integration.active)
+        self.assertFalse(any('/messages' in str(call) for call in graph_request.call_args_list))
+
+    @override_settings(META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID='')
+    def test_missing_configuration_returns_explicit_safe_503(self):
+        response = self.client.get(reverse('whatsapp-coexistence-config'))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data['error'], 'configuration_missing')
+        self.assertEqual(response.data['phase'], 'configuration')
+        self.assertIn('META_WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID', response.data['detail'])
+        self.assertNotIn('whatsapp-app-secret', json.dumps(response.data))
+
+    @patch('crmChat.apps.whatsapp.coexistence.requests.get')
+    def test_meta_code_exchange_error_is_diagnostic_and_hides_code(self, token_request):
+        configuration = self.client.get(reverse('whatsapp-coexistence-config')).data
+        token_request.return_value = Mock(
+            ok=False,
+            status_code=400,
+            content=b'json',
+            headers={'x-fb-request-id': 'safe-request-reference'},
+            json=lambda: {
+                'error': {
+                    'code': 100,
+                    'error_subcode': 36008,
+                    'message': 'Authorization code one-use-secret-code is invalid.',
+                },
+            },
+        )
+        response = self.client.post(reverse('whatsapp-coexistence-complete'), {
+            'state': configuration['state'], 'code': 'one-use-secret-code',
+            'event': 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+            'waba_id': '1111111111', 'phone_number_id': '2222222222',
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['phase'], 'code_exchange')
+        self.assertEqual(response.data['http_status'], 400)
+        self.assertEqual(response.data['meta_code'], 100)
+        self.assertEqual(response.data['meta_subcode'], 36008)
+        self.assertEqual(response.data['request_id'], 'safe-request-reference')
+        self.assertNotIn('one-use-secret-code', json.dumps(response.data))
+        self.assertFalse(ChannelIntegration.objects.exists())
 
 
 class ChannelAdapterTests(APITestCase):
@@ -878,6 +1806,7 @@ class IntegrationSecurityTests(APITestCase):
     """Verifica permisos, cifrado, auditoría y manejo de redes no confiables."""
 
     def setUp(self):
+        cache.clear()
         self.admin_user = Credenciales.objects.create(usuario='meta_admin', tipo_usuario=1, estado=1)
         self.client.force_authenticate(self.admin_user)
 
@@ -898,6 +1827,99 @@ class IntegrationSecurityTests(APITestCase):
         self.assertNotEqual(integration.access_token_encrypted, 'token-que-no-debe-salir')
         audit = ChatAuditEvent.objects.get(action='integration.created')
         self.assertNotIn('token-que-no-debe-salir', json.dumps(audit.details))
+
+    def test_client_cannot_activate_an_unvalidated_integration(self):
+        response = self.client.post(reverse('meta-integrations'), {
+            'name': 'WhatsApp pendiente', 'channel': 'whatsapp',
+            'external_account_id': 'waba-pending', 'phone_number_id': 'phone-pending',
+            'active': True, 'access_token': 'secret-token',
+        }, format='json')
+        self.assertEqual(response.status_code, 201)
+        integration = ChannelIntegration.objects.get(pk=response.data['id'])
+        self.assertFalse(integration.active)
+        self.assertEqual(integration.connection_status, 'pending')
+        self.assertNotIn('secret-token', json.dumps(response.data))
+
+    @override_settings(META_APP_ID='meta-app', META_APP_SECRET='meta-secret', META_GRAPH_API_URL='https://graph.facebook.test')
+    @patch('crmChat.apps.meta.services.graph_request')
+    @patch('crmChat.apps.meta.services.requests.get')
+    def test_whatsapp_activation_checks_token_permissions_and_waba_phone_relation(self, token_request, graph_request):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp por validar', channel='whatsapp',
+            external_account_id='waba-valid', phone_number_id='phone-valid',
+            graph_api_version='v26.0', access_token_encrypted=secret_store.encrypt('token-private'),
+        )
+        token_request.return_value = Mock(ok=True, content=b'json', json=lambda: {'data': {
+            'is_valid': True, 'app_id': 'meta-app',
+            'scopes': ['whatsapp_business_management', 'whatsapp_business_messaging'],
+        }})
+        graph_request.side_effect = [
+            {'data': [{'id': 'phone-valid', 'display_phone_number': '+57 300 123 4567'}]},
+            {'id': 'phone-valid', 'display_phone_number': '+57 300 123 4567', 'verified_name': 'Empresa'},
+            {'data': [{'whatsapp_business_api_data': {'id': 'meta-app'}}]},
+        ]
+        response = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        integration.refresh_from_db()
+        self.assertTrue(integration.active)
+        self.assertEqual(integration.connection_status, 'pending')
+        self.assertEqual(integration.display_phone_number, '+57 300 123 4567')
+        self.assertIsNotNone(integration.last_validated_at)
+        self.assertEqual(graph_request.call_args_list[0].args[2], 'waba-valid/phone_numbers')
+        self.assertNotIn('token-private', json.dumps(response.data))
+
+    @override_settings(META_APP_ID='meta-app', META_APP_SECRET='meta-secret', META_GRAPH_API_URL='https://graph.facebook.test')
+    @patch('crmChat.apps.meta.services.graph_request')
+    @patch('crmChat.apps.meta.services.requests.get')
+    def test_whatsapp_rejects_token_without_messaging_scope_and_wrong_phone(self, token_request, graph_request):
+        integration = ChannelIntegration.objects.create(
+            name='WhatsApp inválido', channel='whatsapp',
+            external_account_id='waba-invalid', phone_number_id='phone-other',
+            graph_api_version='v26.0', access_token_encrypted=secret_store.encrypt('token-private'),
+        )
+        token_request.return_value = Mock(ok=True, content=b'json', json=lambda: {'data': {
+            'is_valid': True, 'app_id': 'meta-app', 'scopes': ['whatsapp_business_management'],
+        }})
+        denied = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(denied.status_code, 400)
+        graph_request.assert_not_called()
+        integration.refresh_from_db()
+        self.assertFalse(integration.active)
+
+        self.assertEqual(integration.connection_status, 'error')
+
+        token_request.return_value = Mock(ok=True, content=b'json', json=lambda: {'data': {
+            'is_valid': True, 'app_id': 'meta-app',
+            'scopes': ['whatsapp_business_management', 'whatsapp_business_messaging'],
+        }})
+        graph_request.return_value = {'data': [{'id': 'phone-someone-else'}]}
+        denied = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn('no pertenece', denied.data['detail'])
+        integration.refresh_from_db()
+        self.assertFalse(integration.active)
+
+        graph_request.side_effect = [
+            {'data': [{'id': 'phone-other'}]},
+            {'id': 'phone-other', 'display_phone_number': '+57 300 000 0000'},
+            {'data': []},
+        ]
+        denied = self.client.post(reverse('meta-integration-validate', args=[integration.pk]), {'activate': True}, format='json')
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn('no está suscrita', denied.data['detail'])
+        integration.refresh_from_db()
+        self.assertFalse(integration.active)
+
+    def test_active_whatsapp_phone_cannot_be_attached_to_two_accounts(self):
+        ChannelIntegration.objects.create(
+            name='Cuenta A', channel='whatsapp', active=True,
+            external_account_id='waba-a', phone_number_id='phone-shared',
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ChannelIntegration.objects.create(
+                name='Cuenta B', channel='whatsapp', active=True,
+                external_account_id='waba-b', phone_number_id='phone-shared',
+            )
 
     def test_non_administrator_cannot_list_integrations(self):
         user = Credenciales.objects.create(usuario='customer_meta', tipo_usuario=2, estado=1)
@@ -950,6 +1972,24 @@ class IntegrationSecurityTests(APITestCase):
 
     @override_settings(
         INSTAGRAM_OAUTH_REDIRECT_URI='https://crm.example.test/api/meta/instagram/oauth/callback/',
+        INSTAGRAM_OAUTH_AUTHORIZE_URL='https://www.instagram.com/oauth/authorize',
+        INSTAGRAM_OAUTH_SCOPES='instagram_business_basic,instagram_business_manage_messages',
+    )
+    def test_instagram_disconnect_invalidates_pending_oauth_state(self):
+        integration = ChannelIntegration.objects.create(
+            name='Instagram por desconectar', channel='instagram', app_id='instagram-app-id',
+            app_secret_encrypted=secret_store.encrypt('instagram-app-secret'),
+        )
+        start = self.client.post(reverse('instagram-oauth-start', args=[integration.pk]))
+        state = parse_qs(urlparse(start.data['authorization_url']).query)['state'][0]
+        self.assertEqual(self.client.delete(reverse('meta-integration-detail', args=[integration.pk])).status_code, 204)
+        with patch('crmChat.apps.instagram.services.requests.post') as token_request:
+            callback = self.client.get(reverse('instagram-oauth-callback'), {'code': 'old-code', 'state': state})
+            self.assertIn('instagram_oauth=invalid_state', callback['Location'])
+            token_request.assert_not_called()
+
+    @override_settings(
+        INSTAGRAM_OAUTH_REDIRECT_URI='https://crm.example.test/api/meta/instagram/oauth/callback/',
         INSTAGRAM_OAUTH_TOKEN_URL='https://api.instagram.test/oauth/access_token',
         INSTAGRAM_GRAPH_API_URL='https://graph.instagram.test',
     )
@@ -970,12 +2010,14 @@ class IntegrationSecurityTests(APITestCase):
             content=b'json',
             json=lambda: {'access_token': 'short-lived-token', 'user_id': 'ig-professional-123'},
         )
-        get.return_value = Mock(
-            ok=True,
-            status_code=200,
-            content=b'json',
-            json=lambda: {'access_token': 'long-lived-token', 'expires_in': 5_184_000},
-        )
+        get.side_effect = [
+            Mock(ok=True, status_code=200, content=b'json', json=lambda: {
+                'access_token': 'long-lived-token', 'expires_in': 5_184_000,
+            }),
+            Mock(ok=True, status_code=200, content=b'json', json=lambda: {
+                'id': 'ig-professional-123', 'username': 'empresa', 'account_type': 'BUSINESS',
+            }),
+        ]
 
         callback = self.client.get(reverse('instagram-oauth-callback'), {'code': 'authorization-code', 'state': state})
         self.assertEqual(callback.status_code, 302)

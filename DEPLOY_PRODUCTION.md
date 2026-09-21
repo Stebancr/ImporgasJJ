@@ -5,29 +5,29 @@ La infraestructura se divide en `docker-compose.prodData.yml` (PostgreSQL y medi
 `imporgas_prod_network`. Nginx publica `81:80`: 81 es el puerto del host y 80 el
 del contenedor. Django conserva el puerto interno 8001.
 
-El dominio activo solicitado es `https://djsolutions.io`. El proxy existente de
+El dominio activo solicitado es `https://www.imporgasjj.com`. El proxy existente de
 Coolify/Traefik conserva 80/443 y termina HTTPS; únicamente Nginx se conecta
 también a la red externa `coolify`. Los routers `imporgas-*` tienen prioridad
 100 para dirigir ese dominio al proyecto. Esto sustituye la ruta del panel de
 Coolify en ese dominio; el servicio administrativo conserva su puerto 8000.
 
-El DNS autoritativo de `djsolutions.io` apunta al VPS `2.25.225.216`, y
-`www.djsolutions.io` es un CNAME del dominio principal. Coolify gestiona los
+El DNS autoritativo de `www.imporgasjj.com` apunta al VPS `2.25.225.216`, y
+`www.imporgasjj.com` es un CNAME del dominio principal. Coolify gestiona los
 certificados con su resolver `letsencrypt` existente. El router HTTPS de la
 aplicación usa ese resolver; `www` redirige al dominio principal. Verificar
 siempre la cadena TLS sin desactivar la validación del certificado.
 
 Pruebas directas: `http://2.25.225.216:81/` y `/admin/`. Django redirige las
 peticiones API directas por HTTP a HTTPS; probar la API autenticada mediante
-`https://djsolutions.io`.
+`https://www.imporgasjj.com`.
 
 ## 1. Requisitos
 
 - Servidor Linux con Docker Engine y Docker Compose v2.
-- Registro DNS `A` de `djsolutions.io` hacia `2.25.225.216`.
-- Registro `www.djsolutions.io` como CNAME de `djsolutions.io`.
+- Registro DNS `A` de `www.imporgasjj.com` hacia `2.25.225.216`.
+- Registro `www.imporgasjj.com` como CNAME de `www.imporgasjj.com`.
 - Puertos TCP 80 y 443 permitidos en el firewall.
-- Recursos para PostgreSQL, Django, Celery y `qwen2.5:1.5b` de Ollama.
+- Recursos para PostgreSQL, Django, Celery y `qwen:4b` de Ollama.
 - Credenciales reales de PostgreSQL, SMTP, Wompi y Meta en el servidor.
 
 ## 2. Respaldar el origen
@@ -117,8 +117,8 @@ verificada en el VPS; si se recrea esa red, comprobar su subred y actualizar
 
 ```bash
 docker network inspect coolify
-curl --fail --head https://djsolutions.io/
-curl --fail --head https://www.djsolutions.io/
+curl --fail --head https://www.imporgasjj.com/
+curl --head https://imporgasjj.com/ruta-de-prueba
 ```
 
 Comprobar la sintaxis del proxy de la aplicación después de iniciar `prod`,
@@ -198,7 +198,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml build
 
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d redis ollama
 docker compose --env-file .env.prod -f docker-compose.prod.yml exec ollama \
-  ollama pull "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+  ollama pull "${OLLAMA_MODEL:-qwen:4b}"
 
 docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm --user root backend \
   sh -c 'chown -R django:django /app/media /app/staticfiles'
@@ -247,13 +247,13 @@ los puertos 80 y 443. Los puertos
 ### Sitio, API, admin y media
 
 ```bash
-curl --fail --head http://djsolutions.io
-curl --fail --head https://djsolutions.io/
-curl --fail --head https://www.djsolutions.io/
-curl --fail https://djsolutions.io/api/health/
-curl --fail --head https://djsolutions.io/admin/
-curl --fail --head https://djsolutions.io/admin/login/
-curl --fail --head https://djsolutions.io/media/RUTA_DE_UN_ARCHIVO_REAL
+curl --head http://imporgasjj.com/ruta-de-prueba
+curl --head https://imporgasjj.com/ruta-de-prueba
+curl --fail --head https://www.imporgasjj.com/
+curl --fail https://www.imporgasjj.com/api/health/
+curl --fail --head https://www.imporgasjj.com/admin/
+curl --fail --head https://www.imporgasjj.com/admin/login/
+curl --fail --head https://www.imporgasjj.com/media/RUTA_DE_UN_ARCHIVO_REAL
 ```
 
 Abrir `/admin/` en una sesión privada y confirmar la redirección a
@@ -264,7 +264,7 @@ Abrir `/admin/` en una sesión privada y confirmar la redirección a
 Configurar en Wompi producción el evento:
 
 ```text
-https://djsolutions.io/api/webhooks/wompi
+https://www.imporgasjj.com/api/webhooks/wompi
 ```
 
 Realizar una compra controlada de valor mínimo y verificar:
@@ -279,12 +279,12 @@ Realizar una compra controlada de valor mínimo y verificar:
 Registrar las URI aplicables:
 
 ```text
-https://djsolutions.io/api/meta/callback/
-https://djsolutions.io/api/meta/webhook/
-https://djsolutions.io/api/meta/whatsapp/webhook/
-https://djsolutions.io/api/meta/facebook/webhook/
-https://djsolutions.io/api/meta/instagram/webhook/
-https://djsolutions.io/api/meta/instagram/oauth/callback/
+https://www.imporgasjj.com/api/meta/callback/
+https://www.imporgasjj.com/api/meta/webhook/
+https://www.imporgasjj.com/api/meta/whatsapp/webhook/
+https://www.imporgasjj.com/api/meta/facebook/webhook/
+https://www.imporgasjj.com/api/meta/instagram/webhook/
+https://www.imporgasjj.com/api/meta/instagram/oauth/callback/
 ```
 
 Confirmar el `verify token`, conectar cada canal y enviar un mensaje entrante de

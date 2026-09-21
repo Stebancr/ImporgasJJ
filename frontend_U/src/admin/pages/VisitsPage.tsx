@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -36,12 +36,17 @@ const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
 }
 
 const TIPO_TAREA_OPTS = [
-  { value: 'mantenimiento', label: 'Mantenimiento Preventivo' },
-  { value: 'instalacion',   label: 'Instalación' },
-  { value: 'reparacion',    label: 'Reparación' },
-  { value: 'revision',      label: 'Revisión Técnica' },
-  { value: 'visita_tecnica',label: 'Visita Técnica Perímetro Urbano' },
-  { value: 'garantia',      label: 'Garantía' },
+  { value: 'visita_urbana', label: 'VISITA TECNICA PERIMETRO URBANO' },
+  { value: 'instalacion_calentador', label: '2025 INSTALACION DE CALENTADOR' },
+  { value: 'mantenimiento_calentador', label: '2025 MANTENIMIENTO O REPARACION DE CALENTADOR' },
+  { value: 'instalacion_secadora', label: '2025 INSTALACION DE SECADORA' },
+  { value: 'servicio_cancelado', label: 'SERVICIO CANCELADO' },
+  { value: 'visita_afueras', label: 'VISITA TECNICA PERIMETRO URBANO AFUERAS' },
+  { value: 'mantenimiento_estufa', label: '2025 MANTENIMIENTO O REPARACION DE ESTUFA' },
+  { value: 'revision_periodica', label: 'REVISION PERIODICA' },
+  { value: 'mantenimiento_acumulacion', label: '2025 MANTENIMIENTO O REPARACION CALENTADOR DE ACUMULACION A GAS' },
+  { value: 'programacion_doble', label: 'PROGRAMACION DOBLE' },
+  { value: 'mantenimiento_turco', label: '2025 MANTENIMIENTO O REPARACION CALENTADOR DE TURCO DE PASO' },
 ]
 
 const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
@@ -52,7 +57,7 @@ const blankForm = (): CreateVisitaData => ({
   cliente_telefono: '',
   cliente_correo: '',
   cliente_direccion: '',
-  tipo_tarea: 'revision',
+  tipo_tarea: '',
   fecha: format(new Date(), 'yyyy-MM-dd'),
   hora: '08:00',
   descripcion: '',
@@ -122,6 +127,9 @@ export default function VisitsPage() {
 
   // Filters
   const [search, setSearch] = useState('')
+  const [searchField, setSearchField] = useState<'all' | 'document' | 'phone'>('all')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const requestSequence = useRef(0)
   const [estadoFilter, setEstadoFilter] = useState('all')
   const [tecnicoFilter, setTecnicoFilter] = useState('all')
 
@@ -147,20 +155,22 @@ export default function VisitsPage() {
 
   // Load data
   const loadVisits = useCallback(async () => {
+    const sequence = ++requestSequence.current
     setLoading(true)
     const params: Record<string, string> = {}
     if (estadoFilter !== 'all') params.estado = estadoFilter
     if (tecnicoFilter !== 'all') params.tecnico_id = tecnicoFilter
-    if (search) params.search = search
+    if (debouncedSearch) params.search = debouncedSearch
+    if (searchField !== 'all') params.search_field = searchField
     try {
       const data = await visitsService.getAll(params)
-      setVisits(Array.isArray(data) ? data : [])
+      if (sequence === requestSequence.current) setVisits(Array.isArray(data) ? data : [])
     } catch {
-      setVisits([])
+      if (sequence === requestSequence.current) setVisits([])
     } finally {
-      setLoading(false)
+      if (sequence === requestSequence.current) setLoading(false)
     }
-  }, [estadoFilter, tecnicoFilter, search])
+  }, [estadoFilter, tecnicoFilter, debouncedSearch, searchField])
 
   const loadCalendar = useCallback(async () => {
     setCalendarLoading(true)
@@ -181,6 +191,10 @@ export default function VisitsPage() {
       .catch(() => setTecnicos([]))
   }, [])
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 300)
+    return () => window.clearTimeout(timer)
+  }, [search])
   useEffect(() => { loadVisits() }, [loadVisits])
   useEffect(() => { if (tab === 'calendario') loadCalendar() }, [tab, loadCalendar])
 
@@ -254,7 +268,7 @@ export default function VisitsPage() {
     setSaving(true)
     try {
       await visitsService.update(editVisit.id, {
-        tipo_tarea: form.tipo_tarea,
+        ...(TIPO_TAREA_OPTS.some((option) => option.value === form.tipo_tarea) ? { tipo_tarea: form.tipo_tarea } : {}),
         fecha: form.fecha,
         hora: form.hora,
         descripcion: form.descripcion,
@@ -331,12 +345,12 @@ export default function VisitsPage() {
   return (
     <div className="space-y-4">
       {/* Page header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Visitas Técnicas</h1>
           <p className="text-muted-foreground text-sm">Agenda y gestiona las visitas de los técnicos</p>
         </div>
-        <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreateOpen(true) }}>
+        <Button className="w-full sm:w-auto" onClick={() => { setForm(blankForm()); setFormErrors({}); setCreateOpen(true) }}>
           <Plus className="h-4 w-4 mr-2" /> Nueva Visita
         </Button>
       </div>
@@ -363,14 +377,24 @@ export default function VisitsPage() {
         <div className="space-y-4">
           {/* Filters */}
           <div className="flex gap-2 flex-wrap">
+            <Select value={searchField} onValueChange={(value: 'all' | 'document' | 'phone') => { setSearchField(value); setSearch('') }}>
+              <SelectTrigger className="w-full sm:w-44"><SelectValue placeholder="Buscar por" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los campos</SelectItem>
+                <SelectItem value="document">Documento</SelectItem>
+                <SelectItem value="phone">Teléfono</SelectItem>
+              </SelectContent>
+            </Select>
             <div className="relative flex-1 min-w-0 w-full sm:w-auto">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por cliente, tarea o dirección..."
+                placeholder="Cliente, documento, teléfono, tarea o dirección..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                inputMode={searchField === 'all' ? 'search' : 'numeric'}
+                maxLength={searchField === 'all' ? undefined : 15}
+                onChange={(e) => setSearch(searchField === 'all' ? e.target.value : e.target.value.replace(/\D/g, ''))}
                 className="pl-9"
-               aria-label="Buscar por cliente, tarea o dirección..." />
+               aria-label="Buscar por cliente, documento, teléfono, tarea o dirección" />
             </div>
             <Select value={estadoFilter} onValueChange={setEstadoFilter}>
               <SelectTrigger className="w-40">
@@ -694,15 +718,16 @@ export default function VisitsPage() {
               <p className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Datos de la Visita</p>
             </div>
             <div>
-              <Label>Tipo de tarea *</Label>
-              <Select value={form.tipo_tarea} onValueChange={(v) => setField('tipo_tarea', v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
+              <Label>Tipo de servicio *</Label>
+              <Select value={TIPO_TAREA_OPTS.some((option) => option.value === form.tipo_tarea) ? form.tipo_tarea : undefined} onValueChange={(v) => setField('tipo_tarea', v)}>
+                <SelectTrigger className="min-w-0"><SelectValue placeholder="Selecciona un servicio" /></SelectTrigger>
+                <SelectContent className="max-w-[calc(100vw-2rem)]">
                   {TIPO_TAREA_OPTS.map((o) => (
                     <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {editOpen && form.tipo_tarea && !TIPO_TAREA_OPTS.some((option) => option.value === form.tipo_tarea) && <p className="mt-1 text-xs text-muted-foreground">Valor anterior: {editVisit?.tipo_tarea_display}. Se conserva si no eliges uno nuevo.</p>}
               {fieldError('tipo_tarea')}
             </div>
             <div>

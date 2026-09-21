@@ -20,6 +20,7 @@ from .apps.meta.services import (
     process_webhook_event,
     secret_store,
     send_read_receipt,
+    UnmatchedIntegrationError,
 )
 from .models import (
     ChannelIntegration,
@@ -46,18 +47,49 @@ def process_meta_webhook_task(self, event_id):
     event = WebhookEvent.objects.get(pk=event_id)
     if event.status == 'processed':
         return {'duplicate': True}
-    messages = process_webhook_event(event)
+    try:
+        messages = process_webhook_event(event)
+    except UnmatchedIntegrationError:
+        logger.warning('Webhook Meta event_id=%s ignorado: cuenta externa no conectada.', event_id)
+        return {'skipped': 'unmatched_integration'}
+    except Exception as exc:
+        logger.warning(
+            'Falló tarea webhook Meta: event_id=%s channel=%s error=%s.',
+            event_id, event.channel, ' '.join(str(exc).split())[:300],
+        )
+        raise
     for message in messages:
         publish_crm_event('message.created', session_id=message.session_id, message_id=message.id)
         for attachment in message.attachments.all():
             download_meta_attachment.delay(attachment.id)
         if message.direction == 'inbound':
-            send_meta_read_receipt.delay(message.id)
+            receipt_task = send_meta_read_receipt.delay(message.id)
+            logger.info(
+                'Confirmación de lectura encolada: message_id=%s channel=%s task_id=%s.',
+                message.id, message.session.channel, receipt_task.id,
+            )
         integration = message.session.integration
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
-            generate_omnichannel_bot_reply.delay(message.id)
-            logger.info('Respuesta bot programada para message_id=%s session_id=%s.', message.id, message.session_id)
+            bot_task = generate_omnichannel_bot_reply.delay(message.id)
+            logger.info(
+                'Respuesta bot programada message_id=%s session_id=%s channel=%s task_id=%s.',
+                message.id, message.session_id, message.session.channel, bot_task.id,
+            )
+        else:
+            reason = (
+                'not_customer' if message.sender_type != 'user' else
+                'conversation_not_in_bot_mode' if message.session.status != 'bot' else
+                'bot_disabled'
+            )
+            logger.info(
+                'Respuesta bot omitida message_id=%s session_id=%s channel=%s reason=%s.',
+                message.id, message.session_id, message.session.channel, reason,
+            )
+    logger.info(
+        'Tarea webhook Meta completada: event_id=%s channel=%s messages=%s.',
+        event_id, event.channel, len(messages),
+    )
     return {'processed': len(messages)}
 
 
@@ -66,7 +98,12 @@ def send_meta_read_receipt(message_id):
     """Confirma lectura fuera del request del webhook."""
 
     message = ChatMessage.objects.select_related('session__integration').get(pk=message_id)
-    send_read_receipt(message)
+    result = send_read_receipt(message)
+    logger.info(
+        'Confirmación de lectura procesada: message_id=%s channel=%s.',
+        message.id, message.session.channel,
+    )
+    return result
 
 
 def _assert_public_https(url):
@@ -247,27 +284,33 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         session = ChatSession.objects.select_for_update().get(pk=user_message.session_id)
         stale_before = timezone.now() - timedelta(minutes=5)
         if user_message.sender_type != 'user' or user_message.direction != 'inbound':
+            logger.info('Bot omitido message_id=%s reason=not_a_customer_message.', user_message_id)
             return {'skipped': 'not_a_customer_message'}
         if session.channel != 'ecommerce' and not user_message.external_message_id:
+            logger.info('Bot omitido message_id=%s reason=missing_meta_message_id.', user_message_id)
             return {'skipped': 'missing_meta_message_id'}
         if session.channel != 'ecommerce' and (
             not session.integration
             or not session.integration.active
             or not session.integration.configuration.get('bot_enabled', False)
         ):
+            logger.info('Bot omitido message_id=%s reason=bot_disabled.', user_message_id)
             return {'skipped': 'bot_disabled'}
         existing_reply = getattr(user_message, 'bot_reply', None)
         if existing_reply:
+            logger.info('Bot omitido message_id=%s reason=reply_exists reply_id=%s.', user_message_id, existing_reply.id)
             return {'duplicate': True}
         if session.status != 'bot':
+            logger.info('Bot omitido message_id=%s reason=conversation_not_in_bot_mode.', user_message_id)
             return {'skipped': 'conversation_not_in_bot_mode'}
         if user_message.bot_processing_at and user_message.bot_processing_at > stale_before:
+            logger.info('Bot omitido message_id=%s reason=already_processing.', user_message_id)
             return {'skipped': 'already_processing'}
         else:
             user_message.bot_processing_at = timezone.now()
             user_message.save(update_fields=['bot_processing_at'])
 
-    previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8])
+    previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:12])
     is_new_conversation = not previous
     history = [
         {
@@ -277,11 +320,16 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         for item in reversed(previous)
     ]
     try:
+        logger.info(
+            'Ejecutando Ollama message_id=%s session_id=%s channel=%s history_items=%s.',
+            user_message_id, session.id, session.channel, len(history),
+        )
         result = ollama_service.get_bot_response(
             user_message.text,
             conversation_history=history,
             conversation_state=session.conversation_state,
             summary=session.conversation_summary,
+            channel=session.channel,
         )
     except Exception:
         logger.exception('Falló Ollama para message_id=%s; no se enviará ni reintentará automáticamente.', user_message_id)
@@ -291,15 +339,18 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         session = ChatSession.objects.select_for_update().get(pk=session.pk)
         user_message = ChatMessage.objects.select_for_update().get(pk=user_message.pk)
         if session.status != 'bot' or hasattr(user_message, 'bot_reply'):
+            logger.info('Bot omitido message_id=%s reason=conversation_taken_or_replied.', user_message_id)
             return {'skipped': 'conversation_taken_or_replied'}
-        session.conversation_state = result.get('state', session.conversation_state)
+        reply_text = result.get('response', 'No pude procesar el mensaje.')
+        if is_new_conversation:
+            reply_text = ollama_service.add_initial_greeting(reply_text)
+        next_state = result.get('state', session.conversation_state)
+        next_state['last_response'] = reply_text[:2000]
+        session.conversation_state = next_state
         session.conversation_summary = result.get('summary', session.conversation_summary)
         if result.get('needs_agent'):
             session.status = 'waiting'
         session.save(update_fields=['conversation_state', 'conversation_summary', 'status', 'updated_at'])
-        reply_text = result.get('response', 'No pude procesar el mensaje.')
-        if is_new_conversation:
-            reply_text = ollama_service.add_initial_greeting(reply_text)
         reply = ChatMessage.objects.create(
             session=session, reply_to_message=user_message,
             text=reply_text,

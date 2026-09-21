@@ -9,12 +9,13 @@ OLLAMA_PID=$!
 echo "⏳ Esperando que Ollama esté listo..."
 sleep 10
 
-echo "📦 Verificando modelo qwen2.5:1.5b..."
-if ollama list | grep -q "qwen2.5:1.5b"; then
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen:4b}"
+echo "📦 Verificando modelo ${OLLAMA_MODEL}..."
+if ollama list | grep -q "${OLLAMA_MODEL}"; then
   echo "✅ Modelo ya descargado"
 else
-  echo "⬇️ Descargando modelo qwen2.5:1.5b (puede tomar varios minutos)..."
-  ollama pull qwen2.5:1.5b
+  echo "⬇️ Descargando modelo ${OLLAMA_MODEL} (puede tomar varios minutos)..."
+  ollama pull "${OLLAMA_MODEL}"
   echo "✅ Modelo descargado exitosamente"
 fi
 

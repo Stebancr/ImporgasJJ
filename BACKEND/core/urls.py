@@ -16,18 +16,22 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from rest_framework_simplejwt.views import TokenRefreshView
-from auth.views import TokenLMSView
+from auth.views import TokenLMSView, PasswordVersionRefreshView
+from .health import api_root
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('auth/token/', TokenLMSView.as_view(), name='token_obtain_pair'),
-    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # Alias sin barra para proxies que normalizan la URL y redirigen los POST.
+    path('auth/token', TokenLMSView.as_view(), name='token_obtain_pair_no_slash'),
+    path('auth/token/refresh/', PasswordVersionRefreshView.as_view(), name='token_refresh'),
+    path('auth/token/refresh', PasswordVersionRefreshView.as_view(), name='token_refresh_no_slash'),
     path('user/', include('usuarios.urls')),
     path('ecommerce/', include('ecommerce.urls')),  # kept for legacy
     path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.
     path('gestion/', include('gestion.urls')),
     path('crm-chat/', include('crmChat.urls')),
+    path('internal/whatsapp/', include('crmChat.apps.whatsapp_web.urls_internal')),
     # Meta usa un callback público independiente de la autenticación del CRM.
     path('meta/', include('crmChat.apps.meta.urls')),
     path('meta/whatsapp/', include('crmChat.apps.whatsapp.urls')),
@@ -40,6 +44,7 @@ urlpatterns = [
     path('api/meta/facebook/', include('crmChat.apps.facebook.urls')),
     path('api/meta/instagram/', include('crmChat.apps.instagram.urls')),
     path('visits/', include('AppVisits.urls')),
+    path('', api_root, name='api-root'),
 ]
 
 # Servir archivos media en desarrollo

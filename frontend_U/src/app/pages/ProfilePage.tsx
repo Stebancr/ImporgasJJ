@@ -17,7 +17,6 @@ interface UserProfile {
   nombre_completo: string
   correo: string
   telefono: string
-  sede: string | null
   estado: number
 }
 
@@ -95,7 +94,7 @@ export default function ProfilePage() {
         <div className="grid lg:grid-cols-3 gap-6">
 
           {/* ── Profile card ──────────────────────────────────────────────── */}
-          <div className="lg:col-span-1">
+          <div className="min-w-0 lg:col-span-1">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
               {/* Avatar */}
               <div className="flex flex-col items-center mb-6">
@@ -111,9 +110,9 @@ export default function ProfilePage() {
               {/* Info */}
               <div className="space-y-3 text-sm">
                 {profile?.correo && (
-                  <div className="flex items-center gap-2.5 text-gray-600">
+                  <div className="flex min-w-0 items-center gap-2.5 text-gray-600">
                     <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                    <span className="truncate">{profile.correo}</span>
+                    <span className="min-w-0 flex-1 truncate">{profile.correo}</span>
                   </div>
                 )}
                 {profile?.telefono && (
@@ -122,13 +121,9 @@ export default function ProfilePage() {
                     <span>{profile.telefono}</span>
                   </div>
                 )}
-                {profile?.sede && (
-                  <div className="flex items-center gap-2.5 text-gray-600">
-                    <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                    <span>{profile.sede}</span>
-                  </div>
-                )}
               </div>
+
+              <Link to="/perfil/editar" className="mt-5 flex items-center justify-center rounded-xl border border-blue-200 px-4 py-2.5 text-sm font-medium text-[#001575] hover:bg-blue-50">Editar perfil y contraseña</Link>
 
               <hr className="my-5 border-gray-100" />
 
@@ -158,7 +153,7 @@ export default function ProfilePage() {
           </div>
 
           {/* ── Orders section ────────────────────────────────────────────── */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="min-w-0 lg:col-span-2 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Package className="w-5 h-5 text-[#001575]" />

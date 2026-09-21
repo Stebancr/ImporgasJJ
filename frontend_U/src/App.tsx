@@ -5,6 +5,7 @@ import Layout from './components/Layout'
 import StoreProtectedRoute from './components/StoreProtectedRoute'
 import StoreTermsRoute from './components/StoreTermsRoute'
 import ScrollToTop from './components/ScrollToTop'
+import CanonicalUrl from './components/CanonicalUrl'
 import HomePage from './app/pages/HomePage'
 const ProductsPage = lazy(() => import('./app/pages/ProductsPage'))
 const ProductDetailPage = lazy(() => import('./app/pages/ProductDetailPage'))
@@ -17,6 +18,7 @@ const OrderDetailPage = lazy(() => import('./app/pages/OrderDetailPage'))
 const ProfilePage = lazy(() => import('./app/pages/ProfilePage'))
 const ContactPage = lazy(() => import('./app/pages/ContactPage'))
 const LoginPage = lazy(() => import('./app/pages/LoginPage'))
+const ResetPasswordPage = lazy(() => import('./app/pages/ResetPasswordPage'))
 const NosotrosPage = lazy(() => import('./app/pages/NosotrosPage'))
 const DataPolicyPage = lazy(() => import('./app/pages/DataPolicyPage'))
 const TermsPage = lazy(() => import('./app/pages/TermsPage'))
@@ -75,6 +77,7 @@ function StoreRoutes() {
         <Route path="/notificaciones" element={<StoreProtectedRoute><NotificationsPage /></StoreProtectedRoute>} />
         <Route path="/contacto" element={<ContactPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/restablecer-contrasena/:uid/:token" element={<ResetPasswordPage />} />
         <Route path="/nosotros" element={<NosotrosPage />} />
         <Route path="/politica-tratamiento-datos" element={<DataPolicyPage />} />
         <Route path="/terminos-y-condiciones" element={<TermsPage />} />
@@ -122,6 +125,7 @@ function AdminRoutes() {
 function App() {
   return (
           <BrowserRouter>
+            <CanonicalUrl />
             <ScrollToTop />
             <Routes>
               <Route path="/admin/*" element={<div className="admin-theme"><AdminRoutes /></div>} />

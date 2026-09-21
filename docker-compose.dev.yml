@@ -10,23 +10,27 @@ services:
     build: ./BACKEND
     container_name: backend
     restart: on-failure
-    command: sh -c "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p 8000 core.asgi:application"
+    command: sh -c "python manage.py migrate --noinput && daphne --access-log /dev/null -b 0.0.0.0 -p 8000 core.asgi:application"
     volumes:
       - ./BACKEND:/app
       - media_data:/app/media
     env_file:
-      - path: .env
+      - path: .envdev
         format: raw
     environment:
-      - ALLOWED_HOSTS=localhost,127.0.0.1,backend,nginx,${ALLOWED_HOSTS:-}
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - OLLAMA_API_URL=${OLLAMA_API_URL:-http://ollama:11434/api/chat}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_API_URL=http://ollama:11434/api/chat
+      - WOMPI_API_URL=https://sandbox.wompi.co/v1
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+      - OLLAMA_QUEUE_WAIT=${OLLAMA_QUEUE_WAIT:-20}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
+      - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
       # Relay definido en emails/docker-compose.yml; se respeta EMAIL_* si
       # el despliegue aporta credenciales o un proveedor SMTP distinto.
       - EMAIL_HOST=${EMAIL_HOST:-smtp}
@@ -37,8 +41,10 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     networks:
       - shared_net
       - email_net
@@ -52,15 +58,20 @@ services:
       - ./BACKEND:/app
       - media_data:/app/media
     env_file:
-      - path: .env
+      - path: .envdev
         format: raw
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - OLLAMA_API_URL=${OLLAMA_API_URL:-http://ollama:11434/api/chat}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_API_URL=http://ollama:11434/api/chat
+      - WOMPI_API_URL=https://sandbox.wompi.co/v1
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
+      - OLLAMA_QUEUE_WAIT=${OLLAMA_QUEUE_WAIT:-20}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
+      - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
     depends_on:
       backend:
         condition: service_started
@@ -78,7 +89,7 @@ services:
     volumes:
       - ./BACKEND:/app
     env_file:
-      - path: .env
+      - path: .envdev
         format: raw
     environment:
       - REDIS_URL=redis://redis:6379/1
@@ -101,11 +112,59 @@ services:
       - ./frontend_U:/app
       - /app/node_modules
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=development
       - VITE_API_URL=/api
+      - VITE_PUBLIC_APP_URL=${VITE_PUBLIC_APP_URL:-http://localhost}
     command: sh -c "npm install && npm run dev"
+    networks:
+      - shared_net
+
+  whatsapp-gateway:
+    build: ./whatsapp-gateway
+    container_name: whatsapp-gateway
+    restart: unless-stopped
+    env_file:
+      - path: .envdev
+        format: raw
+    environment:
+      - WHATSAPP_GATEWAY_ENV=development
+      - WHATSAPP_GATEWAY_PORT=3001
+      - CRM_API_URL=http://backend:8000
+      - REDIS_URL=redis://redis:6379/1
+      - WHATSAPP_AUTH_DIR=/app/auth
+      - WHATSAPP_MEDIA_DIR=/app/media
+    volumes:
+      - whatsapp_auth_dev:/app/auth
+      - whatsapp_media_dev:/app/media
+    depends_on:
+      - backend
+      - redis
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - shared_net
+
+  whatsapp-gateway-test:
+    profiles: ["test"]
+    build:
+      context: ./whatsapp-gateway
+      target: build
+    env_file:
+      - path: .envdev
+        format: raw
+    environment:
+      - WHATSAPP_GATEWAY_ENV=test
+      - CRM_API_URL=http://backend:8000
+      - REDIS_URL=redis://redis:6379/1
+      - WHATSAPP_AUTH_DIR=/tmp/whatsapp-auth
+      - WHATSAPP_MEDIA_DIR=/tmp/whatsapp-media
+    command: npm test
     networks:
       - shared_net
 
@@ -115,11 +174,15 @@ services:
     volumes:
       - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf
     ports:
-      - "80:80"
-      - "81:81"
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:81:81"
     depends_on:
-      - backend
-      - frontend-ecommerce
+      backend:
+        condition: service_started
+      frontend-ecommerce:
+        condition: service_started
+      whatsapp-gateway:
+        condition: service_healthy
     networks:
       - shared_net
 
@@ -146,8 +209,8 @@ services:
     container_name: mailpit
     restart: unless-stopped
     ports:
-      - "8025:8025"   # Web UI para ver correos
-      - "1025:1025"   # SMTP (usa este en Django: EMAIL_HOST=mailpit, EMAIL_PORT=1025)
+      - "127.0.0.1:8025:8025"   # Web UI para ver correos
+      - "127.0.0.1:1025:1025"   # SMTP (usa este en Django: EMAIL_HOST=mailpit, EMAIL_PORT=1025)
     environment:
       - MP_SMTP_AUTH_ACCEPT_ANY=true
       - MP_SMTP_AUTH_ALLOW_INSECURE=true
@@ -163,7 +226,7 @@ services:
     container_name: ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     networks:
@@ -175,10 +238,25 @@ services:
       retries: 3
       start_period: 15s
 
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: ollama-init
+    restart: "no"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    command: ["pull", "${OLLAMA_MODEL:-qwen:4b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - shared_net
+
 volumes:
   media_data:
     external: true
   ollama_data:
+  whatsapp_auth_dev:
+  whatsapp_media_dev:
 
 networks:
   shared_net:

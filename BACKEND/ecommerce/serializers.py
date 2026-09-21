@@ -112,6 +112,13 @@ class ProductListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if not request or getattr(request.user, 'tipo_usuario', 0) == 0:
+            data['total_stock'] = max(0, data['total_stock'])
+        return data
+
     def get_primary_image(self, obj):
         request = self.context.get('request')
         img = obj.images.filter(is_primary=True).first() or obj.images.first()
@@ -140,6 +147,15 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
+
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if not request or getattr(request.user, 'tipo_usuario', 0) == 0:
+            data['total_stock'] = max(0, data['total_stock'])
+            data.pop('stock_entries', None)
+        return data
 
 
 class ProductCreateSerializer(serializers.ModelSerializer):

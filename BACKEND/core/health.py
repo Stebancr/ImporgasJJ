@@ -9,3 +9,13 @@ def health(request):
         cursor.execute('SELECT 1')
         cursor.fetchone()
     return JsonResponse({'status': 'ok'})
+
+
+def api_root(request):
+    """Respuesta estable para comprobar la API pública sin revelar configuración."""
+
+    return JsonResponse({
+        'status': 'ok',
+        'service': 'Imporgas JJ API',
+        'version': 'v1',
+    })

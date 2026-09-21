@@ -20,6 +20,7 @@ from crmChat.models import ChannelIntegration
 
 
 OAUTH_STATE_SALT = 'crmChat.instagram.business-login'
+STATE_GENERATION_PREFIX = 'instagram-oauth-generation:'
 
 
 def _oauth_setting(name):
@@ -43,9 +44,12 @@ def build_authorization_url(integration, user_id):
         raise SecretConfigurationError('INSTAGRAM_OAUTH_REDIRECT_URI debe ser una URL HTTPS pública.')
     nonce = secrets.token_urlsafe(24)
     max_age = getattr(settings, 'INSTAGRAM_OAUTH_STATE_MAX_AGE', 600)
+    generation = cache.get_or_set(
+        f'{STATE_GENERATION_PREFIX}{integration.pk}', secrets.token_urlsafe(32), timeout=86400,
+    )
     cache.set(
         f'instagram-oauth-state:{nonce}',
-        {'integration_id': integration.pk, 'user_id': user_id},
+        {'integration_id': integration.pk, 'user_id': user_id, 'generation': generation},
         timeout=max_age,
     )
     state = signing.dumps(
@@ -80,6 +84,8 @@ def consume_oauth_state(state):
     if not cached or cached.get('integration_id') != payload.get('integration_id'):
         raise signing.BadSignature('El estado OAuth expiró o ya fue utilizado.')
     cache.delete(key)
+    if cached.get('generation') != cache.get(f'{STATE_GENERATION_PREFIX}{payload["integration_id"]}'):
+        raise signing.BadSignature('El estado OAuth fue invalidado al desconectar la cuenta.')
     return payload
 
 
@@ -119,12 +125,23 @@ def exchange_authorization_code(integration, code):
         long_data = long_response.json() if long_response.content else {}
         if not long_response.ok or not long_data.get('access_token'):
             raise MetaAPIError(f'Instagram rechazó el intercambio del token ({long_response.status_code}).')
+        account_response = requests.get(
+            f"{settings.INSTAGRAM_GRAPH_API_URL.rstrip('/')}/me",
+            headers={'Authorization': f"Bearer {long_data['access_token']}"},
+            params={'fields': 'id,username,account_type'},
+            timeout=timeout,
+        )
+        account_data = account_response.json() if account_response.content else {}
+        if not account_response.ok:
+            raise MetaAPIError(f'Instagram no permitió consultar la cuenta profesional ({account_response.status_code}).')
     except requests.RequestException as exc:
         raise MetaAPIError('No fue posible conectar con Instagram para completar el acceso.') from exc
 
     account_id = str(short_data.get('user_id') or long_data.get('user_id') or '')
     if not account_id:
         raise MetaAPIError('Instagram no devolvió el identificador de la cuenta profesional.')
+    if str(account_data.get('id', '')) != account_id or account_data.get('account_type') not in {'BUSINESS', 'MEDIA_CREATOR'}:
+        raise MetaAPIError('Instagram no confirmó una cuenta Professional/Business elegible.')
     if ChannelIntegration.objects.filter(
         channel='instagram',
         external_account_id=account_id,
@@ -135,25 +152,54 @@ def exchange_authorization_code(integration, code):
     integration.instagram_account_id = account_id
     integration.external_account_id = account_id
     integration.token_expires_at = timezone.now() + timedelta(seconds=expires_in) if expires_in else None
+    integration.active = False
+    integration.connection_status = 'pending'
+    integration.last_validated_at = timezone.now()
+    integration.last_error = ''
     integration.save(update_fields=[
         'access_token_encrypted', 'instagram_account_id', 'external_account_id',
-        'token_expires_at', 'updated_at',
+        'token_expires_at', 'active', 'connection_status', 'last_validated_at', 'last_error', 'updated_at',
     ])
     return integration
 
 
 def _send(integration, recipient_id, payload):
-    # Las cuentas conectadas mediante Facebook Login usan graph.facebook.com
-    # y el Page Access Token relacionado; se conserva Instagram Login legado.
-    base_url = None if integration.meta_facebook_page_id else integration.configuration.get('api_base_url', 'https://graph.instagram.com')
+    # Facebook Login usa el Messenger Platform Send API de la página enlazada
+    # y su Page Access Token. Instagram Login usa el host/API nativo de Instagram.
+    if integration.meta_facebook_page_id:
+        account_id = integration.meta_facebook_page.page_id
+        base_url = None
+    else:
+        account_id = integration.instagram_account_id
+        base_url = integration.configuration.get('api_base_url', 'https://graph.instagram.com')
     body = {'recipient': {'id': recipient_id}}
+    if integration.meta_facebook_page_id:
+        body['messaging_type'] = 'RESPONSE'
     body.update(payload)
     return graph_request(
         integration,
         'POST',
-        f'{integration.instagram_account_id}/messages',
+        f'{account_id}/messages',
         json_body=body,
         base_url=base_url,
+    )
+
+
+def get_sender_profile(integration, sender_id):
+    """Obtiene el perfil público del remitente sin convertir un fallo opcional en error de conexión."""
+
+    base_url = (
+        None
+        if integration.meta_facebook_page_id
+        else integration.configuration.get('api_base_url', 'https://graph.instagram.com')
+    )
+    return graph_request(
+        integration,
+        'GET',
+        sender_id,
+        params={'fields': 'id,name,username,profile_pic'},
+        base_url=base_url,
+        record_error=False,
     )
 
 

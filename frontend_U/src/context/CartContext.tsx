@@ -1,9 +1,10 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthContext'
 import type { CartItem, Product } from '../types'
 import api from '../services/api'
 import productsService from '../services/products'
+import { clearPendingCartIntent, readPendingCartIntent, savePendingCartIntent } from './pendingCartIntent'
 
 interface ServerCart { items: { product_id: number; quantity: number }[] }
 
@@ -19,6 +20,9 @@ interface CartContextType {
 const CartContext = createContext<CartContextType | undefined>(undefined)
 const LEGACY_CART_KEY = 'imporgas-cart-v1'
 const cartKey = (userId: string) => `imporgas-cart-v2-user-${userId}`
+// React StrictMode and the auth-provider remount can run the pending-intent
+// effect more than once. Keep one process-wide promise so only one POST is sent.
+let pendingCartCompletion: Promise<void> | null = null
 
 function readStoredCart(userId: string | null): CartItem[] {
   if (!userId) return []
@@ -27,7 +31,7 @@ function readStoredCart(userId: string | null): CartItem[] {
     if (!Array.isArray(parsed)) return []
     return parsed.filter((item) =>
       item?.product?.id && Number.isInteger(item.quantity) && item.quantity >= 1 &&
-      Number.isFinite(item.product.stock) && item.product.stock >= item.quantity
+      item.product.isAvailable
     )
   } catch {
     localStorage.removeItem(cartKey(userId))
@@ -37,10 +41,15 @@ function readStoredCart(userId: string | null): CartItem[] {
 
 function ActiveCartProvider({ children, userId }: { children: ReactNode; userId: string | null }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const [items, setItems] = useState<CartItem[]>(() => readStoredCart(userId))
   const [showAuthPrompt, setShowAuthPrompt] = useState(false)
+  const [pendingError, setPendingError] = useState('')
+  const [addedNotice, setAddedNotice] = useState(false)
   const loaded = useRef(false)
   const ready = useRef<Promise<void>>(Promise.resolve())
+  const processingPending = useRef(false)
+  const authRedirectInProgress = useRef(false)
 
   useEffect(() => {
     if (!userId || loaded.current) return
@@ -73,12 +82,13 @@ function ActiveCartProvider({ children, userId }: { children: ReactNode; userId:
   }, [items, userId])
 
   const addToCart = useCallback(async (product: Product, quantity = 1): Promise<boolean> => {
+    const safeQuantity = Math.floor(Number(quantity))
+    if (!product.isAvailable || safeQuantity < 1 || safeQuantity > 999) return false
     if (!userId) {
+      if (!savePendingCartIntent(product.id, safeQuantity)) return false
       setShowAuthPrompt(true)
       return false
     }
-    const safeQuantity = Math.floor(Number(quantity))
-    if (!product.isAvailable || product.stock < 1 || safeQuantity < 1) return false
     await ready.current
     try {
       const cart = await api.post<ServerCart>('/cart', { product_id: Number(product.id), quantity: safeQuantity })
@@ -94,6 +104,49 @@ function ActiveCartProvider({ children, userId }: { children: ReactNode; userId:
       return false
     }
   }, [userId])
+
+  const completePendingCartIntent = useCallback(async () => {
+    const intent = readPendingCartIntent()
+    if (!userId || !intent) return
+    if (pendingCartCompletion) return pendingCartCompletion
+    if (processingPending.current) return
+    processingPending.current = true
+    setPendingError('')
+    pendingCartCompletion = (async () => {
+      await ready.current
+      try {
+        const product = await productsService.getById(String(intent.productId))
+        if (!await addToCart(product, intent.quantity)) {
+          setPendingError('No se pudo agregar el producto. Comprueba su disponibilidad e inténtalo de nuevo.')
+          return
+        }
+        clearPendingCartIntent()
+        setAddedNotice(true)
+        navigate('/carrito', { replace: true })
+      } catch (error) {
+        setPendingError(error instanceof Error ? error.message : 'No se pudo recuperar el producto. Inténtalo de nuevo.')
+      } finally {
+        processingPending.current = false
+        pendingCartCompletion = null
+      }
+    })()
+    return pendingCartCompletion
+  }, [addToCart, navigate, userId])
+
+  useEffect(() => {
+    if (userId && readPendingCartIntent()) void completePendingCartIntent()
+  }, [userId, completePendingCartIntent])
+
+  useEffect(() => {
+    if (userId || showAuthPrompt) return
+    if (location.pathname === '/login' || location.pathname === '/terminos-y-condiciones' ||
+        location.pathname === '/politica-tratamiento-datos') {
+      authRedirectInProgress.current = false
+      return
+    }
+    if (authRedirectInProgress.current) return
+    clearPendingCartIntent()
+  }, [userId, showAuthPrompt, location.pathname])
 
   const removeFromCart = useCallback(async (productId: string) => {
     if (!userId) return
@@ -129,14 +182,19 @@ function ActiveCartProvider({ children, userId }: { children: ReactNode; userId:
 
   return <CartContext.Provider value={{ items, totalItems, addToCart, removeFromCart, updateQuantity, clearCart }}>
     {children}
+    {pendingError && <div role="alert" className="fixed bottom-4 left-4 right-4 z-[100] mx-auto max-w-md rounded-xl border border-red-200 bg-white px-5 py-4 text-red-800 shadow-xl sm:left-auto sm:right-6">
+      <p className="break-words">{pendingError}</p>
+      <button type="button" onClick={() => void completePendingCartIntent()} className="mt-3 min-h-11 rounded-lg bg-[#001575] px-4 font-semibold text-white">Intentar de nuevo</button>
+      <button type="button" onClick={() => { clearPendingCartIntent(); setPendingError('') }} className="ml-3 min-h-11 px-2 font-semibold">Cancelar</button>
+    </div>}
     {showAuthPrompt && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4" role="alertdialog" aria-modal="true" aria-labelledby="cart-auth-title">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
         <h2 id="cart-auth-title" className="text-xl font-bold text-[#001575]">Inicia sesión para comprar</h2>
         <p className="mt-3 text-slate-700">Para agregar productos al carrito debes iniciar sesión o crear una cuenta.</p>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          <Link onClick={() => setShowAuthPrompt(false)} to={`/login?redirect=${redirect}`} className="rounded-lg bg-[#001575] px-4 py-3 text-center font-semibold text-white">Iniciar sesión</Link>
-          <Link onClick={() => setShowAuthPrompt(false)} to={`/login?mode=register&redirect=${redirect}`} className="rounded-lg border border-[#001575] px-4 py-3 text-center font-semibold text-[#001575]">Registrarse</Link>
-          <button type="button" onClick={() => setShowAuthPrompt(false)} className="rounded-lg px-4 py-3 text-slate-600">Cancelar</button>
+          <Link onClick={() => { authRedirectInProgress.current = true; setShowAuthPrompt(false) }} to={`/login?redirect=${redirect}`} className="rounded-lg bg-[#001575] px-4 py-3 text-center font-semibold text-white">Iniciar sesión</Link>
+          <Link onClick={() => { authRedirectInProgress.current = true; setShowAuthPrompt(false) }} to={`/login?mode=register&redirect=${redirect}`} className="rounded-lg border border-[#001575] px-4 py-3 text-center font-semibold text-[#001575]">Registrarse</Link>
+          <button type="button" onClick={() => { clearPendingCartIntent(); setShowAuthPrompt(false) }} className="rounded-lg px-4 py-3 text-slate-600">Cancelar</button>
         </div>
       </div>
     </div>}

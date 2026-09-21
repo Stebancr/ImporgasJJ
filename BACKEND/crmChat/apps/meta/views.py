@@ -5,9 +5,11 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
+from django.db import IntegrityError
 from django.http import HttpResponse
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -28,17 +30,39 @@ from .serializers import (
     ChannelIntegrationSerializer,
     MetaAccountSelectionSerializer,
     MetaConnectionSerializer,
+    WhatsAppCoexistenceCompletionSerializer,
 )
 from .services import (
     MetaAPIError,
     SecretConfigurationError,
     accept_webhook,
+    disconnect_integration,
     validate_integration_connection,
     verify_webhook_token,
 )
 from crmChat.tasks import process_meta_webhook_task
+from crmChat.apps.whatsapp.coexistence import (
+    complete_coexistence_signup,
+    create_signup_configuration,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_meta_error_payload(exc):
+    """Expone diagnóstico operativo sin credenciales, códigos OAuth ni JWT."""
+
+    payload = {'detail': str(exc), 'error': 'meta_api_error'}
+    optional = {
+        'phase': getattr(exc, 'phase', ''),
+        'endpoint': getattr(exc, 'endpoint', ''),
+        'http_status': getattr(exc, 'http_status', None),
+        'meta_code': getattr(exc, 'meta_code', None),
+        'meta_subcode': getattr(exc, 'meta_subcode', None),
+        'request_id': getattr(exc, 'request_id', ''),
+    }
+    payload.update({key: value for key, value in optional.items() if value not in ('', None)})
+    return payload
 
 
 class IsCRMAdministrator(IsAuthenticated):
@@ -54,7 +78,13 @@ class IntegrationListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         # El serializer informa el estado de credenciales sin N+1 queries.
-        return ChannelIntegration.objects.select_related(
+        return ChannelIntegration.objects.filter(
+            channel__in=(
+                ChannelIntegration.CHANNEL_WHATSAPP,
+                ChannelIntegration.CHANNEL_FACEBOOK,
+                ChannelIntegration.CHANNEL_INSTAGRAM,
+            ),
+        ).select_related(
             'meta_connection',
             'meta_facebook_page__connection',
         )
@@ -68,8 +98,7 @@ class IntegrationDetailView(generics.RetrieveUpdateDestroyAPIView):
     def perform_destroy(self, instance):
         """Desactivar conserva conversaciones, identidades y auditoría."""
 
-        instance.active = False
-        instance.save(update_fields=['active', 'updated_at'])
+        disconnect_integration(instance)
         ChatAuditEvent.objects.create(
             actor=self.request.user,
             action='integration.disabled',
@@ -90,8 +119,16 @@ class MetaWebhookView(APIView):
         mode = request.query_params.get('hub.mode')
         token = request.query_params.get('hub.verify_token', '')
         challenge = request.query_params.get('hub.challenge', '')
-        if mode == 'subscribe' and verify_webhook_token(token):
+        if mode == 'subscribe' and verify_webhook_token(token, self.forced_channel):
             return HttpResponse(challenge, content_type='text/plain', status=200)
+        logger.warning(
+            'Verificación webhook Meta rechazada: channel=%s mode_valid=%s '
+            'token_present=%s challenge_present=%s',
+            self.forced_channel or 'unified',
+            mode == 'subscribe',
+            bool(token),
+            bool(challenge),
+        )
         return Response({'detail': 'Verificación rechazada.'}, status=status.HTTP_403_FORBIDDEN)
 
     def post(self, request):
@@ -102,8 +139,20 @@ class MetaWebhookView(APIView):
                 signature_header,
                 self.forced_channel,
             )
+            entries = (event.payload or {}).get('entry') or []
+            external_account_id = str(entries[0].get('id', '')) if entries else ''
+            logger.info(
+                'Webhook Meta recibido: event_id=%s channel=%s account_id=%s '
+                'signature_valid=true created=%s bytes=%s status=%s.',
+                event.id, event.channel, external_account_id or '-', created,
+                len(request.body), event.status,
+            )
             if created or event.status == 'failed':
-                process_meta_webhook_task.delay(event.id)
+                queued = process_meta_webhook_task.delay(event.id)
+                logger.info(
+                    'Webhook Meta encolado: event_id=%s channel=%s task_id=%s.',
+                    event.id, event.channel, queued.id,
+                )
             return Response({'received': True}, status=status.HTTP_200_OK)
         except PermissionError:
             logger.warning(
@@ -114,6 +163,10 @@ class MetaWebhookView(APIView):
             )
             return Response({'detail': 'Firma inválida.'}, status=status.HTTP_401_UNAUTHORIZED)
         except ValueError as exc:
+            logger.warning(
+                'Webhook Meta inválido: channel=%s error=%s.',
+                self.forced_channel or 'auto', str(exc)[:300],
+            )
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception:
             logger.exception('Falló el procesamiento del webhook Meta.')
@@ -130,11 +183,121 @@ class IntegrationValidateView(APIView):
     def post(self, request, pk):
         try:
             integration = ChannelIntegration.objects.get(pk=pk)
-            return Response(validate_integration_connection(integration))
+            result = validate_integration_connection(integration)
+            integration.last_validated_at = timezone.now()
+            integration.last_error = ''
+            if integration.channel == 'whatsapp':
+                integration.display_phone_number = result['display_phone_number']
+            if request.data.get('activate') is True:
+                integration.active = True
+                integration.connection_status = 'pending'
+                integration.disconnected_at = None
+            integration.save(update_fields=[
+                'last_validated_at', 'last_error', 'display_phone_number',
+                'active', 'connection_status', 'disconnected_at', 'updated_at',
+            ])
+            ChatAuditEvent.objects.create(
+                actor=request.user,
+                action='integration.validated',
+                details={'integration_id': integration.pk, 'channel': integration.channel, 'activated': integration.active},
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+            return Response({**result, 'connection_status': integration.connection_status})
         except ChannelIntegration.DoesNotExist:
             return Response({'detail': 'Integración no encontrada.'}, status=404)
         except MetaAPIError as exc:
+            if 'integration' in locals():
+                integration.active = False
+                integration.connection_status = 'error'
+                integration.last_error = str(exc)[:500]
+                integration.save(update_fields=['active', 'connection_status', 'last_error', 'updated_at'])
             return Response({'valid': False, 'detail': str(exc)}, status=400)
+        except IntegrityError:
+            return Response({'valid': False, 'detail': 'Ya existe una integración activa para este identificador de Meta.'}, status=409)
+
+
+class WhatsAppCoexistenceConfigView(APIView):
+    """Inicia Embedded Signup devolviendo únicamente configuración pública."""
+
+    permission_classes = [IsCRMAdministrator]
+    throttle_scope = 'meta_admin'
+
+    def get(self, request):
+        try:
+            configuration = create_signup_configuration(request.user.pk)
+            ChatAuditEvent.objects.create(
+                actor=request.user,
+                action='whatsapp.coexistence_started',
+                details={'embedded_signup_version': configuration['embedded_signup_version']},
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+            return Response(configuration)
+        except SecretConfigurationError as exc:
+            logger.error(
+                'WhatsApp Coexistence no disponible: phase=configuration status=503 detail=%s',
+                exc,
+            )
+            return Response(
+                {'detail': str(exc), 'error': 'configuration_missing', 'phase': 'configuration'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+
+class WhatsAppCoexistenceCompleteView(APIView):
+    """Intercambia el código y valida la cuenta coexistente completamente."""
+
+    permission_classes = [IsCRMAdministrator]
+    throttle_scope = 'meta_admin'
+
+    def post(self, request):
+        serializer = WhatsAppCoexistenceCompletionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            integration, result = complete_coexistence_signup(
+                user=request.user,
+                **{
+                    key: value for key, value in serializer.validated_data.items()
+                    if key != 'event'
+                },
+            )
+            ChatAuditEvent.objects.create(
+                actor=request.user,
+                action='whatsapp.coexistence_connected',
+                details={
+                    'integration_id': integration.pk,
+                    'waba_id': integration.external_account_id,
+                    'phone_number_id': integration.phone_number_id,
+                },
+                ip_address=request.META.get('REMOTE_ADDR'),
+            )
+            return Response({
+                'connected': True,
+                'validation': result,
+                'integration': ChannelIntegrationSerializer(
+                    integration, context={'request': request},
+                ).data,
+            })
+        except SecretConfigurationError as exc:
+            logger.error(
+                'WhatsApp Coexistence no disponible: phase=configuration status=503 detail=%s',
+                exc,
+            )
+            return Response(
+                {'detail': str(exc), 'error': 'configuration_missing', 'phase': 'configuration'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except MetaAPIError as exc:
+            logger.warning(
+                'No se completó WhatsApp Coexistence: phase=%s endpoint=%s '
+                'status=%s meta_code=%s request_id=%s detail=%s',
+                getattr(exc, 'phase', '') or 'validation',
+                getattr(exc, 'endpoint', '') or '-',
+                getattr(exc, 'http_status', None) or '-',
+                getattr(exc, 'meta_code', None) or '-',
+                getattr(exc, 'request_id', '') or '-',
+                str(exc)[:500],
+            )
+            return Response(_safe_meta_error_payload(exc), status=status.HTTP_400_BAD_REQUEST)
 
 
 class MetaConnectView(APIView):
@@ -228,8 +391,18 @@ class MetaConnectionAccountsView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             select_accounts(connection, **serializer.validated_data)
-        except ValueError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except (ValueError, MetaAPIError) as exc:
+            safe_error = ' '.join(str(exc).split())[:500]
+            connection.channel_integrations.update(
+                connection_status='error', last_error=safe_error,
+            )
+            logger.warning(
+                'No se completó la selección de cuentas Meta: connection_id=%s error=%s.',
+                connection.id, safe_error,
+            )
+            return Response({'detail': safe_error}, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError:
+            return Response({'detail': 'Ya existe una integración activa para esta cuenta de Meta.'}, status=409)
         ChatAuditEvent.objects.create(
             actor=request.user,
             action='meta.accounts_selected',

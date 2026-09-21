@@ -43,7 +43,7 @@ class VisitCompletionTests(APITestCase):
             'cliente_telefono': '3001234567',
             'cliente_correo': 'cliente@example.com',
             'cliente_direccion': 'Calle 10 # 20-30',
-            'tipo_tarea': 'revision',
+            'tipo_tarea': 'revision_periodica',
             'fecha': date.today().isoformat(),
             'hora': '08:30:00',
             'valor_visita': 150000,
@@ -56,6 +56,24 @@ class VisitCompletionTests(APITestCase):
             cliente=self.visit.cliente, tipo_tarea='revision', fecha=date.today(), hora=time(11, 0)
         )
         self.assertEqual(second.numero_tarea, str(999 + second.id))
+
+    def test_search_document_phone_and_service_choice(self):
+        for field, term in (('document', '123'), ('phone', '3000000000')):
+            result = self.client.get(reverse('visitas-list-create'), {'search': term, 'search_field': field})
+            self.assertEqual(result.status_code, 200)
+            self.assertTrue(any(row['id'] == self.visit.pk for row in result.data))
+        self.assertEqual(self.client.get(reverse('visitas-list-create'), {
+            'search': 'abc', 'search_field': 'document',
+        }).status_code, 400)
+        payload = self.valid_create_payload()
+        payload['tipo_tarea'] = 'not-an-option'
+        self.assertEqual(self.client.post(reverse('visitas-list-create'), payload, format='json').status_code, 400)
+        payload['tipo_tarea'] = 'revision_periodica'
+        created = self.client.post(reverse('visitas-list-create'), payload, format='json')
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data['tipo_tarea_display'], 'REVISION PERIODICA')
+        detail = self.client.get(reverse('visitas-detail', args=[created.data['id']]))
+        self.assertEqual(detail.data['tipo_tarea'], 'revision_periodica')
 
     def test_visit_value_is_created_and_returned_as_json_number(self):
         payload = self.valid_create_payload()

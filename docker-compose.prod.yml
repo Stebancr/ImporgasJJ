@@ -15,7 +15,12 @@ x-backend-environment: &backend-environment
   CELERY_BROKER_URL: redis://redis:6379/0
   CELERY_RESULT_BACKEND: redis://redis:6379/0
   OLLAMA_API_URL: http://ollama:11434/api/chat
-  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen:4b}
+  OLLAMA_QUEUE_WAIT: ${OLLAMA_QUEUE_WAIT:-20}
+  FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-https://www.imporgasjj.com}
+  PRODUCT_URL_TEMPLATE: ${PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
+  EXTERNAL_PRODUCT_URL_TEMPLATE: ${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
+  META_PUBLIC_BASE_URL: ${META_PUBLIC_BASE_URL:-https://www.imporgasjj.com}
 
 x-backend-service: &backend-service
   build:
@@ -35,7 +40,7 @@ services:
     <<: *backend-service
     container_name: imporgas-prod-backend
     restart: unless-stopped
-    command: ["daphne", "-b", "0.0.0.0", "-p", "8001", "core.asgi:application"]
+    command: ["daphne", "--access-log", "/dev/null", "-b", "0.0.0.0", "-p", "8001", "core.asgi:application"]
     expose:
       - "8001"
     healthcheck:
@@ -45,7 +50,7 @@ services:
         - -c
         - >-
           import urllib.request;
-          request=urllib.request.Request('http://127.0.0.1:8001/health/',headers={'Host':'imporgasjj.com','X-Forwarded-Proto':'https'});
+          request=urllib.request.Request('http://127.0.0.1:8001/health/',headers={'Host':'www.imporgasjj.com','X-Forwarded-Proto':'https'});
           raise SystemExit(0 if urllib.request.urlopen(request,timeout=5).status == 200 else 1)
       interval: 30s
       timeout: 8s
@@ -54,6 +59,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
 
   celery-worker:
     <<: *backend-service
@@ -91,11 +98,41 @@ services:
       dockerfile: Dockerfile.prod
       args:
         VITE_API_URL: /api
+        VITE_PUBLIC_APP_URL: ${VITE_PUBLIC_APP_URL:-https://www.imporgasjj.com}
         VITE_WOMPI_PUBLIC_KEY: ${VITE_WOMPI_PUBLIC_KEY:-}
     container_name: imporgas-prod-frontend
     restart: unless-stopped
     expose:
       - "80"
+    networks:
+      - imporgas_prod_network
+
+  whatsapp-gateway:
+    build:
+      context: ./whatsapp-gateway
+    container_name: imporgas-prod-whatsapp-gateway
+    restart: unless-stopped
+    env_file:
+      - ${PROD_ENV_FILE:-.env.prod}
+    environment:
+      WHATSAPP_GATEWAY_ENV: production
+      WHATSAPP_GATEWAY_PORT: "3001"
+      CRM_API_URL: http://backend:8001
+      REDIS_URL: redis://redis:6379/1
+      WHATSAPP_AUTH_DIR: /app/auth
+      WHATSAPP_MEDIA_DIR: /app/media
+    volumes:
+      - imporgas_prod_whatsapp_auth:/app/auth
+      - imporgas_prod_whatsapp_media:/app/media
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks:
       - imporgas_prod_network
 
@@ -111,14 +148,14 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: coolify
-      traefik.http.routers.imporgas-http.rule: Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
+      traefik.http.routers.imporgas-http.rule: Host(`www.imporgasjj.com`) || Host(`imporgasjj.com`) || Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
       traefik.http.routers.imporgas-http.priority: "100"
       traefik.http.routers.imporgas-http.entrypoints: http
       traefik.http.routers.imporgas-http.middlewares: imporgas-https
       traefik.http.routers.imporgas-http.service: imporgas
       traefik.http.middlewares.imporgas-https.redirectscheme.scheme: https
       traefik.http.middlewares.imporgas-https.redirectscheme.permanent: "true"
-      traefik.http.routers.imporgas-https.rule: Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
+      traefik.http.routers.imporgas-https.rule: Host(`www.imporgasjj.com`) || Host(`imporgasjj.com`) || Host(`djsolutions.io`) || Host(`www.djsolutions.io`)
       traefik.http.routers.imporgas-https.priority: "100"
       traefik.http.routers.imporgas-https.entrypoints: https
       traefik.http.routers.imporgas-https.tls: "true"
@@ -129,6 +166,8 @@ services:
       backend:
         condition: service_healthy
       frontend:
+        condition: service_healthy
+      whatsapp-gateway:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/nginx-health"]
@@ -169,6 +208,19 @@ services:
     networks:
       - imporgas_prod_network
 
+  ollama-init:
+    image: ollama/ollama:latest@sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4
+    container_name: imporgas-prod-ollama-init
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    command: ["pull", "${OLLAMA_MODEL:-qwen:4b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - imporgas_prod_network
+
 volumes:
   imporgas_prod_media_data:
     external: true
@@ -177,7 +229,8 @@ volumes:
   imporgas_prod_redis_data:
     external: true
   imporgas_prod_ollama_data:
-    external: true
+  imporgas_prod_whatsapp_auth:
+  imporgas_prod_whatsapp_media:
 
 networks:
   coolify:

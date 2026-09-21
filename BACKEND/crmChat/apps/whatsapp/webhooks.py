@@ -38,7 +38,7 @@ def parse_webhook(payload):
             if change.get('field') != 'messages':
                 continue
             value = change.get('value', {})
-            phone_number_id = str(value.get('metadata', {}).get('phone_number_id', '') or waba_id)
+            phone_number_id = str(value.get('metadata', {}).get('phone_number_id', ''))
             names = {
                 str(contact.get('wa_id') or contact.get('user_id') or ''): contact.get('profile', {}).get('name', '')
                 for contact in value.get('contacts', [])
@@ -60,7 +60,7 @@ def parse_webhook(payload):
                     sender_name=names.get(sender_id, ''),
                     attachments=attachments,
                     reply_to_external_id=str(message.get('context', {}).get('id', '')),
-                    metadata={'waba_id': waba_id},
+                    metadata={'waba_id': waba_id, 'phone_number_id': phone_number_id},
                 ))
             for delivery in value.get('statuses', []):
                 result.append(NormalizedMessage(
@@ -70,6 +70,9 @@ def parse_webhook(payload):
                     external_message_id=str(delivery.get('id', '')),
                     timestamp=delivery.get('timestamp'),
                     status=STATUS_MAP.get(delivery.get('status'), 'failed'),
-                    metadata={'errors': delivery.get('errors', [])},
+                    metadata={
+                        'waba_id': waba_id, 'phone_number_id': phone_number_id,
+                        'errors': delivery.get('errors', []),
+                    },
                 ))
     return result

@@ -4,9 +4,18 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 from django.db import transaction
 from django.db.models import F, Q
+from django.db.models.functions import Coalesce
 from django.conf import settings
+from django.core import signing
+from django.db import IntegrityError
+from django.http import FileResponse
+from django.utils import timezone
+from pathlib import Path
+from urllib.parse import urlencode
+import uuid
 
-from .models import AssignmentQueue, ChannelIntegration, ChatAuditEvent, ChatSession, ChatMessage, QueueMember
+from .models import AssignmentQueue, ChannelIntegration, ChatAttachment, ChatAuditEvent, CRMContact, ChatSession, ChatMessage, QueueMember
+from .attachment_validation import validate_chat_upload
 from .ollama_service import ollama_service
 from .apps.meta.services import MetaAPIError, dispatch_outbound_message
 from .realtime import publish_crm_event
@@ -54,6 +63,10 @@ def _serialize_session(s, last_msg=None):
 
 
 def _serialize_message(m):
+    metadata = m.metadata or {}
+    origin = metadata.get('origin')
+    if not origin:
+        origin = 'bot' if m.sender_type == 'bot' else ('customer' if m.direction == 'inbound' else 'crm')
     return {
         'id':          m.id,
         'text':        m.text,
@@ -62,11 +75,16 @@ def _serialize_message(m):
         'direction':   m.direction,
         'message_type': m.message_type,
         'status':      m.status,
+        'error':       str(metadata.get('error') or '')[:500],
         'external_message_id': m.external_message_id,
+        'client_message_id': m.client_message_id,
+        'origin': origin,
+        'external_timestamp': m.external_timestamp,
+        'timestamp': m.external_timestamp or m.created_at,
         'attachments': [
             {
                 'id': attachment.id,
-                'url': attachment.file.url if attachment.file else '',
+                'url': f'/api/crm-chat/attachments/{attachment.id}/' if attachment.file else '',
                 'name': attachment.original_name,
                 'mime_type': attachment.mime_type,
                 'size': attachment.size,
@@ -110,7 +128,9 @@ class SessionListCreateView(APIView):
 
         result = []
         for s in qs.order_by('-updated_at')[:100]:
-            last = s.messages.last()
+            last = s.messages.annotate(
+                activity_at=Coalesce('external_timestamp', 'created_at'),
+            ).order_by('-activity_at', '-id').first()
             result.append(_serialize_session(s, last.text if last else None))
         return Response(result)
 
@@ -151,6 +171,34 @@ class PendingCountView(APIView):
             return Response({'error': 'No autorizado'}, status=403)
         count = ChatSession.objects.filter(status='waiting').count()
         return Response({'count': count})
+
+
+class ContactListView(APIView):
+    """Contactos consultables por CRM web o móvil autenticado como agente."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _is_agent(request.user):
+            return Response({'error': 'No autorizado'}, status=403)
+        contacts = CRMContact.objects.all()
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            contacts = contacts.filter(
+                Q(name__icontains=search) | Q(phone__icontains=search) | Q(email__icontains=search)
+            )
+        return Response([
+            {
+                'id': contact.id,
+                'name': contact.name,
+                'phone': contact.phone,
+                'email': contact.email,
+                'avatar_url': contact.avatar_url,
+                'last_interaction_at': contact.last_interaction_at,
+                'updated_at': contact.updated_at,
+            }
+            for contact in contacts.order_by('-last_interaction_at', 'name', 'id')[:100]
+        ])
 
 
 class SessionDetailView(APIView):
@@ -259,7 +307,9 @@ class MessageListCreateView(APIView):
         if err:
             return err
 
-        qs = session.messages.all()
+        qs = session.messages.annotate(
+            activity_at=Coalesce('external_timestamp', 'created_at'),
+        ).order_by('activity_at', 'id')
         after = request.query_params.get('after')
         if after:
             try:
@@ -287,19 +337,47 @@ class MessageListCreateView(APIView):
             return Response({'error': 'La sesión está cerrada'}, status=400)
 
         text = (request.data.get('text') or '').strip()
+        upload = request.FILES.get('file')
         message_type = request.data.get('message_type', 'text')
         payload = request.data.get('payload') or {}
+        client_message_id = (request.data.get('client_message_id') or '').strip()
         allowed_types = {'text', 'image', 'audio', 'video', 'document', 'sticker', 'interactive'}
         if message_type not in allowed_types:
             return Response({'error': 'Tipo de mensaje no permitido'}, status=400)
-        if not text and message_type == 'text':
-            return Response({'error': 'El texto no puede estar vacío'}, status=400)
+        if not text and not upload:
+            return Response({'error': 'El mensaje requiere texto o un archivo'}, status=400)
         if not isinstance(payload, dict):
             return Response({'error': 'El payload debe ser un objeto'}, status=400)
-        if message_type in {'image', 'audio', 'video', 'document', 'sticker'} and not (payload.get('id') or payload.get('url')):
+        if message_type in {'image', 'audio', 'video', 'document', 'sticker'} and not upload and not (payload.get('id') or payload.get('url')):
             return Response({'error': 'El archivo requiere id o url'}, status=400)
 
         is_agent = _is_agent(request.user)
+        origin = (request.data.get('origin') or ('crm' if is_agent else 'customer')).strip().lower()
+        if origin == 'mobile' and not is_agent:
+            return Response({'error': 'Solo un agente puede enviar con origen mobile'}, status=403)
+        if origin not in ({'crm', 'mobile'} if is_agent else {'customer'}):
+            return Response({'error': 'Origen de mensaje no permitido'}, status=400)
+        if client_message_id:
+            try:
+                client_message_id = str(uuid.UUID(client_message_id))
+            except ValueError:
+                return Response({'error': 'client_message_id debe ser un UUID válido'}, status=400)
+            existing = ChatMessage.objects.filter(client_message_id=client_message_id).first()
+            if existing:
+                if existing.session_id != session.id:
+                    return Response({'error': 'client_message_id ya pertenece a otra conversación'}, status=409)
+                return Response(_serialize_message(existing), status=200)
+
+        attachment_data = None
+        if upload:
+            if not is_agent:
+                return Response({'error': 'La carga de archivos está disponible para agentes autenticados'}, status=403)
+            try:
+                attachment_data = validate_chat_upload(upload)
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=400)
+            message_type = attachment_data[2]
+
         sender_type = 'agent' if is_agent else 'user'
         sender_name, _ = _resolve_name(request.user)
 
@@ -311,16 +389,53 @@ class MessageListCreateView(APIView):
             session.status = 'active'
             session.save()
 
-        msg = ChatMessage.objects.create(
-            session=session,
-            text=text,
-            sender_type=sender_type,
-            sender_name=sender_name if sender_type != 'bot' else '',
-            direction='outbound' if is_agent else 'inbound',
-            status='queued' if is_agent else 'received',
-            message_type=message_type,
-            metadata={'outbound_payload': payload} if payload else {},
-        )
+        try:
+            with transaction.atomic():
+                msg = ChatMessage.objects.create(
+                    session=session,
+                    text=text,
+                    sender_type=sender_type,
+                    sender_name=sender_name if sender_type != 'bot' else '',
+                    direction='outbound' if is_agent else 'inbound',
+                    status='queued' if is_agent else 'received',
+                    message_type=message_type,
+                    client_message_id=client_message_id or None,
+                    metadata={
+                        'origin': origin,
+                        **({'outbound_payload': payload} if payload else {}),
+                    },
+                )
+                if upload and attachment_data:
+                    original_name, mime_type, _ = attachment_data
+                    attachment = ChatAttachment.objects.create(
+                        message=msg,
+                        file=upload,
+                        original_name=original_name,
+                        mime_type=mime_type,
+                        size=upload.size,
+                        metadata={'protected': True, 'uploaded_by': origin},
+                    )
+                    token = signing.dumps(attachment.id, salt='crm-chat-delivery')
+                    public_base = settings.FRONTEND_PUBLIC_URL.rstrip('/')
+                    delivery_url = (
+                        f'{public_base}/api/crm-chat/attachments/{attachment.id}/delivery/'
+                        f'?{urlencode({"token": token})}'
+                    )
+                    msg.metadata = {
+                        **msg.metadata,
+                        'outbound_payload': {
+                            'url': delivery_url,
+                            'filename': original_name,
+                            'mime_type': mime_type,
+                        },
+                    }
+                    msg.save(update_fields=['metadata'])
+        except IntegrityError:
+            if client_message_id:
+                existing = ChatMessage.objects.filter(client_message_id=client_message_id, session=session).first()
+                if existing:
+                    return Response(_serialize_message(existing), status=200)
+            raise
 
         if is_agent:
             try:
@@ -336,12 +451,71 @@ class MessageListCreateView(APIView):
         # Increment unread counter for agent when user sends
         if not is_agent:
             ChatSession.objects.filter(pk=session.pk).update(
-                unread_by_agent=session.unread_by_agent + 1
+                unread_by_agent=F('unread_by_agent') + 1,
+                updated_at=timezone.now(),
             )
+        else:
+            ChatSession.objects.filter(pk=session.pk).update(updated_at=timezone.now())
 
         publish_crm_event('message.created', session_id=session.id, message_id=msg.id)
 
         return Response(_serialize_message(msg), status=201)
+
+
+class ProtectedAttachmentView(APIView):
+    """Entrega archivos del chat únicamente al dueño o a un agente autorizado."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        attachment = ChatAttachment.objects.select_related('message__session').filter(pk=pk).first()
+        if not attachment or not attachment.file:
+            return Response({'error': 'Archivo no encontrado'}, status=404)
+        session = attachment.message.session
+        if not _is_agent(request.user) and session.user_id_ref != request.user.pk:
+            return Response({'error': 'No autorizado'}, status=403)
+        inline = attachment.mime_type.startswith('image/')
+        response = FileResponse(
+            attachment.file.open('rb'),
+            as_attachment=not inline,
+            filename=Path(attachment.original_name).name or f'adjunto-{attachment.id}',
+            content_type=attachment.mime_type or 'application/octet-stream',
+        )
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+
+class AttachmentDeliveryView(APIView):
+    """URL firmada y breve para que Meta o el gateway descarguen un envío."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, pk):
+        token = request.query_params.get('token', '')
+        try:
+            signed_id = signing.loads(
+                token,
+                salt='crm-chat-delivery',
+                max_age=getattr(settings, 'CRM_ATTACHMENT_DELIVERY_TTL', 300),
+            )
+        except signing.BadSignature:
+            return Response({'error': 'Enlace vencido o inválido'}, status=403)
+        if signed_id != pk:
+            return Response({'error': 'Enlace inválido'}, status=403)
+        attachment = ChatAttachment.objects.filter(pk=pk).first()
+        if not attachment or not attachment.file:
+            return Response({'error': 'Archivo no encontrado'}, status=404)
+        response = FileResponse(
+            attachment.file.open('rb'),
+            as_attachment=False,
+            filename=Path(attachment.original_name).name or f'adjunto-{attachment.id}',
+            content_type=attachment.mime_type or 'application/octet-stream',
+        )
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, max-age=60'
+        return response
 
 
 class AssignmentQueueListCreateView(APIView):
@@ -361,7 +535,7 @@ class AssignmentQueueListCreateView(APIView):
         channels = request.data.get('channels') or []
         if not name or not isinstance(channels, list):
             return Response({'error': 'Nombre y channels son obligatorios'}, status=400)
-        valid_channels = {'ecommerce', 'whatsapp', 'facebook', 'instagram'}
+        valid_channels = {'ecommerce', 'whatsapp', 'whatsapp_web', 'facebook', 'instagram'}
         if any(channel not in valid_channels for channel in channels):
             return Response({'error': 'Canal no permitido'}, status=400)
         queue = AssignmentQueue.objects.create(
@@ -407,7 +581,7 @@ class AssignmentQueueDetailView(AssignmentQueueListCreateView):
             queue = AssignmentQueue.objects.get(pk=pk)
         except AssignmentQueue.DoesNotExist:
             return Response({'error': 'Cola no encontrada'}, status=404)
-        valid_channels = {'ecommerce', 'whatsapp', 'facebook', 'instagram'}
+        valid_channels = {'ecommerce', 'whatsapp', 'whatsapp_web', 'facebook', 'instagram'}
         if 'name' in request.data and not str(request.data['name']).strip():
             return Response({'error': 'El nombre no puede estar vacío'}, status=400)
         if 'channels' in request.data:
@@ -518,16 +692,6 @@ class BotChatView(APIView):
                 contact=getattr(previous_session, 'contact', None),
             )
             logger.info(f"Nueva sesión de chat creada: {session.id} para {user_name}")
-            greeting = ChatMessage.objects.create(
-                session=session,
-                text=ollama_service.INITIAL_GREETING,
-                sender_type='bot',
-                direction='outbound',
-                status='sent',
-                metadata={'system_event': 'initial_greeting'},
-            )
-            session.last_bot_message_at = greeting.created_at
-            session.save(update_fields=['last_bot_message_at', 'updated_at'])
 
         # Guardar mensaje del usuario
         user_message = ChatMessage.objects.create(
@@ -559,7 +723,7 @@ class BotChatView(APIView):
         # Obtener historial de conversación para contexto
         conversation_history = []
         previous_messages = list(
-            session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:8]
+            session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:12]
         )
         for msg in reversed(previous_messages):
             conversation_history.append({
@@ -569,16 +733,21 @@ class BotChatView(APIView):
 
         # Obtener respuesta del bot
         try:
+            conversation_state = dict(session.conversation_state or {})
+            conversation_state['greeting_shown'] = True
             bot_result = ollama_service.get_bot_response(
                 message_text, conversation_history=conversation_history,
-                conversation_state=session.conversation_state,
+                conversation_state=conversation_state,
                 summary=session.conversation_summary,
+                channel=ChannelIntegration.CHANNEL_ECOMMERCE,
             )
         except Exception:
             logger.exception('Fallo de Ollama para sesión ecommerce %s, mensaje %s.', session.id, user_message.id)
             return Response({'error': 'No fue posible procesar el mensaje en este momento.', 'session_id': session.id}, status=503)
 
         bot_response_text = bot_result.get('response', 'Lo siento, no pude procesar tu mensaje.')
+        next_state = bot_result.get('state', session.conversation_state)
+        next_state['last_response'] = bot_response_text[:2000]
         needs_agent = bot_result.get('needs_agent', False)
         with transaction.atomic():
             session = ChatSession.objects.select_for_update().get(pk=session.pk)
@@ -589,7 +758,7 @@ class BotChatView(APIView):
                     'needs_login': False, 'user_message_id': user_message.id,
                     'bot_message_id': None, 'conversation_state': session.conversation_state,
                 }, status=status.HTTP_202_ACCEPTED)
-            session.conversation_state = bot_result.get('state', session.conversation_state)
+            session.conversation_state = next_state
             session.conversation_summary = bot_result.get('summary', session.conversation_summary)
             if needs_agent:
                 session.status = 'waiting'

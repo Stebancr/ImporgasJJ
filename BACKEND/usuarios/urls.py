@@ -1,7 +1,11 @@
 from django.urls import path
 from usuarios import views
+from usuarios import account_views
 
 urlpatterns = [
+    path('password/change', account_views.ChangePasswordView.as_view(), name='customer-password-change'),
+    path('password/reset/request', account_views.RequestPasswordResetView.as_view(), name='customer-password-reset-request'),
+    path('password/reset/confirm', account_views.ConfirmPasswordResetView.as_view(), name='customer-password-reset-confirm'),
     path('terms', views.TermsInfo.as_view(), name='terms-info'),
     path('terms/accept', views.AcceptTerms.as_view(), name='terms-accept'),
     path("registerUsers", views.registerUsers.as_view(), name="register-users"),

@@ -68,7 +68,7 @@ def parse_messaging_entries(payload, channel):
                 if message.get('is_echo'):
                     result.append(NormalizedMessage(
                         channel=channel,
-                        integration_external_id=sender_id or account_id,
+                        integration_external_id=account_id or recipient_id,
                         external_message_id=str(message.get('mid', '')),
                         timestamp=item.get('timestamp'),
                         status='sent',
@@ -88,7 +88,7 @@ def parse_messaging_entries(payload, channel):
                     })
                 result.append(NormalizedMessage(
                     channel=channel,
-                    integration_external_id=recipient_id or account_id,
+                    integration_external_id=account_id or recipient_id,
                     sender_id=sender_id,
                     recipient_id=recipient_id,
                     external_message_id=str(message.get('mid', '')),
@@ -98,6 +98,7 @@ def parse_messaging_entries(payload, channel):
                     attachments=attachments,
                     reply_to_external_id=str(message.get('reply_to', {}).get('mid', '')),
                     metadata={
+                        'entry_account_id': account_id,
                         'is_echo': bool(message.get('is_echo', False)),
                         'quick_reply_payload': message.get('quick_reply', {}).get('payload', ''),
                     },
@@ -106,7 +107,7 @@ def parse_messaging_entries(payload, channel):
                 postback = item['postback']
                 result.append(NormalizedMessage(
                     channel=channel,
-                    integration_external_id=recipient_id or account_id,
+                    integration_external_id=account_id or recipient_id,
                     sender_id=sender_id,
                     recipient_id=recipient_id,
                     external_message_id=str(postback.get('mid', '')),
@@ -120,7 +121,7 @@ def parse_messaging_entries(payload, channel):
                 for message_id in delivery.get('mids', []) or ['']:
                     result.append(NormalizedMessage(
                         channel=channel,
-                        integration_external_id=recipient_id or account_id,
+                        integration_external_id=account_id or recipient_id,
                         sender_id=sender_id,
                         recipient_id=recipient_id,
                         external_message_id=str(message_id),
@@ -131,7 +132,7 @@ def parse_messaging_entries(payload, channel):
             elif item.get('read'):
                 result.append(NormalizedMessage(
                     channel=channel,
-                    integration_external_id=recipient_id or account_id,
+                    integration_external_id=account_id or recipient_id,
                     sender_id=sender_id,
                     recipient_id=recipient_id,
                     timestamp=item.get('timestamp'),

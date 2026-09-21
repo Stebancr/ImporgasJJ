@@ -26,6 +26,8 @@ import {
   MessageSquare,
   Wrench,
   Settings,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -68,6 +70,9 @@ export default function DashboardLayout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
   const [pendingChats, setPendingChats] = useState(0)
+  const [desktopCollapsed, setDesktopCollapsed] = useState(() =>
+    typeof window !== 'undefined' && window.localStorage.getItem('admin-sidebar-collapsed') === 'true'
+  )
 
   const sidebarRef = useMobileDrawer(sidebarOpen, () => setSidebarOpen(false))
 
@@ -92,6 +97,10 @@ export default function DashboardLayout() {
     })
     setOpenGroups(toOpen)
   }, [location.pathname])
+
+  useEffect(() => {
+    window.localStorage.setItem('admin-sidebar-collapsed', String(desktopCollapsed))
+  }, [desktopCollapsed])
 
   const toggleGroup = (name: string) =>
     setOpenGroups((prev) => {
@@ -123,20 +132,29 @@ export default function DashboardLayout() {
       {/* Sidebar */}
       <aside ref={sidebarRef} id="admin-navigation" aria-label="Navegación administrativa"
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-64 max-w-[calc(100vw-1rem)] bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 w-64 max-w-[calc(100vw-1rem)] bg-card border-r transform transition-[transform,width] duration-200 ease-in-out lg:translate-x-0',
+          desktopCollapsed ? 'lg:w-20' : 'lg:w-64',
           sidebarOpen ? 'translate-x-0 visible' : '-translate-x-full invisible lg:visible'
         )}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex flex-col items-center justify-center px-4 py-8 border-b">
-            <Link to="/" aria-label="ImporGas JJ, inicio"><img src="/logo_imporgas.svg" alt="ImporGas JJ" className="w-56 h-24 object-contain" /></Link>
+          <div className={cn('relative flex flex-col items-center justify-center border-b', desktopCollapsed ? 'lg:px-2 lg:py-5 px-4 py-8' : 'px-4 py-8')}>
+            <Link to="/" aria-label="ImporGas JJ, inicio"><img src="/logo_imporgas.svg" alt="ImporGas JJ" className={cn('object-contain', desktopCollapsed ? 'lg:w-12 lg:h-12 w-56 h-24' : 'w-56 h-24')} /></Link>
             <button
               onClick={() => setSidebarOpen(false)}
               aria-label="Cerrar navegación"
               className="absolute top-2 right-2 h-11 w-11 shrink-0 flex items-center justify-center lg:hidden text-muted-foreground hover:text-foreground"
             >
               <X className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => setDesktopCollapsed((value) => !value)}
+              aria-label={desktopCollapsed ? 'Expandir navegación' : 'Contraer navegación'}
+              aria-expanded={!desktopCollapsed}
+              className="absolute -right-3 bottom-2 hidden h-7 w-7 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-sm hover:text-foreground lg:flex"
+            >
+              {desktopCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </button>
           </div>
 
@@ -153,7 +171,11 @@ export default function DashboardLayout() {
                     {/* Group toggle button */}
                     <button
                       aria-expanded={isGroupOpen}
-                      onClick={() => toggleGroup(item.name)}
+                      title={desktopCollapsed ? item.name : undefined}
+                      onClick={() => {
+                        if (desktopCollapsed) setDesktopCollapsed(false)
+                        toggleGroup(item.name)
+                      }}
                       className={cn(
                         'w-full flex items-center gap-3 px-3 py-3 rounded-md text-sm font-medium transition-colors',
                         isGroupActive
@@ -162,10 +184,11 @@ export default function DashboardLayout() {
                       )}
                     >
                       <item.icon className="h-5 w-5 shrink-0" />
-                      <span className="flex-1 min-w-0 text-left">{item.name}</span>
+                      <span className={cn('flex-1 min-w-0 text-left', desktopCollapsed && 'lg:hidden')}>{item.name}</span>
                       <ChevronRight
                         className={cn(
                           'h-4 w-4 transition-transform duration-200',
+                          desktopCollapsed && 'lg:hidden',
                           isGroupOpen && 'rotate-90'
                         )}
                       />
@@ -175,6 +198,7 @@ export default function DashboardLayout() {
                     <div
                       className={cn(
                         'overflow-hidden transition-all duration-200',
+                        desktopCollapsed && 'lg:hidden',
                         isGroupOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0 invisible'
                       )}
                     >
@@ -215,19 +239,20 @@ export default function DashboardLayout() {
                 <Link
                   key={item.name}
                   aria-current={isActive ? "page" : undefined}
+                  title={desktopCollapsed ? item.name : undefined}
                   to={item.href}
                   onClick={() => setSidebarOpen(false)}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                    'relative flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
                     isActive
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                   )}
                 >
                   <item.icon className="h-5 w-5" />
-                  <span className="flex-1">{item.name}</span>
+                  <span className={cn('flex-1', desktopCollapsed && 'lg:hidden')}>{item.name}</span>
                   {item.name === 'CRM Chat' && pendingChats > 0 && (
-                    <span className="w-5 h-5 bg-destructive text-destructive-foreground rounded-full text-[10px] flex items-center justify-center font-bold">
+                    <span className={cn('w-5 h-5 bg-destructive text-destructive-foreground rounded-full text-[10px] flex items-center justify-center font-bold', desktopCollapsed && 'lg:absolute lg:right-1 lg:top-1')}>
                       {pendingChats > 9 ? '9+' : pendingChats}
                     </span>
                   )}
@@ -246,11 +271,11 @@ export default function DashboardLayout() {
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-medium">
                   {user?.name?.charAt(0).toUpperCase() || 'U'}
                 </div>
-                <div className="flex-1 text-left">
+                <div className={cn('flex-1 text-left', desktopCollapsed && 'lg:hidden')}>
                   <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
                   <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
                 </div>
-                <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', userMenuOpen && 'rotate-180')} />
+                <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', userMenuOpen && 'rotate-180', desktopCollapsed && 'lg:hidden')} />
               </button>
 
               {userMenuOpen && (
@@ -278,7 +303,7 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main content */}
-      <div className="min-w-0 lg:pl-64">
+      <div className={cn('min-w-0 transition-[padding] duration-200', desktopCollapsed ? 'lg:pl-20' : 'lg:pl-64')}>
         {/* Top bar */}
         <header className="sticky top-0 z-30 flex items-center gap-4 px-4 py-3 bg-background/95 backdrop-blur border-b lg:px-6">
           <Button

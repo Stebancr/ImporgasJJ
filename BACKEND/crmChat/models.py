@@ -24,6 +24,7 @@ class CRMContact(models.Model):
     phone = models.CharField(max_length=40, blank=True)
     email = models.EmailField(blank=True)
     avatar_url = models.URLField(max_length=1000, blank=True)
+    last_interaction_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -135,13 +136,21 @@ class ChannelIntegration(models.Model):
 
     CHANNEL_ECOMMERCE = 'ecommerce'
     CHANNEL_WHATSAPP = 'whatsapp'
+    CHANNEL_WHATSAPP_WEB = 'whatsapp_web'
     CHANNEL_FACEBOOK = 'facebook'
     CHANNEL_INSTAGRAM = 'instagram'
     CHANNEL_CHOICES = [
         (CHANNEL_ECOMMERCE, 'Ecommerce'),
         (CHANNEL_WHATSAPP, 'WhatsApp'),
+        (CHANNEL_WHATSAPP_WEB, 'WhatsApp Web experimental'),
         (CHANNEL_FACEBOOK, 'Facebook Messenger'),
         (CHANNEL_INSTAGRAM, 'Instagram'),
+    ]
+    CONNECTION_STATUS_CHOICES = [
+        ('pending', 'Pendiente de validar'),
+        ('connected', 'Conectada y validada'),
+        ('error', 'Error de validación'),
+        ('disconnected', 'Desconectada'),
     ]
 
     name = models.CharField(max_length=120)
@@ -157,6 +166,13 @@ class ChannelIntegration(models.Model):
     app_secret_encrypted = models.TextField(blank=True)
     verify_token_digest = models.CharField(max_length=64, blank=True)
     token_expires_at = models.DateTimeField(null=True, blank=True)
+    connection_status = models.CharField(max_length=20, choices=CONNECTION_STATUS_CHOICES, default='pending')
+    last_validated_at = models.DateTimeField(null=True, blank=True)
+    last_webhook_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    disconnected_at = models.DateTimeField(null=True, blank=True)
+    display_phone_number = models.CharField(max_length=40, blank=True)
+    business_id = models.CharField(max_length=120, blank=True)
     configuration = models.JSONField(default=dict, blank=True)
     meta_connection = models.ForeignKey(
         MetaConnection,
@@ -197,6 +213,21 @@ class ChannelIntegration(models.Model):
                 fields=['channel', 'external_account_id'],
                 condition=~models.Q(external_account_id=''),
                 name='crm_unique_channel_external_account',
+            ),
+            models.UniqueConstraint(
+                fields=['phone_number_id'],
+                condition=models.Q(active=True, channel='whatsapp') & ~models.Q(phone_number_id=''),
+                name='crm_unique_active_whatsapp_phone',
+            ),
+            models.UniqueConstraint(
+                fields=['page_id'],
+                condition=models.Q(active=True, channel='facebook') & ~models.Q(page_id=''),
+                name='crm_unique_active_facebook_page',
+            ),
+            models.UniqueConstraint(
+                fields=['instagram_account_id'],
+                condition=models.Q(active=True, channel='instagram') & ~models.Q(instagram_account_id=''),
+                name='crm_unique_active_instagram_account',
             ),
         ]
 
@@ -404,6 +435,13 @@ class ChatMessage(models.Model):
         null=True,
         blank=True,
         unique=True,
+    )
+    client_message_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text='Identificador idempotente generado por CRM o aplicación móvil.',
     )
     status = models.CharField(
         max_length=20,

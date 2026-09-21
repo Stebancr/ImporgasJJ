@@ -57,7 +57,7 @@ class Usuario(models.Model):
     id = models.AutoField(primary_key=True)
     cedula = models.CharField(max_length=30, unique=True, null=False, blank=False)
     nombre_completo = models.CharField(max_length=100, null=False, blank=False)
-    correo = models.CharField(max_length=100, blank=True, null=True)
+    correo = models.CharField(max_length=254, blank=True, null=True)
     telefono = models.CharField(max_length=20, blank=True, null=True)
     sede = models.CharField(max_length=100, blank=True, null=True)
     cargo = models.ForeignKey('Cargo', models.SET_NULL, null=True, blank=True)
@@ -84,11 +84,12 @@ class Credenciales(AbstractBaseUser):
     Tiene relación OneToOne con el modelo Usuario.
     """
     id = models.AutoField(primary_key=True)
-    usuario = models.CharField(max_length=30, unique=True, null=False, blank=False)
+    usuario = models.CharField(max_length=254, unique=True, null=False, blank=False)
     password = models.CharField(max_length=500)
     usuario_rel = models.OneToOneField(Usuario, models.CASCADE, null=True, blank=True, related_name='credenciales')
     estado = models.IntegerField(default=1)
     tipo_usuario = models.IntegerField(default=0)
+    password_version = models.PositiveIntegerField(default=0)
     location = models.ForeignKey(
         'ecommerce.Location',
         null=True, blank=True,
