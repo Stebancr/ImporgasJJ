@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   }
   return {
     handlers, socket, makeWASocket: vi.fn(() => socket), clearAuthState: vi.fn().mockResolvedValue(undefined),
+    saveCreds: vi.fn().mockResolvedValue(undefined),
     crmPost: vi.fn().mockResolvedValue({}), toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,qr'),
     processIncoming: vi.fn().mockResolvedValue('processed'),
   }
@@ -17,13 +18,13 @@ const mocks = vi.hoisted(() => {
 vi.mock('@whiskeysockets/baileys', () => ({
   default: mocks.makeWASocket,
   Browsers: { ubuntu: () => ['IMPORGAS', 'Chrome', '1'] },
-  DisconnectReason: { loggedOut: 401, badSession: 500 },
+  DisconnectReason: { 401: 'loggedOut', 500: 'badSession', 515: 'restartRequired', loggedOut: 401, badSession: 500, restartRequired: 515 },
   makeCacheableSignalKeyStore: (keys: unknown) => keys,
 }))
 vi.mock('qrcode', () => ({ default: { toDataURL: mocks.toDataURL } }))
 vi.mock('../crm/client.js', () => ({ crmPost: mocks.crmPost }))
 vi.mock('./auth-state.js', () => ({
-  loadAuthState: vi.fn().mockResolvedValue({ state: { creds: {}, keys: {} }, saveCreds: vi.fn() }),
+  loadAuthState: vi.fn().mockResolvedValue({ state: { creds: {}, keys: {} }, saveCreds: mocks.saveCreds }),
   clearAuthState: mocks.clearAuthState,
 }))
 vi.mock('./messages.js', () => ({
@@ -40,6 +41,7 @@ describe('Baileys connection events', () => {
     mocks.handlers.clear()
     mocks.makeWASocket.mockClear()
     mocks.clearAuthState.mockClear()
+    mocks.saveCreds.mockClear()
     mocks.crmPost.mockClear()
     mocks.processIncoming.mockClear()
     mocks.socket.logout.mockClear()
@@ -91,13 +93,31 @@ describe('Baileys connection events', () => {
     expect(reconnect).toHaveBeenCalledOnce()
   })
 
-  it('clears invalid sessions and manual logout does not reconnect', async () => {
+  it('persists credential updates without logging their contents', async () => {
+    const manager = new ConnectionManager()
+    await manager.connect()
+    await mocks.handlers.get('creds.update')!({ privateKey: 'must-not-be-logged' })
+    expect(mocks.saveCreds).toHaveBeenCalledOnce()
+  })
+
+  it('reopens immediately when pairing requires a socket restart', async () => {
+    vi.useFakeTimers()
+    const manager = new ConnectionManager()
+    await manager.connect()
+    const reconnect = vi.spyOn(manager, 'connect').mockResolvedValue(undefined)
+    await mocks.handlers.get('connection.update')!({ connection: 'close', lastDisconnect: { error: { output: { statusCode: 515 } } } })
+    expect(manager.state.status).toBe('reconnecting')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(reconnect).toHaveBeenCalledOnce()
+  })
+
+  it('preserves invalid sessions for diagnosis and manual logout does not reconnect', async () => {
     vi.useFakeTimers()
     const invalid = new ConnectionManager()
     await invalid.connect()
     await mocks.handlers.get('connection.update')!({ connection: 'close', lastDisconnect: { error: { output: { statusCode: 401 } } } })
     expect(invalid.state.status).toBe('logged_out')
-    expect(mocks.clearAuthState).toHaveBeenCalled()
+    expect(mocks.clearAuthState).not.toHaveBeenCalled()
 
     mocks.handlers.clear()
     const manual = new ConnectionManager()

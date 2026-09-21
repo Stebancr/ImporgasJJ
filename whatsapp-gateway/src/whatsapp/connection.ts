@@ -84,7 +84,24 @@ export class ConnectionManager extends EventEmitter {
       generateHighQualityLinkPreview: false,
     })
     this.socket = sock
-    sock.ev.on('creds.update', saveCreds)
+    sock.ev.on('creds.update', async () => {
+      try {
+        await saveCreds()
+        console.log(JSON.stringify({
+          event: 'gateway.credentials_saved',
+          connection_id: env.WHATSAPP_CONNECTION_ID,
+          registered: Boolean(state.creds.registered),
+        }))
+      } catch (error: any) {
+        const safeError = String(error?.message || error).slice(0, 300)
+        console.error(JSON.stringify({
+          event: 'gateway.credentials_save_failed',
+          connection_id: env.WHATSAPP_CONNECTION_ID,
+          error: safeError,
+        }))
+        this.publish({ status: 'error', last_error: 'No fue posible guardar las credenciales de WhatsApp.' })
+      }
+    })
     await this.ensureOutboundState()
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       const resolvePhoneJid = (jid: string) => sock.signalRepository.lidMapping.getPNForLID(jid)
@@ -127,7 +144,19 @@ export class ConnectionManager extends EventEmitter {
     sock.ev.on('contacts.upsert', contacts => console.log(JSON.stringify({ event: 'gateway.contacts_upsert', count: contacts.length })))
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
       if (sock !== this.socket) return
-      console.log(JSON.stringify({ event: 'gateway.connection_update', connection: connection || '-', qr: Boolean(qr) }))
+      const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode
+      const reason = statusCode
+        ? String((DisconnectReason as Record<number, string>)[statusCode] || 'unknown')
+        : '-'
+      console.log(JSON.stringify({
+        event: 'gateway.connection_update',
+        connection: connection || '-',
+        qr: Boolean(qr),
+        disconnect_code: statusCode || '-',
+        disconnect_reason: reason,
+        registered: Boolean(state.creds.registered),
+        retry: this.retry,
+      }))
       if (qr) {
         const qrData = await QRCode.toDataURL(qr, { errorCorrectionLevel: 'M', margin: 2, width: 320 })
         const expires = new Date(Date.now() + env.WHATSAPP_QR_TTL_SECONDS * 1000).toISOString()
@@ -141,10 +170,20 @@ export class ConnectionManager extends EventEmitter {
         this.publish({ status: 'connected', phone_number: phone, last_connected_at: new Date().toISOString(), qr_data_url: undefined, qr_expires_at: undefined })
       } else if (connection === 'close') {
         if (!this.allowReconnect) return
-        const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode
+        if (statusCode === DisconnectReason.restartRequired) {
+          this.retry = 0
+          this.publish({ status: 'reconnecting', last_error: '' })
+          setTimeout(() => { if (this.allowReconnect) void this.connect() }, 250)
+          return
+        }
         if (statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.badSession) {
-          await clearAuthState(env.WHATSAPP_CONNECTION_ID)
-          this.publish({ status: 'logged_out', phone_number: '', qr_data_url: undefined, last_error: 'WhatsApp cerró o invalidó la sesión.' })
+          // Conservar el volumen para diagnóstico y recuperación manual. Solo
+          // logout() o un QR forzado, ambos iniciados por un administrador,
+          // eliminan credenciales persistidas.
+          this.publish({
+            status: 'logged_out', phone_number: '', qr_data_url: undefined,
+            last_error: `WhatsApp cerró o invalidó la sesión (${reason}). Genere un QR nuevo para volver a vincular.`,
+          })
           return
         }
         this.retry += 1
