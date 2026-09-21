@@ -149,6 +149,7 @@ class InternalWebhookView(InternalAPIView):
         existing_query = Q(external_message_id__in=[value for value in (key, message_id, supplied_key) if value])
         existing_query |= Q(metadata__gateway_message_id=message_id)
         if client_message_id:
+            existing_query |= Q(client_message_id=client_message_id)
             existing_query |= Q(metadata__client_message_id=client_message_id)
         existing = ChatMessage.objects.filter(existing_query).order_by('id').first()
         if existing:
@@ -179,17 +180,21 @@ class InternalWebhookView(InternalAPIView):
         identity = ChannelIdentity.objects.select_related('contact').filter(
             integration=integration, external_id__in=aliases,
         ).order_by('id').first()
-        name = str(data.get('push_name') or '')[:200]
+        # pushName pertenece al remitente. En ecos enviados desde el CRM o el
+        # teléfono representa nuestra cuenta y no debe reemplazar al cliente.
+        name = str(data.get('push_name') or '')[:200] if origin == 'customer' else ''
+        fallback_name = 'Usuario de WhatsApp'
         if not identity:
             identifier = str(data.get('number') or remote_jid.split('@', 1)[0])
             contact = CRMContact.objects.create(
-                name=name or f'Cliente {identifier[-4:]}',
+                name=name or fallback_name,
                 phone=identifier if remote_jid.endswith('@s.whatsapp.net') else '',
             )
             try:
                 with transaction.atomic():
                     identity = ChannelIdentity.objects.create(
-                        contact=contact, integration=integration, external_id=remote_jid, display_name=name,
+                        contact=contact, integration=integration, external_id=remote_jid,
+                        display_name=name or fallback_name,
                     )
             except IntegrityError:
                 contact.delete()
@@ -205,13 +210,20 @@ class InternalWebhookView(InternalAPIView):
         if name and identity.display_name != name:
             identity.display_name = name
         identity.save(update_fields=['profile_data', 'display_name', 'updated_at'])
+        contact_updates = []
+        if name and identity.contact.name != name:
+            identity.contact.name = name
+            contact_updates.append('name')
+        elif not identity.contact.name:
+            identity.contact.name = fallback_name
+            contact_updates.append('name')
         for alias in aliases - {identity.external_id}:
             alias_identity, alias_created = ChannelIdentity.objects.get_or_create(
                 integration=integration,
                 external_id=alias,
                 defaults={
                     'contact': identity.contact,
-                    'display_name': name,
+                    'display_name': name or fallback_name,
                     'profile_data': {'jid_aliases': sorted(aliases), 'reply_jid': reply_jid},
                 },
             )
@@ -222,7 +234,9 @@ class InternalWebhookView(InternalAPIView):
                 )
         if data.get('number') and not identity.contact.phone:
             identity.contact.phone = str(data.get('number'))[:40]
-            identity.contact.save(update_fields=['phone', 'updated_at'])
+            contact_updates.append('phone')
+        if contact_updates:
+            identity.contact.save(update_fields=[*contact_updates, 'updated_at'])
 
         session = ChatSession.objects.filter(
             integration=integration, contact=identity.contact,
@@ -244,6 +258,10 @@ class InternalWebhookView(InternalAPIView):
         elif session.status == 'closed' and event_source == 'notify':
             session.status = 'bot' if origin == 'customer' else 'active'
             session.save(update_fields=['status', 'updated_at'])
+        current_contact_name = name or identity.contact.name or fallback_name
+        if session.user_name != current_contact_name:
+            session.user_name = current_contact_name
+            session.save(update_fields=['user_name', 'updated_at'])
         if session.external_thread_id != remote_jid:
             active_conflict = ChatSession.objects.filter(
                 integration=integration, external_thread_id=remote_jid,
@@ -263,6 +281,7 @@ class InternalWebhookView(InternalAPIView):
                     session=session, text=str(data.get('text') or ''), sender_type=sender_type, sender_name=sender_name,
                     direction='inbound' if origin == 'customer' else 'outbound',
                     message_type=message_type, status='received' if origin == 'customer' else 'sent',
+                    client_message_id=client_message_id or None,
                     external_message_id=key, external_timestamp=timestamp,
                     reply_to_external_id=str(data.get('quoted_message_id') or '')[:255],
                     metadata={
@@ -276,7 +295,17 @@ class InternalWebhookView(InternalAPIView):
                     },
                 )
         except IntegrityError:
-            message = ChatMessage.objects.get(external_message_id=key)
+            recovery_query = Q(external_message_id=key)
+            if client_message_id:
+                recovery_query |= Q(client_message_id=client_message_id)
+                recovery_query |= Q(metadata__client_message_id=client_message_id)
+            message = ChatMessage.objects.filter(recovery_query).order_by('id').first()
+            if message is None:
+                raise
+            logger.info(
+                'WhatsApp Web recuperó colisión idempotente: message_id=%s session_id=%s origin=%s.',
+                message.pk, message.session_id, origin,
+            )
             return Response({'created': False, 'message_id': message.pk})
         media_id = str((data.get('media') or {}).get('media_id') or '')
         media = cache.get(f'whatsapp-web-media:{media_id}') if media_id else None

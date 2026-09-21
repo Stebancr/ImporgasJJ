@@ -192,6 +192,22 @@ class WhatsAppWebInternalAPITests(APITestCase):
         self.assertEqual(response.status_code, 201)
         delay.assert_called_once()
 
+    def test_whatsapp_contact_fallback_and_later_push_name_update(self):
+        self.connect()
+        first, payload = self.incoming(push_name='', message_id='fallback-name-1')
+        self.assertEqual(first.status_code, 201)
+        session = ChatSession.objects.get()
+        self.assertEqual(session.contact.name, 'Usuario de WhatsApp')
+        self.assertEqual(session.user_name, 'Usuario de WhatsApp')
+
+        payload.update(message_id='fallback-name-2', push_name='Nombre Real')
+        second = self.signed_post('/internal/whatsapp/webhook/', payload)
+        self.assertEqual(second.status_code, 201)
+        session.refresh_from_db()
+        session.contact.refresh_from_db()
+        self.assertEqual(session.contact.name, 'Nombre Real')
+        self.assertEqual(session.user_name, 'Nombre Real')
+
     def test_media_is_stored_and_attached_without_public_url(self):
         media_root = tempfile.mkdtemp(prefix='whatsapp-web-test-')
         with self.settings(MEDIA_ROOT=media_root):
@@ -264,3 +280,35 @@ class WhatsAppWebAdminAndOutboundTests(APITestCase):
         self.assertNotIn('reply_to', payload)
         message.refresh_from_db()
         self.assertEqual(message.metadata['client_message_id'], payload['client_message_id'])
+        self.assertEqual(message.client_message_id, payload['client_message_id'])
+
+    @patch('crmChat.apps.whatsapp_web.services.gateway_request')
+    def test_outbound_rotates_stale_gateway_operation_after_database_restore(self, gateway):
+        integration = ChannelIntegration.objects.create(
+            name='Gateway', channel='whatsapp_web', active=True, external_account_id='primary',
+        )
+        session = ChatSession.objects.create(
+            integration=integration, channel='whatsapp_web', external_thread_id='573001112233@s.whatsapp.net',
+        )
+        ChatMessage.objects.create(
+            session=session, text='Histórico', sender_type='agent', direction='outbound',
+            external_message_id='ww:primary:stale-external-id',
+            metadata={'gateway_message_id': 'stale-external-id', 'origin': 'crm'},
+        )
+        message = ChatMessage.objects.create(
+            session=session, text='Respuesta nueva', sender_type='agent', direction='outbound',
+        )
+        gateway.side_effect = [
+            {'external_message_id': 'stale-external-id', 'status': 'sent'},
+            {'external_message_id': 'fresh-external-id', 'status': 'sent'},
+        ]
+
+        result = send_message(message, {})
+
+        self.assertEqual(result['external_message_id'], 'ww:primary:fresh-external-id')
+        self.assertEqual(gateway.call_count, 2)
+        first_client_id = gateway.call_args_list[0].args[1]['client_message_id']
+        second_client_id = gateway.call_args_list[1].args[1]['client_message_id']
+        self.assertNotEqual(first_client_id, second_client_id)
+        message.refresh_from_db()
+        self.assertEqual(message.client_message_id, second_client_id)

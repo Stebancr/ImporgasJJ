@@ -16,6 +16,8 @@ x-backend-environment: &backend-environment
   CELERY_RESULT_BACKEND: redis://redis:6379/0
   OLLAMA_API_URL: http://ollama:11434/api/chat
   OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen:4b}
+  OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-90}
+  OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-4096}
   OLLAMA_QUEUE_WAIT: ${OLLAMA_QUEUE_WAIT:-20}
   FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-https://www.imporgasjj.com}
   PRODUCT_URL_TEMPLATE: ${PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}

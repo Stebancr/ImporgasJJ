@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
     saveCreds: vi.fn().mockResolvedValue(undefined),
     crmPost: vi.fn().mockResolvedValue({}), toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,qr'),
     processIncoming: vi.fn().mockResolvedValue('processed'),
+    sendOutbound: vi.fn(),
   }
 })
 
@@ -29,7 +30,7 @@ vi.mock('./auth-state.js', () => ({
 }))
 vi.mock('./messages.js', () => ({
   processIncoming: mocks.processIncoming,
-  sendOutbound: vi.fn(),
+  sendOutbound: mocks.sendOutbound,
   maskJid: (value: string) => value,
 }))
 
@@ -44,6 +45,7 @@ describe('Baileys connection events', () => {
     mocks.saveCreds.mockClear()
     mocks.crmPost.mockClear()
     mocks.processIncoming.mockClear()
+    mocks.sendOutbound.mockReset()
     mocks.socket.logout.mockClear()
   })
   afterEach(() => vi.useRealTimers())
@@ -91,6 +93,23 @@ describe('Baileys connection events', () => {
     expect(manager.state.status).toBe('reconnecting')
     await vi.advanceTimersByTimeAsync(1000)
     expect(reconnect).toHaveBeenCalledOnce()
+  })
+
+  it('coalesces simultaneous retries for the same outbound operation', async () => {
+    const manager = new ConnectionManager()
+    await manager.connect()
+    await mocks.handlers.get('connection.update')!({ connection: 'open' })
+    mocks.sendOutbound.mockResolvedValue({ key: { id: 'single-external-id' } })
+    const payload = {
+      connection_id: manager.state.connection_id,
+      client_message_id: '245ed47a-5a37-4e42-91a2-6ff80f952256',
+      to: '573001112233@s.whatsapp.net', type: 'text', text: 'Prueba controlada',
+    }
+
+    const [first, second] = await Promise.all([manager.send(payload), manager.send(payload)])
+
+    expect(first).toEqual(second)
+    expect(mocks.sendOutbound).toHaveBeenCalledOnce()
   })
 
   it('persists credential updates without logging their contents', async () => {

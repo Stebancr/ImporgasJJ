@@ -19,6 +19,7 @@ export class ConnectionManager extends EventEmitter {
   private qrTimer?: NodeJS.Timeout
   private outbound: Map<string, { external_message_id:string; status:string }> | null = null
   private outboundByExternal = new Map<string, string>()
+  private outboundInFlight = new Map<string, Promise<{ external_message_id:string; status:string }>>()
   private allowReconnect = true
   private crmSyncTimers = new Set<NodeJS.Timeout>()
   state: State = { connection_id: env.WHATSAPP_CONNECTION_ID, status: 'disconnected' }
@@ -207,16 +208,29 @@ export class ConnectionManager extends EventEmitter {
 
   async send(payload: any) {
     if (payload.connection_id !== env.WHATSAPP_CONNECTION_ID) throw new Error('Conexión desconocida.')
-    if (!this.socket || this.state.status !== 'connected') throw new Error('La sesión de WhatsApp Web no está conectada.')
+    const socket = this.socket
+    if (!socket || this.state.status !== 'connected') throw new Error('La sesión de WhatsApp Web no está conectada.')
     const key = String(payload.client_message_id || '')
     if (!key) throw new Error('client_message_id es obligatorio.')
     if (!this.outbound) await this.ensureOutboundState()
     if (this.outbound!.has(key)) return this.outbound!.get(key)
+    const pending = this.outboundInFlight.get(key)
+    if (pending) return pending
+    const operation = this.sendOnce(socket, payload, key)
+    this.outboundInFlight.set(key, operation)
+    try {
+      return await operation
+    } finally {
+      this.outboundInFlight.delete(key)
+    }
+  }
+
+  private async sendOnce(socket: NonNullable<ReturnType<typeof makeWASocket>>, payload: any, key: string) {
     const proposedExternalId = `CRM${key.replace(/-/g, '').slice(0, 29).toUpperCase()}`
     this.outboundByExternal.set(proposedExternalId, key)
     let sent
     try {
-      sent = await sendOutbound(this.socket, payload, proposedExternalId)
+      sent = await sendOutbound(socket, payload, proposedExternalId)
     } catch (error) {
       this.outboundByExternal.delete(proposedExternalId)
       throw error

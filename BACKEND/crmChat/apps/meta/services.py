@@ -859,12 +859,27 @@ def dispatch_outbound_message(message):
             raise MetaAPIError('Canal de salida no soportado.')
         if not external_id:
             raise MetaAPIError('Meta no confirmó el identificador del mensaje enviado.')
-        message.external_message_id = external_id or None
-        message.status = 'sent'
-        message.direction = 'outbound'
-        if message.external_timestamp is None:
-            message.external_timestamp = timezone.now()
-        message.save(update_fields=['external_message_id', 'status', 'direction', 'external_timestamp'])
+        with transaction.atomic():
+            persisted_message = ChatMessage.objects.select_for_update().get(pk=message.pk)
+            conflicting_message = ChatMessage.objects.select_for_update().filter(
+                external_message_id=external_id,
+            ).exclude(pk=persisted_message.pk).first()
+            if conflicting_message:
+                raise MetaAPIError(
+                    'El identificador confirmado por el proveedor ya pertenece a otra operación.',
+                )
+            persisted_message.external_message_id = external_id or None
+            persisted_message.status = 'sent'
+            persisted_message.direction = 'outbound'
+            if persisted_message.external_timestamp is None:
+                persisted_message.external_timestamp = timezone.now()
+            persisted_message.save(
+                update_fields=['external_message_id', 'status', 'direction', 'external_timestamp'],
+            )
+        message.external_message_id = persisted_message.external_message_id
+        message.status = persisted_message.status
+        message.direction = persisted_message.direction
+        message.external_timestamp = persisted_message.external_timestamp
         ChannelIntegration.objects.filter(pk=session.integration_id, active=True).update(
             connection_status='connected', last_error='',
         )
