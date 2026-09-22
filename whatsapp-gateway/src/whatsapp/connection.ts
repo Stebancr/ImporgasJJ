@@ -6,6 +6,7 @@ import QRCode from 'qrcode'
 import { env } from '../config/env.js'
 import { crmPost } from '../crm/client.js'
 import { clearAuthState, loadAuthState } from './auth-state.js'
+import { IncomingMessageQueue } from './incoming-queue.js'
 import { maskJid, processIncoming, sendOutbound } from './messages.js'
 import { loadOutboundResults, saveOutboundResults } from './outbound-state.js'
 
@@ -24,6 +25,7 @@ export class ConnectionManager extends EventEmitter {
   private crmSyncTimers = new Set<NodeJS.Timeout>()
   private reconnectTimer?: NodeJS.Timeout
   private profilePictures = new Map<string, { url: string; expiresAt: number }>()
+  private readonly incomingQueue = new IncomingMessageQueue(4)
   state: State = { connection_id: env.WHATSAPP_CONNECTION_ID, status: 'disconnected' }
 
   private publish(patch: Partial<State>) {
@@ -158,20 +160,19 @@ export class ConnectionManager extends EventEmitter {
             crmClientMessageId: id => this.crmClientMessageId(id),
           })
         }
-        void process()
+        this.incomingQueue.enqueueLive(() => process()
           .then(result => console.log(JSON.stringify({ event: 'gateway.message', result, external_message_id: message.key.id || '-' })))
           .catch(error => {
             const safeError = String(error?.message || error).slice(0, 300)
             console.error(JSON.stringify({ event: 'gateway.message_failed', external_message_id: message.key.id || '-', error: safeError }))
             this.publish({ last_error: safeError })
-          })
+          }))
       }
     })
     sock.ev.on('messaging-history.set', ({ messages }) => {
       console.log(JSON.stringify({ event: 'gateway.history_received', messages: messages.length }))
       const resolvePhoneJid = (jid: string) => sock.signalRepository.lidMapping.getPNForLID(jid)
-      for (const message of messages) {
-        void processIncoming(env.WHATSAPP_CONNECTION_ID, message, resolvePhoneJid, {
+      this.incomingQueue.enqueueHistory(messages, message => processIncoming(env.WHATSAPP_CONNECTION_ID, message, resolvePhoneJid, {
           eventSource: 'history',
           crmClientMessageId: id => this.crmClientMessageId(id),
         }).then(result => console.log(JSON.stringify({
@@ -179,8 +180,7 @@ export class ConnectionManager extends EventEmitter {
         }))).catch(error => console.error(JSON.stringify({
           event: 'gateway.history_failed', external_message_id: message.key.id || '-',
           error: String(error?.message || error).slice(0, 300),
-        })))
-      }
+        }))))
     })
     sock.ev.on('chats.upsert', chats => console.log(JSON.stringify({ event: 'gateway.chats_upsert', count: chats.length })))
     sock.ev.on('chats.update', chats => console.log(JSON.stringify({ event: 'gateway.chats_update', count: chats.length })))

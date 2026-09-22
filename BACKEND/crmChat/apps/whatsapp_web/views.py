@@ -55,6 +55,10 @@ def _integration(connection_id, create=False):
 class InternalAPIView(APIView):
     authentication_classes = []
     permission_classes = []
+    # These private routes use a signed, time-limited request with replay
+    # protection. The public anonymous limit (60/min) must not throttle a
+    # WhatsApp history sync and amplify retries from the gateway.
+    throttle_classes = []
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
