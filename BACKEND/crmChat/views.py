@@ -51,6 +51,7 @@ def _serialize_session(s, last_msg=None):
         'priority':        s.priority,
         'queue_id':        s.queue_id,
         'contact_id':      s.contact_id,
+        'avatar_url':      s.contact.avatar_url if s.contact_id else '',
         'external_thread_id': s.external_thread_id,
         'agent_name':      s.agent_name,
         'unread_by_agent': s.unread_by_agent,
@@ -108,7 +109,7 @@ class SessionListCreateView(APIView):
         if not _is_agent(request.user):
             return Response({'error': 'No autorizado'}, status=403)
 
-        qs = ChatSession.objects.all()
+        qs = ChatSession.objects.select_related('contact').all()
         status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)

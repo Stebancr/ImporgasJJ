@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import uuid
+from urllib.parse import urlparse
 from datetime import datetime, timezone as datetime_timezone
 
 from django.conf import settings
@@ -183,12 +184,18 @@ class InternalWebhookView(InternalAPIView):
         # pushName pertenece al remitente. En ecos enviados desde el CRM o el
         # teléfono representa nuestra cuenta y no debe reemplazar al cliente.
         name = str(data.get('push_name') or '')[:200] if origin == 'customer' else ''
+        profile_picture_url = str(data.get('profile_picture_url') or '').strip()[:1000] if origin == 'customer' else ''
+        if profile_picture_url:
+            parsed_profile_picture = urlparse(profile_picture_url)
+            if parsed_profile_picture.scheme != 'https' or not parsed_profile_picture.netloc:
+                profile_picture_url = ''
         fallback_name = 'Usuario de WhatsApp'
         if not identity:
             identifier = str(data.get('number') or remote_jid.split('@', 1)[0])
             contact = CRMContact.objects.create(
                 name=name or fallback_name,
                 phone=identifier if remote_jid.endswith('@s.whatsapp.net') else '',
+                avatar_url=profile_picture_url,
             )
             try:
                 with transaction.atomic():
@@ -235,6 +242,9 @@ class InternalWebhookView(InternalAPIView):
         if data.get('number') and not identity.contact.phone:
             identity.contact.phone = str(data.get('number'))[:40]
             contact_updates.append('phone')
+        if profile_picture_url and identity.contact.avatar_url != profile_picture_url:
+            identity.contact.avatar_url = profile_picture_url
+            contact_updates.append('avatar_url')
         if contact_updates:
             identity.contact.save(update_fields=[*contact_updates, 'updated_at'])
 

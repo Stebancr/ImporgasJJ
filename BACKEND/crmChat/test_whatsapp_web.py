@@ -12,7 +12,7 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from usuarios.models import Credenciales
-from crmChat.models import ChannelIntegration, ChatAttachment, ChatMessage, ChatSession
+from crmChat.models import ChannelIntegration, ChatAttachment, ChatMessage, ChatSession, CRMContact
 from crmChat.apps.whatsapp_web.services import send_message
 
 
@@ -208,6 +208,25 @@ class WhatsAppWebInternalAPITests(APITestCase):
         self.assertEqual(session.contact.name, 'Nombre Real')
         self.assertEqual(session.user_name, 'Nombre Real')
 
+    def test_whatsapp_profile_picture_is_persisted_and_requires_https(self):
+        self.connect()
+        first, payload = self.incoming(
+            message_id='profile-picture-1',
+            profile_picture_url='https://cdn.example.test/whatsapp-avatar.jpg',
+        )
+        self.assertEqual(first.status_code, 201)
+        session = ChatSession.objects.select_related('contact').get()
+        self.assertEqual(session.contact.avatar_url, 'https://cdn.example.test/whatsapp-avatar.jpg')
+
+        payload.update(
+            message_id='profile-picture-2',
+            profile_picture_url='http://insecure.example.test/avatar.jpg',
+        )
+        second = self.signed_post('/internal/whatsapp/webhook/', payload)
+        self.assertEqual(second.status_code, 201)
+        session.contact.refresh_from_db()
+        self.assertEqual(session.contact.avatar_url, 'https://cdn.example.test/whatsapp-avatar.jpg')
+
     def test_media_is_stored_and_attached_without_public_url(self):
         media_root = tempfile.mkdtemp(prefix='whatsapp-web-test-')
         with self.settings(MEDIA_ROOT=media_root):
@@ -234,6 +253,16 @@ class WhatsAppWebAdminAndOutboundTests(APITestCase):
         self.client.force_authenticate(self.customer)
         self.assertEqual(self.client.get('/crm-chat/whatsapp-web/status/').status_code, 403)
         self.assertEqual(self.client.post('/crm-chat/whatsapp-web/realtime-token/').status_code, 403)
+
+    def test_session_list_exposes_contact_avatar_to_authenticated_advisors(self):
+        contact = CRMContact.objects.create(
+            name='Cliente con foto', avatar_url='https://cdn.example.test/avatar.jpg',
+        )
+        ChatSession.objects.create(contact=contact, user_name=contact.name, channel='instagram')
+        self.client.force_authenticate(self.admin)
+        response = self.client.get('/crm-chat/sessions/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]['avatar_url'], 'https://cdn.example.test/avatar.jpg')
 
     def test_realtime_token_is_short_lived_and_contains_no_service_secret(self):
         self.client.force_authenticate(self.admin)

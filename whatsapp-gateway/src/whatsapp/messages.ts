@@ -43,6 +43,7 @@ type MessageEventSource = 'notify' | 'append' | 'history'
 type ProcessingOptions = {
   eventSource?: MessageEventSource
   crmClientMessageId?: (externalMessageId: string) => string | undefined
+  profilePictureUrl?: string
 }
 
 const inFlight = new Set<string>()
@@ -104,6 +105,7 @@ export async function processIncoming(
       jid_aliases: aliases,
       number,
       push_name: message.pushName || '',
+      profile_picture_url: options.profilePictureUrl || '',
       message_id: messageId,
       client_message_id: clientMessageId || '',
       timestamp: Number(message.messageTimestamp || Math.floor(Date.now() / 1000)),

@@ -23,6 +23,16 @@ describe('WhatsApp message normalization', () => {
     })
   })
 
+  it('forwards only the previously validated profile picture URL', async () => {
+    await processIncoming('primary', {
+      key: { remoteJid: '573001112233@s.whatsapp.net', fromMe: false, id: 'message-avatar' },
+      message: { conversation: 'Hola' }, pushName: 'Cliente',
+    } as any, undefined, { profilePictureUrl: 'https://cdn.example.test/avatar.jpg' })
+    expect(crmPost.mock.calls[0]![1]).toMatchObject({
+      profile_picture_url: 'https://cdn.example.test/avatar.jpg',
+    })
+  })
+
   it('synchronizes own phone messages and ignores group and broadcast messages', async () => {
     await processIncoming('primary', { key: { remoteJid: '573001112233@s.whatsapp.net', fromMe: true, id: '1' }, message: { conversation: 'own' } } as any)
     await processIncoming('primary', { key: { remoteJid: '123@g.us', fromMe: false, id: '2' }, message: { conversation: 'group' } } as any)

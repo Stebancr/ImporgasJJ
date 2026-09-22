@@ -11,6 +11,7 @@ export interface ChatSession {
   priority: 'low' | 'normal' | 'high' | 'urgent'
   queue_id: number | null
   contact_id: number | null
+  avatar_url: string
   external_thread_id: string
   agent_name: string
   unread_by_agent: number

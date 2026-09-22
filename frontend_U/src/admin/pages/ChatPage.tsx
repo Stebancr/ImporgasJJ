@@ -170,13 +170,13 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
   )
 }
 
-function ConversationMessage({ message }: { message: ChatMessage }) {
+function ConversationMessage({ message, avatarUrl, contactName }: { message: ChatMessage; avatarUrl?: string; contactName: string }) {
   const incoming = message.direction === 'inbound' || message.sender_type === 'user'
   const bot = message.sender_type === 'bot'
   const originLabel = bot ? 'Ollama' : message.origin === 'mobile' ? 'Celular' : message.origin === 'crm' ? 'CRM' : 'Cliente'
   return (
     <Stack direction="row" spacing={1} sx={{ justifyContent: incoming ? 'flex-start' : 'flex-end' }}>
-      {incoming && <Avatar sx={{ width: 28, height: 28, bgcolor: '#ffedd5', color: '#b45309', fontSize: 13 }}>C</Avatar>}
+      {incoming && <Avatar src={avatarUrl || undefined} alt={contactName} sx={{ width: 28, height: 28, bgcolor: '#ffedd5', color: '#b45309', fontSize: 13 }}>{contactName.charAt(0).toUpperCase() || 'C'}</Avatar>}
       <Paper
         variant="outlined"
         sx={{
@@ -369,6 +369,7 @@ export default function ChatPage() {
                   }}
                 >
                   <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between' }}>
+                    <Avatar src={session.avatar_url || undefined} alt={session.user_name} sx={{ width: 36, height: 36, bgcolor: '#ffedd5', color: '#b45309', fontSize: 14, flexShrink: 0 }}>{session.user_name.charAt(0).toUpperCase() || 'C'}</Avatar>
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" useFlexGap spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}><Typography variant="body2" noWrap sx={{ fontWeight: 700 }}>{session.user_name}</Typography>{session.unread_by_agent > 0 && <Chip size="small" color="primary" label={session.unread_by_agent} />}</Stack>
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{session.last_message || 'Sin mensajes'}</Typography>
@@ -385,7 +386,7 @@ export default function ChatPage() {
           ) : (
             <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, height: { xs: 'min(72dvh, 720px)', lg: 'auto' }, minHeight: { xs: 480, lg: 0 }, maxHeight: { xs: '72dvh', lg: 'none' }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <Stack direction={{ xs: 'column', md: 'row' }} sx={{ position: 'sticky', top: 0, zIndex: 2, bgcolor: '#fff', justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}><IconButton aria-label="Volver a conversaciones" onClick={() => setSelectedId(null)} sx={{ display: { xs: 'inline-flex', lg: 'none' } }}><ArrowLeft size={19} /></IconButton><Avatar sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography noWrap variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}><IconButton aria-label="Volver a conversaciones" onClick={() => setSelectedId(null)} sx={{ display: { xs: 'inline-flex', lg: 'none' } }}><ArrowLeft size={19} /></IconButton><Avatar src={selected.avatar_url || undefined} alt={selected.user_name} sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography noWrap variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
                 <Stack direction="row" useFlexGap spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                   <TextField
                     select
@@ -406,7 +407,7 @@ export default function ChatPage() {
               </Stack>
               <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
-                {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} />)}
+                {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} avatarUrl={selected.avatar_url} contactName={selected.user_name} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
               <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>

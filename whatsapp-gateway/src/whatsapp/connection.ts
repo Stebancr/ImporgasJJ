@@ -22,6 +22,8 @@ export class ConnectionManager extends EventEmitter {
   private outboundInFlight = new Map<string, Promise<{ external_message_id:string; status:string }>>()
   private allowReconnect = true
   private crmSyncTimers = new Set<NodeJS.Timeout>()
+  private reconnectTimer?: NodeJS.Timeout
+  private profilePictures = new Map<string, { url: string; expiresAt: number }>()
   state: State = { connection_id: env.WHATSAPP_CONNECTION_ID, status: 'disconnected' }
 
   private publish(patch: Partial<State>) {
@@ -61,6 +63,34 @@ export class ConnectionManager extends EventEmitter {
     return this.outboundByExternal.get(externalMessageId)
   }
 
+  private async profilePictureUrl(socket: NonNullable<ReturnType<typeof makeWASocket>>, jid: string): Promise<string> {
+    const cached = this.profilePictures.get(jid)
+    if (cached && cached.expiresAt > Date.now()) return cached.url
+    let url = ''
+    let timeout: NodeJS.Timeout | undefined
+    try {
+      const result = await Promise.race([
+        socket.profilePictureUrl(jid, 'image'),
+        new Promise<undefined>(resolve => { timeout = setTimeout(() => resolve(undefined), 2000) }),
+      ])
+      const parsed = result ? new URL(result) : null
+      if (parsed?.protocol === 'https:') url = parsed.toString()
+    } catch {
+      // La privacidad del contacto o una cuenta sin foto son resultados
+      // normales. No convertirlos en un error de conexión del gateway.
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+    this.profilePictures.set(jid, {
+      url,
+      expiresAt: Date.now() + (url ? 6 * 60 * 60 * 1000 : 60 * 60 * 1000),
+    })
+    console.log(JSON.stringify({
+      event: 'gateway.profile_picture_checked', jid: maskJid(jid), available: Boolean(url),
+    }))
+    return url
+  }
+
   async connect(forceQr = false): Promise<void> {
     if (this.connecting) return this.connecting
     this.connecting = this.open(forceQr).finally(() => { this.connecting = null })
@@ -69,6 +99,11 @@ export class ConnectionManager extends EventEmitter {
 
   private async open(forceQr: boolean): Promise<void> {
     this.allowReconnect = true
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+    }
+    if (forceQr) this.retry = 0
     if (forceQr) await clearAuthState(env.WHATSAPP_CONNECTION_ID)
     const previous = this.socket
     this.socket = null
@@ -113,10 +148,17 @@ export class ConnectionManager extends EventEmitter {
           jid: maskJid(message.key.remoteJid), external_message_id: message.key.id || '-',
           from_me: Boolean(message.key.fromMe),
         }))
-        void processIncoming(env.WHATSAPP_CONNECTION_ID, message, resolvePhoneJid, {
-          eventSource,
-          crmClientMessageId: id => this.crmClientMessageId(id),
-        })
+        const process = async () => {
+          const profilePictureUrl = !message.key.fromMe && eventSource === 'notify'
+            ? await this.profilePictureUrl(sock, String(message.key.remoteJid || ''))
+            : ''
+          return processIncoming(env.WHATSAPP_CONNECTION_ID, message, resolvePhoneJid, {
+            eventSource,
+            profilePictureUrl,
+            crmClientMessageId: id => this.crmClientMessageId(id),
+          })
+        }
+        void process()
           .then(result => console.log(JSON.stringify({ event: 'gateway.message', result, external_message_id: message.key.id || '-' })))
           .catch(error => {
             const safeError = String(error?.message || error).slice(0, 300)
@@ -174,7 +216,10 @@ export class ConnectionManager extends EventEmitter {
         if (statusCode === DisconnectReason.restartRequired) {
           this.retry = 0
           this.publish({ status: 'reconnecting', last_error: '' })
-          setTimeout(() => { if (this.allowReconnect) void this.connect() }, 250)
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = undefined
+            if (this.allowReconnect) void this.connect()
+          }, 250)
           return
         }
         if (statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.badSession) {
@@ -191,7 +236,10 @@ export class ConnectionManager extends EventEmitter {
         if (this.retry > 8) { this.publish({ status: 'error', last_error: 'Se agotaron los intentos de reconexión.' }); return }
         this.publish({ status: 'reconnecting', last_error: 'Conexión temporalmente interrumpida.' })
         const delay = Math.min(60_000, 1000 * 2 ** (this.retry - 1))
-        setTimeout(() => { if (this.allowReconnect) void this.connect() }, delay)
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined
+          if (this.allowReconnect) void this.connect()
+        }, delay)
       }
     })
   }
@@ -199,6 +247,8 @@ export class ConnectionManager extends EventEmitter {
   async logout(): Promise<void> {
     this.allowReconnect = false
     if (this.qrTimer) clearTimeout(this.qrTimer)
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = undefined
     const socket = this.socket
     this.socket = null
     if (socket) await socket.logout().catch(() => undefined)

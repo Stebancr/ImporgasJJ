@@ -28,24 +28,55 @@ export default function WhatsAppWebGatewayCard() {
   useEffect(() => {
     let disposed = false
     let socket: ReturnType<typeof io> | undefined
-    adminChatService.getWhatsAppGatewayRealtimeToken().then(({ token }) => {
-      if (disposed) return
-      socket = io(window.location.origin, {
-        path: '/whatsapp-gateway/socket.io',
-        transports: ['websocket', 'polling'],
-        auth: { token },
-      })
-      socket.on('gateway.state', (next: WhatsAppGatewayState) => {
-        setLiveState(next)
-        setError('')
-        void client.invalidateQueries({ queryKey: ['whatsapp-web-gateway'] })
-      })
-      socket.on('connect_error', (reason) => setError(`No fue posible recibir el estado en tiempo real: ${reason.message}`))
-    }).catch((reason: any) => {
-      if (!disposed) setError(reason.response?.data?.detail ?? 'No fue posible autorizar el panel del gateway.')
-    })
+    let refreshTimer: ReturnType<typeof setInterval> | undefined
+    let refreshing = false
+
+    const refreshToken = async (reconnect = false) => {
+      if (disposed || refreshing) return
+      refreshing = true
+      try {
+        const { token } = await adminChatService.getWhatsAppGatewayRealtimeToken()
+        if (disposed) return
+        if (!socket) {
+          socket = io(window.location.origin, {
+            path: '/whatsapp-gateway/socket.io',
+            transports: ['websocket', 'polling'],
+            auth: { token },
+            autoConnect: false,
+            reconnection: true,
+            reconnectionDelayMax: 10_000,
+          })
+          socket.on('connect', () => setError(''))
+          socket.on('gateway.state', (next: WhatsAppGatewayState) => {
+            setLiveState(next)
+            setError('')
+            void client.invalidateQueries({ queryKey: ['whatsapp-web-gateway'] })
+          })
+          socket.on('connect_error', (reason) => {
+            if (disposed) return
+            setError(`No fue posible recibir el estado en tiempo real: ${reason.message}`)
+            if (reason.message === 'unauthorized') void refreshToken(true)
+          })
+          socket.connect()
+        } else {
+          socket.auth = { token }
+          if (reconnect && !socket.connected) socket.connect()
+        }
+      } catch (reason: any) {
+        if (!disposed) setError(reason.response?.data?.detail ?? 'No fue posible autorizar el panel del gateway.')
+      } finally {
+        refreshing = false
+      }
+    }
+
+    void refreshToken()
+    // El token dura 120 segundos. Mantener uno reciente permite que Socket.IO
+    // se autentique de nuevo si el gateway se reinicia o cambia de IP.
+    refreshTimer = setInterval(() => { void refreshToken(false) }, 90_000)
     return () => {
       disposed = true
+      if (refreshTimer) clearInterval(refreshTimer)
+      socket?.removeAllListeners()
       socket?.disconnect()
     }
   }, [client])

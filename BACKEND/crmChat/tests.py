@@ -782,6 +782,9 @@ class OmnichannelModelTests(APITestCase):
 @override_settings(
     META_APP_SECRET='app-secret-test',
     META_WEBHOOK_VERIFY_TOKEN='verify-test',
+    META_WEBHOOK_VERIFY_TOKEN_INSTAGRAM='',
+    META_WEBHOOK_VERIFY_TOKEN_FACEBOOK='',
+    META_WEBHOOK_VERIFY_TOKEN_WHATSAPP='',
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
 )

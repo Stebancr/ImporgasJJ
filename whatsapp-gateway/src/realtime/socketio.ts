@@ -14,5 +14,13 @@ export function verifyRealtimeToken(token: string): boolean {
 }
 
 export function secureSocketIo(io: Server): void {
-  io.use((socket, next) => verifyRealtimeToken(socket.handshake.auth?.token) ? next() : next(new Error('unauthorized')))
+  io.use((socket, next) => {
+    if (verifyRealtimeToken(socket.handshake.auth?.token)) return next()
+    console.warn(JSON.stringify({
+      event: 'gateway.realtime_rejected',
+      transport: socket.conn.transport.name,
+      reason: 'invalid_or_expired_token',
+    }))
+    return next(new Error('unauthorized'))
+  })
 }

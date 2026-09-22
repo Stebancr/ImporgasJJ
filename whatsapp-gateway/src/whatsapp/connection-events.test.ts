@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => {
   const socket = {
     ev: { on: vi.fn((event: string, handler: (...args: any[]) => any) => handlers.set(event, handler)) },
     end: vi.fn(), logout: vi.fn().mockResolvedValue(undefined), user: { id: '573001112233:1@s.whatsapp.net' },
+    profilePictureUrl: vi.fn().mockResolvedValue('https://cdn.example.test/avatar.jpg'),
     signalRepository: { lidMapping: { getPNForLID: vi.fn().mockResolvedValue(null) } },
   }
   return {
@@ -47,6 +48,7 @@ describe('Baileys connection events', () => {
     mocks.processIncoming.mockClear()
     mocks.sendOutbound.mockReset()
     mocks.socket.logout.mockClear()
+    mocks.socket.profilePictureUrl.mockClear()
   })
   afterEach(() => vi.useRealTimers())
 
@@ -82,6 +84,21 @@ describe('Baileys connection events', () => {
     await vi.waitFor(() => expect(mocks.processIncoming).toHaveBeenCalledTimes(2))
     expect(mocks.processIncoming.mock.calls[0]![3]).toMatchObject({ eventSource: 'notify' })
     expect(mocks.processIncoming.mock.calls[1]![3]).toMatchObject({ eventSource: 'history' })
+  })
+
+  it('enriches a live customer message with an available profile picture', async () => {
+    const manager = new ConnectionManager()
+    await manager.connect()
+    const customerMessage = {
+      key: { remoteJid: '573001112233@s.whatsapp.net', fromMe: false, id: 'customer-avatar-1' },
+      message: { conversation: 'Hola' },
+    }
+    mocks.handlers.get('messages.upsert')!({ messages: [customerMessage], type: 'notify' })
+    await vi.waitFor(() => expect(mocks.processIncoming).toHaveBeenCalledOnce())
+    expect(mocks.socket.profilePictureUrl).toHaveBeenCalledWith('573001112233@s.whatsapp.net', 'image')
+    expect(mocks.processIncoming.mock.calls[0]![3]).toMatchObject({
+      eventSource: 'notify', profilePictureUrl: 'https://cdn.example.test/avatar.jpg',
+    })
   })
 
   it('backs off after a temporary network failure', async () => {
