@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Imporgas backend health every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=imporgas-backend-watchdog.service
+
+[Install]
+WantedBy=timers.target

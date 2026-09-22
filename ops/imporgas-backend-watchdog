@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+container=imporgas-prod-backend
+status="$(/usr/bin/docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container" 2>/dev/null || true)"
+[[ "$status" == unhealthy ]] || exit 0
+
+# A persistent application error needs investigation, not a rapid restart loop.
+stamp=/run/imporgas-backend-watchdog.last
+now="$(date +%s)"
+if [[ -f "$stamp" ]]; then
+  read -r last < "$stamp"
+  if [[ "$last" =~ ^[0-9]+$ ]] && (( now - last < 600 )); then
+    exit 0
+  fi
+fi
+
+printf '%s\n' "$now" > "$stamp"
+logger -t imporgas-backend-watchdog 'Backend unhealthy; restarting backend container only'
+/usr/bin/docker restart --timeout 20 "$container"
