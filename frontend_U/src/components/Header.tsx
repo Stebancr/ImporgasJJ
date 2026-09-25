@@ -28,6 +28,27 @@ const userMenuItems = [
   { icon: Settings,   label: 'Configuración',       href: '/perfil' },
 ]
 
+// El archivo original tiene una composición vertical dentro de un lienzo cuadrado.
+// En un encabezado de 64 px su nombre queda demasiado pequeño; esta versión
+// horizontal conserva la llama y dibuja el nombre como texto nítido.
+function CompactLogo({ inverted = false }: { inverted?: boolean }) {
+  return (
+    <span className="inline-flex flex-none items-center gap-1.5 whitespace-nowrap">
+      <span className="relative h-9 w-9 flex-none overflow-hidden" aria-hidden="true">
+        <img
+          src="/logo_imporgas.svg"
+          alt=""
+          className="absolute left-[-18px] top-[-7px] h-[72px] w-[72px] max-w-none"
+          style={inverted ? { filter: 'brightness(0) invert(1)' } : undefined}
+        />
+      </span>
+      <span className={`text-[16px] font-extrabold leading-none tracking-[-0.06em] ${inverted ? 'text-white' : 'text-[#001575]'}`}>
+        IMPOR<span className={inverted ? 'text-white' : 'text-[#F58634]'}>GAS JJ</span>
+      </span>
+    </span>
+  )
+}
+
 export default function Header() {
   const { isAuthenticated, logout } = useAuth()
   const { totalItems } = useCart()
@@ -128,9 +149,10 @@ export default function Header() {
             <div className="flex items-center gap-2 sm:gap-4 h-16 lg:h-20">
 
               {/* Logo */}
-              <Link to="/" className="min-w-0 max-w-[40%] sm:max-w-none flex items-center group" aria-label="ImporGas JJ - Inicio">
-                <img src="/logo_imporgas.svg" alt="ImporGas JJ S.A.S"
-                  className="max-w-full object-contain transition-transform duration-300 group-hover:scale-105"
+              <Link to="/" className="flex shrink-0 items-center group" aria-label="ImporGas JJ - Inicio">
+                <span className="lg:hidden"><CompactLogo /></span>
+                <img src="/logo_imporgas.svg" alt=""
+                  className="hidden lg:block max-w-full object-contain transition-transform duration-300 group-hover:scale-105"
                   style={{ height: '40px', width: 'auto' }} />
               </Link>
 
@@ -252,7 +274,7 @@ export default function Header() {
             role="dialog" aria-modal="true" aria-label="Menú lateral">
 
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-[#001575]">
-          <img src="/logo_imporgas.svg" alt="ImporGas JJ S.A.S" style={{ height: '32px', width: 'auto', filter: 'brightness(0) invert(1)' }} />
+          <CompactLogo inverted />
           <button onClick={() => setIsDrawerOpen(false)} className="p-2 text-white/80 hover:text-white rounded-xl" aria-label="Cerrar menú">
             <X className="w-5 h-5" />
           </button>
