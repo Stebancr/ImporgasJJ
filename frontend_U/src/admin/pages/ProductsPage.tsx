@@ -34,6 +34,7 @@ import { brandsService } from '@/admin/services/admin_brands'
 import { categoriesService } from '@/admin/services/admin_categories'
 import { locationsService } from '@/admin/services/admin_locations'
 import api from '@/admin/services/admin_api'
+import { clearProductDraft, productDraftKey, readDraftImages, readProductDraft, saveDraftImages, saveProductDraft } from '@/admin/services/product_draft'
 import type { Product, Brand, Category, ProductSpec, Location } from '@/admin/types'
 
 interface FormData {
@@ -72,6 +73,8 @@ export default function ProductsPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [draftReady, setDraftReady] = useState(false)
+  const [draftRestored, setDraftRestored] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [formData, setFormData] = useState<FormData>(defaultForm)
 
@@ -117,6 +120,17 @@ export default function ProductsPage() {
     locationsService.getAll({ is_active: true, per_page: 100 }).then(r => setLocations(r.data)).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (!isDialogOpen || editingProduct || !draftReady) return
+    const key = productDraftKey()
+    saveProductDraft(key, { formData, newSpecRows, stockValues })
+  }, [isDialogOpen, editingProduct, draftReady, formData, newSpecRows, stockValues])
+
+  useEffect(() => {
+    if (!isDialogOpen || editingProduct || !draftReady) return
+    void saveDraftImages(productDraftKey(), imageFiles)
+  }, [isDialogOpen, editingProduct, draftReady, imageFiles])
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     setImageFiles(prev => [...prev, ...files])
@@ -131,6 +145,9 @@ export default function ProductsPage() {
   }
 
   const handleOpenDialog = async (product?: Product) => {
+    setDraftReady(false)
+    setDraftRestored(false)
+    imagePreviews.forEach(URL.revokeObjectURL)
     setImageFiles([])
     setImagePreviews([])
     setExistingSpecs([])
@@ -169,8 +186,19 @@ export default function ProductsPage() {
       }
     } else {
       setEditingProduct(null)
-      setFormData(defaultForm)
+      const key = productDraftKey()
+      const draft = readProductDraft(key)
+      setFormData(draft?.formData ?? defaultForm)
+      setNewSpecRows(draft?.newSpecRows ?? [])
+      setStockValues(draft?.stockValues ?? {})
+      setDraftRestored(Boolean(draft))
+      setIsLoadingProduct(true)
       setIsDialogOpen(true)
+      const files = await readDraftImages(key)
+      setImageFiles(files)
+      setImagePreviews(files.map(file => URL.createObjectURL(file)))
+      setDraftReady(true)
+      setIsLoadingProduct(false)
     }
   }
 
@@ -230,6 +258,10 @@ export default function ProductsPage() {
         }
       }
 
+      if (!editingProduct) {
+        setDraftReady(false)
+        await clearProductDraft(productDraftKey())
+      }
       setIsDialogOpen(false)
       await fetchProducts()
     } catch (err: unknown) {
@@ -416,13 +448,21 @@ export default function ProductsPage() {
       </Card>
 
       {/* Product Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
+      <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!isSaving) setIsDialogOpen(open) }}>
+        <DialogContent
+          className="max-w-2xl max-h-[90vh] overflow-y-auto"
+          aria-describedby={undefined}
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => event.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>
               {editingProduct ? 'Editar Producto' : 'Agregar Producto'}
             </DialogTitle>
           </DialogHeader>
+          {!editingProduct && draftRestored && (
+            <p className="text-sm text-muted-foreground">Se recuperó el borrador guardado en este navegador.</p>
+          )}
           {isLoadingProduct ? (
             <div className="py-12 text-center text-muted-foreground">Cargando datos del producto...</div>
           ) : (
