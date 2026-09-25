@@ -12,6 +12,47 @@ from usuarios.terms import CURRENT_TERMS_VERSION
 from django.utils import timezone
 from .models import Brand, CartItem, Category, FCMDeviceToken, Location, Order, Product, ProductStock, Review, WompiPaymentIntent
 from .email_service import send_order_payment_confirmation
+from gestion.models import Cotizacion, Factura
+
+
+class LocationDeleteAPITests(APITestCase):
+    def setUp(self):
+        self.admin = Credenciales.objects.create(usuario='location-admin', estado=1, tipo_usuario=1)
+        self.client.force_authenticate(self.admin)
+        self.location = Location.objects.create(name='Sede de prueba', address='Calle 1', city='Cali')
+        self.url = reverse('location-detail', args=[self.location.id])
+
+    def test_unused_location_can_be_deleted(self):
+        response = self.client.delete(self.url)
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Location.objects.filter(pk=self.location.pk).exists())
+
+    def test_assigned_worker_blocks_delete_without_losing_assignment(self):
+        worker = Credenciales.objects.create(usuario='location-worker', estado=1, tipo_usuario=0, location=self.location)
+        response = self.client.delete(self.url)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('usuario o trabajador asignado', response.data['error'])
+        worker.refresh_from_db()
+        self.assertEqual(worker.location_id, self.location.id)
+
+    def test_product_stock_blocks_delete_with_useful_message(self):
+        brand = Brand.objects.create(name='Marca sede')
+        category = Category.objects.create(name='Categoría sede')
+        product = Product.objects.create(name='Producto sede', price=100, brand=brand, category=category)
+        ProductStock.objects.create(product=product, location=self.location, quantity=1)
+        response = self.client.delete(self.url)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('producto con stock', response.data['error'])
+        self.assertTrue(Location.objects.filter(pk=self.location.pk).exists())
+
+    def test_quotation_and_invoice_block_delete(self):
+        Cotizacion.objects.create(location=self.location, creado_por=self.admin, cliente_nombre='Cliente')
+        Factura.objects.create(location=self.location, creado_por=self.admin, cliente_nombre='Cliente')
+        response = self.client.delete(self.url)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('1 cotización', response.data['error'])
+        self.assertIn('1 factura', response.data['error'])
+        self.assertTrue(Location.objects.filter(pk=self.location.pk).exists())
 
 
 class ProductReviewAPITests(APITestCase):

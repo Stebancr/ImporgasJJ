@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import axios from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -110,11 +111,15 @@ export default function LocationsPage() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('¿Está seguro de eliminar esta ubicación?')) return
+    setError(null)
     try {
       await locationsService.delete(id)
       await fetchLocations()
-    } catch {
-      setError('Error al eliminar la ubicación')
+    } catch (err) {
+      const message = axios.isAxiosError(err) && typeof err.response?.data?.error === 'string'
+        ? err.response.data.error
+        : null
+      setError(message || 'No se pudo eliminar la ubicación. Inténtalo de nuevo.')
     }
   }
 

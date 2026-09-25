@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { User, LoginCredentials, RegisterData, AuthState } from '@/admin/types'
 import { authService } from '@/admin/services/admin_index'
+import { refreshAdminToken, tokenExpiresIn } from '@/admin/services/admin_token'
 
 interface AuthContextType extends AuthState {
   login: (credentials: LoginCredentials) => Promise<void>
@@ -26,14 +27,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (active) setState({ user: null, token: null, isAuthenticated: false, isLoading: false })
     }
     const validate = async () => {
-      const token = authService.getStoredToken()
+      let token = authService.getStoredToken()
       if (!token) { reset(); return }
       try {
-        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-        const remaining = Number(payload.exp) * 1000 - Date.now()
-        if (!Number.isFinite(remaining) || remaining <= 0) { reset(); return }
+        if (tokenExpiresIn(token) <= 60_000) token = await refreshAdminToken()
+        if (!token) { reset(); return }
         const user = await authService.getProfile()
-        if (!active || authService.getStoredToken() !== token) return
+        if (!active) return
+        token = authService.getStoredToken()
+        if (!token) { reset(); return }
         if (!user.is_active || user.role !== 'admin') { reset(); return }
         authService.setAuth(user, token)
         setState({ user, token, isAuthenticated: true, isLoading: false })
@@ -58,21 +60,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.token) return
     let timer: ReturnType<typeof setTimeout>
-    const check = () => {
+    const check = async () => {
       clearTimeout(timer)
-      try {
-        const payload = JSON.parse(atob(state.token!.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-        const remaining = Number(payload.exp) * 1000 - Date.now()
-        if (Number.isFinite(remaining) && remaining > 0) {
-          timer = setTimeout(check, Math.min(remaining, 2147483647))
-          return
-        }
-      } catch { /* A malformed session must not grant access. */ }
+      const current = authService.getStoredToken()
+      if (current && tokenExpiresIn(current) > 60_000) {
+        timer = setTimeout(check, Math.min(tokenExpiresIn(current) - 60_000, 2147483647))
+        return
+      }
+      if (await refreshAdminToken()) return
       window.dispatchEvent(new Event('admin:logout'))
     }
-    check()
-    window.addEventListener('focus', check)
-    return () => { clearTimeout(timer); window.removeEventListener('focus', check) }
+    const onRefreshed = (event: Event) => {
+      setState(previous => ({ ...previous, token: (event as CustomEvent<string>).detail }))
+    }
+    void check()
+    const onFocus = () => { void check() }
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('admin:token-refreshed', onRefreshed)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('admin:token-refreshed', onRefreshed)
+    }
   }, [state.token])
 
   const login = useCallback(async (credentials: LoginCredentials) => {

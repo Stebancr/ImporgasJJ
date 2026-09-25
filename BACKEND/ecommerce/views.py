@@ -1,4 +1,5 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models.deletion import ProtectedError
 from django.db.models import Q
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -295,7 +296,29 @@ class LocationDetailView(APIView):
         obj = self._get(pk)
         if not obj:
             return Response({'error': 'Not found'}, status=404)
-        obj.delete()
+
+        dependencies = [
+            (obj.admins.count(), 'usuario o trabajador asignado', 'usuarios o trabajadores asignados'),
+            (obj.stock_entries.count(), 'producto con stock', 'productos con stock'),
+            (obj.cotizaciones.count(), 'cotización', 'cotizaciones'),
+            (obj.facturas.count(), 'factura', 'facturas'),
+        ]
+        in_use = [f'{count} {singular if count == 1 else plural}' for count, singular, plural in dependencies if count]
+        if in_use:
+            return Response({
+                'error': (
+                    f'No se puede eliminar la ubicación "{obj.name}" porque está asociada a '
+                    f'{", ".join(in_use)}. Puedes desactivarla para que deje de estar disponible.'
+                ),
+            }, status=409)
+
+        try:
+            with transaction.atomic():
+                obj.delete()
+        except (ProtectedError, IntegrityError):
+            return Response({
+                'error': 'No se puede eliminar la ubicación porque tiene registros asociados. Puedes desactivarla.',
+            }, status=409)
         return Response(status=204)
 
 
