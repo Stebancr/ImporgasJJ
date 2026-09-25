@@ -81,11 +81,16 @@ class SincronizarVisitaView(APIView):
                     photo.seek(0)
 
                 data = {key: request.data.get(key) for key in request.data if key not in ('fotos', 'firma_base64')}
-                if data.get('valor_servicio') == '':
-                    data['valor_servicio'] = None
+                motivo_cambio_costo = str(data.pop('motivo_cambio_costo', '') or '').strip()
+                if data.get('valor_servicio') in ('', None):
+                    data['valor_servicio'] = visit.valor_visita
                 report = ReporteVisita.objects.filter(visita=visit).first()
                 validator = ReporteCreateSerializer(report, data=data)
                 validator.is_valid(raise_exception=True)
+                final_cost = validator.validated_data.get('valor_servicio', visit.valor_visita)
+                if (final_cost != visit.valor_visita and visit.costo_inicial is not None
+                        and final_cost != visit.costo_inicial and not motivo_cambio_costo):
+                    raise serializers.ValidationError({'motivo_cambio_costo': 'Indica el motivo del cambio respecto al costo inicial.'})
                 for field in ('persona_atiende', 'motivo_servicio', 'solucion_realizada'):
                     if not str(data.get(field, '')).strip():
                         raise serializers.ValidationError({field: 'Este campo es obligatorio.'})
@@ -93,16 +98,18 @@ class SincronizarVisitaView(APIView):
                     if data.get(selector) == 'otro' and not str(data.get(extra, '')).strip():
                         raise serializers.ValidationError({extra: 'Especifica el valor de otro.'})
 
-                signature = request.data.get('firma_base64', '')
-                try:
-                    signature_bytes = base64.b64decode(signature.split(';base64,')[-1], validate=True)
-                    if len(signature_bytes) > 1024 * 1024:
-                        raise ValueError('Firma demasiado grande')
-                    signature_file = ContentFile(signature_bytes, name='firma.png')
-                    serializers.ImageField().run_validation(signature_file)
-                    signature_file.seek(0)
-                except Exception:
-                    raise serializers.ValidationError({'firma_base64': 'Se requiere una firma PNG o JPEG válida, de máximo 1 MB.'})
+                signature = request.data.get('firma_base64', '') or ''
+                signature_file = None
+                if signature:
+                    try:
+                        signature_bytes = base64.b64decode(signature.split(';base64,')[-1], validate=True)
+                        if len(signature_bytes) > 1024 * 1024:
+                            raise ValueError('Firma demasiado grande')
+                        signature_file = ContentFile(signature_bytes, name='firma.png')
+                        serializers.ImageField().run_validation(signature_file)
+                        signature_file.seek(0)
+                    except Exception:
+                        raise serializers.ValidationError({'firma_base64': 'La firma debe ser PNG o JPEG válida, de máximo 1 MB.'})
 
                 # All validation precedes writes. The receipt, evidence rows,
                 # report and completion are committed as one transaction.
@@ -114,11 +121,21 @@ class SincronizarVisitaView(APIView):
                     evidence.save()
                 report = validator.save(visita=visit)
                 report.firma_base64 = signature
-                report.firma_cliente.save(f'firma_{visit.numero_tarea}_{key}.png', signature_file, save=False)
-                created_files.append((report.firma_cliente.storage, report.firma_cliente.name))
+                if signature_file:
+                    report.firma_cliente.save(f'firma_{visit.numero_tarea}_{key}.png', signature_file, save=False)
+                    created_files.append((report.firma_cliente.storage, report.firma_cliente.name))
                 report.save()
+                previous_cost = visit.valor_visita
+                if report.valor_servicio != previous_cost:
+                    from .models import CambioCostoVisita
+                    visit.valor_visita = report.valor_servicio
+                    CambioCostoVisita.objects.create(
+                        visita=visit, usuario=request.user,
+                        valor_anterior=previous_cost, valor_nuevo=report.valor_servicio,
+                        motivo=motivo_cambio_costo,
+                    )
                 visit.estado = VisitaTecnica.ESTADO_FINALIZADA
-                visit.save(update_fields=['estado', 'fecha_actualizacion'])
+                visit.save(update_fields=['estado', 'valor_visita', 'fecha_actualizacion'])
                 visit = VisitaTecnica.objects.get(pk=visit.pk)
                 response = dict(VisitaDetailSerializer(visit).data)
                 response['operation_id'] = key
@@ -126,7 +143,8 @@ class SincronizarVisitaView(APIView):
                 VisitSyncReceipt.objects.create(visita=visit, usuario=request.user, operation_key=key, request_hash=digest, response_data=response)
 
                 def notify():
-                    from .views import _enviar_correo_visita_completada
+                    from .views import _enviar_correo_visita_completada, _save_pdf_and_notify
+                    _save_pdf_and_notify(pk)
                     _enviar_correo_visita_completada(VisitaTecnica.objects.select_related('cliente').get(pk=pk))
                 transaction.on_commit(notify, robust=True)
             return Response(response)

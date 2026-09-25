@@ -15,7 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.http import HttpResponseNotFound
+from django.urls import path, include, re_path
 from auth.views import TokenLMSView, PasswordVersionRefreshView
 from .health import api_root
 
@@ -44,6 +45,9 @@ urlpatterns = [
     path('api/meta/facebook/', include('crmChat.apps.facebook.urls')),
     path('api/meta/instagram/', include('crmChat.apps.instagram.urls')),
     path('visits/', include('AppVisits.urls')),
+    # Los PDF de visitas solo se entregan por la vista con token firmado.
+    # Esta ruta debe preceder al servidor genérico de media usado con DEBUG.
+    re_path(r'^media/(?:visitas_pdf|evidencias|firmas)(?:/.*)?$', lambda request: HttpResponseNotFound()),
     path('', api_root, name='api-root'),
 ]
 

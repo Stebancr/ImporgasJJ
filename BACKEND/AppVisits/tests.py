@@ -1,17 +1,28 @@
 import base64
+import json
+import hashlib
+import shutil
+import tempfile
 from datetime import date, time, timedelta
 from decimal import Decimal
 from io import BytesIO
+from urllib.parse import urlparse, parse_qs
 from unittest.mock import patch
 
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core import signing
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from pypdf import PdfReader
+from PIL import Image as PILImage
 from rest_framework.test import APITestCase
 
 from usuarios.models import Credenciales, Usuario
-from .models import ClienteVisita, VisitaTecnica
+from .models import ClienteVisita, VisitaTecnica, TipoVisita, CambioCostoVisita, ReporteVisita
+from .views import _save_pdf_and_notify
+from crmChat.models import CRMContact, ChannelIntegration, ChatSession, ChatMessage
 from .notifications import notify_technician_visit_assigned
 from ecommerce.models import Notification
 
@@ -19,6 +30,11 @@ from ecommerce.models import Notification
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class VisitCompletionTests(APITestCase):
     def setUp(self):
+        self.media_dir = tempfile.mkdtemp(prefix='visits-pdf-test-')
+        self.media_settings = override_settings(MEDIA_ROOT=self.media_dir)
+        self.media_settings.enable()
+        self.addCleanup(shutil.rmtree, self.media_dir)
+        self.addCleanup(self.media_settings.disable)
         profile = Usuario.objects.create(cedula='visit-admin', nombre_completo='Admin Visitas', correo='admin@example.com')
         self.admin = Credenciales.objects.create(usuario='visit-admin', usuario_rel=profile, estado=1, tipo_usuario=4)
         self.admin.set_password('safe-test-password')
@@ -80,11 +96,14 @@ class VisitCompletionTests(APITestCase):
         created = self.client.post(reverse('visitas-list-create'), payload, format='json')
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.data['valor_visita'], 150000)
+        self.assertEqual(created.data['costo_inicial'], 150000)
+        self.assertEqual(created.data['costo_final'], 150000)
         self.assertIsInstance(created.data['valor_visita'], int)
         self.assertIsInstance(created.json()['valor_visita'], int)
 
         visit = VisitaTecnica.objects.get(pk=created.data['id'])
         self.assertEqual(visit.valor_visita, Decimal('150000.00'))
+        self.assertEqual(visit.costo_inicial, Decimal('150000.00'))
         detail = self.client.get(reverse('visitas-detail', args=[visit.pk]))
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.data['valor_visita'], 150000)
@@ -114,18 +133,361 @@ class VisitCompletionTests(APITestCase):
         self.visit.refresh_from_db()
         self.assertIsNone(self.visit.valor_visita)
 
-    def test_create_requires_every_field_except_description_and_observations(self):
+    def test_create_requires_operational_fields_but_allows_optional_id_and_cost(self):
         response = self.client.post(reverse('visitas-list-create'), {}, format='json')
         self.assertEqual(response.status_code, 400)
         required = {
-            'cliente_nombre', 'cliente_identificacion', 'cliente_telefono',
+            'cliente_nombre', 'cliente_telefono',
             'cliente_correo', 'cliente_direccion', 'tipo_tarea', 'fecha',
-            'hora', 'valor_visita', 'tecnico_id',
+            'hora', 'tecnico_id',
         }
         self.assertTrue(required.issubset(response.data.keys()))
         self.assertNotIn('descripcion', response.data)
         self.assertNotIn('observaciones_iniciales', response.data)
+        self.assertNotIn('cliente_identificacion', response.data)
+        self.assertNotIn('valor_visita', response.data)
         self.assertEqual(str(response.data['tecnico_id'][0]), 'Debe seleccionar un técnico.')
+
+        payload = self.valid_create_payload()
+        payload.pop('cliente_identificacion')
+        payload.pop('valor_visita')
+        payload['cliente_indicaciones_llegada'] = 'Portería sur'
+        created = self.client.post(reverse('visitas-list-create'), payload, format='json')
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data['cliente']['identificacion'], '')
+        self.assertEqual(created.data['cliente']['indicaciones_llegada'], 'Portería sur')
+        self.assertIsNone(created.data['valor_visita'])
+        self.assertEqual(created.data['creado_por'], self.admin.pk)
+
+    def test_cost_update_by_assigned_technician_is_audited_and_exported(self):
+        self.visit.tecnico = self.technician
+        self.visit.save(update_fields=['tecnico'])
+        self.client.force_authenticate(self.technician)
+        response = self.client.patch(reverse('visitas-costo', args=[self.visit.pk]), {'valor_visita': 90000}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['valor_visita'], 90000)
+        self.assertEqual(CambioCostoVisita.objects.get(visita=self.visit).usuario_id, self.technician.pk)
+        self.assertEqual(self.client.patch(reverse('visitas-costo', args=[self.visit.pk]), {'valor_visita': -1}, format='json').status_code, 400)
+        excel = self.client.get(reverse('visitas-exportar'), {'fecha_desde': date.today(), 'fecha_hasta': date.today()})
+        self.assertEqual(excel.status_code, 200)
+        from openpyxl import load_workbook
+        rows = list(load_workbook(BytesIO(excel.content), read_only=True).active.values)
+        self.assertIn(90000, rows[-1])
+
+        other = ClienteVisita.objects.create(nombre='No asignado', direccion='Calle 3')
+        forbidden_visit = VisitaTecnica.objects.create(
+            cliente=other, tipo_tarea='revision_periodica',
+            fecha=date.today(), hora=time(12),
+        )
+        self.assertEqual(self.client.patch(
+            reverse('visitas-costo', args=[forbidden_visit.pk]),
+            {'valor_visita': 100}, format='json',
+        ).status_code, 404)
+        self.assertEqual(self.client.post(
+            reverse('visitas-tipos'), {'codigo': 'sin_permiso', 'nombre': 'Sin permiso'}, format='json',
+        ).status_code, 403)
+
+    def test_admin_partial_edit_requires_reason_and_preserves_initial_cost(self):
+        created = self.client.post(reverse('visitas-list-create'), {
+            **self.valid_create_payload(), 'valor_visita': 45000,
+        }, format='json')
+        self.assertEqual(created.status_code, 201)
+        visit_id = created.data['id']
+        url = reverse('visitas-detail', args=[visit_id])
+        self.assertEqual(self.client.patch(url, {'valor_visita': 70000}, format='json').status_code, 400)
+        visit = VisitaTecnica.objects.get(pk=visit_id)
+        self.assertEqual(visit.valor_visita, Decimal('45000.00'))
+        changed = self.client.patch(url, {
+            'valor_visita': 70000, 'motivo_cambio_costo': 'Trabajo adicional',
+        }, format='json')
+        self.assertEqual(changed.status_code, 200, changed.data)
+        visit.refresh_from_db()
+        self.assertEqual(visit.costo_inicial, Decimal('45000.00'))
+        self.assertEqual(visit.valor_visita, Decimal('70000.00'))
+        self.assertEqual(CambioCostoVisita.objects.filter(visita=visit).count(), 2)
+
+    def test_created_initial_cost_becomes_final_cost_after_technician_sync(self):
+        payload = self.valid_create_payload()
+        payload['valor_visita'] = 45000
+        created = self.client.post(reverse('visitas-list-create'), payload, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        visit_id = created.data['id']
+        self.assertEqual(created.data['costo_inicial'], 45000)
+        self.client.force_authenticate(self.technician)
+        report = {
+            'persona_atiende': 'Cliente de prueba', 'equipo': 'estufa',
+            'ubicacion_equipo': 'cocina', 'motivo_servicio': 'Revisión',
+            'solucion_realizada': 'Regulador cambiado', 'valor_servicio': '70000',
+            'motivo_cambio_costo': 'Se agregó cambio de regulador',
+            'fotos': [SimpleUploadedFile('evidencia.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='), content_type='image/png')],
+        }
+        with self.captureOnCommitCallbacks(execute=True):
+            finished = self.client.post(
+                reverse('visitas-sincronizar', args=[visit_id]), report,
+                format='multipart', HTTP_IDEMPOTENCY_KEY='final-cost-operation-001',
+                HTTP_IF_MATCH=created.data['sync_version'],
+            )
+        self.assertEqual(finished.status_code, 200, finished.data)
+        self.assertEqual(finished.data['costo_inicial'], 45000)
+        self.assertEqual(finished.data['costo_final'], 70000)
+        visit = VisitaTecnica.objects.get(pk=visit_id)
+        self.assertEqual(visit.costo_inicial, Decimal('45000.00'))
+        self.assertEqual(visit.valor_visita, Decimal('70000.00'))
+        self.assertEqual(visit.reporte.valor_servicio, Decimal('70000.00'))
+        self.assertIn('70,000', ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(visit.pdf_final.read())).pages))
+        self.client.force_authenticate(self.admin)
+        listed = self.client.get(reverse('visitas-list-create'))
+        self.assertEqual(next(row for row in listed.data if row['id'] == visit_id)['costo_final'], 70000)
+        from openpyxl import load_workbook
+        excel = self.client.get(reverse('visitas-exportar'), {'fecha_desde': date.today(), 'fecha_hasta': date.today()})
+        self.assertIn(70000, [cell for row in load_workbook(BytesIO(excel.content), read_only=True).active.values for cell in row])
+        cost_url = reverse('visitas-costo', args=[visit_id])
+        self.assertEqual(self.client.patch(cost_url, {'valor_visita': 80000}, format='json').status_code, 400)
+        with self.captureOnCommitCallbacks(execute=True):
+            amended = self.client.patch(cost_url, {
+                'valor_visita': 80000, 'motivo_cambio_costo': 'Ajuste administrativo posterior',
+            }, format='json')
+        self.assertEqual(amended.status_code, 200, amended.data)
+        visit.refresh_from_db()
+        self.assertEqual(visit.costo_inicial, Decimal('45000.00'))
+        self.assertEqual(visit.valor_visita, Decimal('80000.00'))
+        self.assertIn('80,000', ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(visit.pdf_final.read())).pages))
+        with patch('AppVisits.views._generar_pdf', side_effect=ValueError('fallo de prueba')):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.assertEqual(self.client.patch(cost_url, {
+                    'valor_visita': 90000, 'motivo_cambio_costo': 'Segundo ajuste',
+                }, format='json').status_code, 200)
+        visit.refresh_from_db()
+        self.assertEqual(visit.pdf_estado, 'error')
+        self.assertFalse(self.client.get(reverse('visitas-detail', args=[visit_id])).data['pdf_disponible'])
+        self.assertEqual(self.client.get(reverse('visitas-pdf', args=[visit_id])).status_code, 409)
+        self.assertTrue(visit.evidencias.exists())
+        self.assertEqual(self.client.post(reverse('visitas-pdf-reintentar', args=[visit_id])).status_code, 200)
+
+    def test_excel_filters_and_escapes_user_text(self):
+        self.visit.cliente.nombre = '=SUM(1,1)'
+        self.visit.cliente.save(update_fields=['nombre'])
+        other = ClienteVisita.objects.create(nombre='Otro cliente', direccion='Calle 2', telefono='3000000001')
+        VisitaTecnica.objects.create(
+            cliente=other, tecnico=self.technician, tipo_tarea='revision_periodica',
+            fecha=date.today(), hora=time(11), creado_por=self.admin,
+        )
+        params = {'fecha_desde': date.today(), 'fecha_hasta': date.today()}
+        from openpyxl import load_workbook
+        response = self.client.get(reverse('visitas-exportar'), params)
+        rows = list(load_workbook(BytesIO(response.content), read_only=True).active.values)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1][4], "'=SUM(1,1)")
+        self.assertEqual(rows[1][10], 'No disponible')
+        self.assertEqual(self.client.get(reverse('visitas-exportar'), {**params, 'estado': 'invalido'}).status_code, 400)
+        filtered = self.client.get(reverse('visitas-exportar'), {
+            **params, 'tecnico_id': self.technician.pk, 'tipo_tarea': 'revision_periodica',
+        })
+        rows = list(load_workbook(BytesIO(filtered.content), read_only=True).active.values)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][4], 'Otro cliente')
+
+    def test_types_preserve_old_labels_and_can_be_deactivated(self):
+        items = self.client.get(reverse('visitas-tipos'))
+        self.assertEqual(items.status_code, 200)
+        self.assertTrue(any(item['codigo'] == 'revision_periodica' for item in items.data))
+        created = self.client.post(reverse('visitas-tipos'), {'codigo': 'nueva_visita', 'nombre': 'Nueva visita'}, format='json')
+        self.assertEqual(created.status_code, 201)
+        item = TipoVisita.objects.get(codigo='nueva_visita')
+        self.assertEqual(self.client.patch(reverse('visitas-tipo-detail', args=[item.pk]), {'activo': False}, format='json').status_code, 200)
+        self.assertEqual(self.client.post(reverse('visitas-list-create'), {**self.valid_create_payload(), 'tipo_tarea': item.codigo}, format='json').status_code, 400)
+
+    @override_settings(FRONTEND_PUBLIC_URL='http://localhost')
+    def test_admin_can_complete_visit_with_photo_without_signature_and_pdf_is_protected(self):
+        payload = self.valid_create_payload()
+        payload.pop('cliente_identificacion')
+        payload.pop('valor_visita')
+        payload['completar_ahora'] = 'true'
+        payload['reporte'] = json.dumps({
+            'persona_atiende': 'Cliente de prueba', 'equipo': 'estufa',
+            'ubicacion_equipo': 'cocina', 'motivo_servicio': 'Revisión',
+            'solucion_realizada': 'Equipo revisado',
+        })
+        payload['fotos'] = SimpleUploadedFile(
+            'foto.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+            content_type='image/png',
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            created = self.client.post(reverse('visitas-list-create'), payload, format='multipart')
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertNotIn('pdf_final', created.data)
+        visit = VisitaTecnica.objects.get(pk=created.data['id'])
+        self.assertEqual(visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
+        self.assertEqual(visit.evidencias.count(), 1)
+        self.assertTrue(visit.pdf_final)
+        self.assertEqual(visit.whatsapp_notificacion_estado, 'manual')
+        reader = PdfReader(BytesIO(visit.pdf_final.read()))
+        self.assertGreater(len(reader.pages[0].images), 0, 'El logo no se incorporó al PDF.')
+        text = ''.join(page.extract_text() or '' for page in reader.pages)
+        self.assertIn('Visita finalizada sin firma del cliente', text)
+        self.assertIn('Admin Visitas', text)
+        self.assertNotIn('Indicaciones para llegar', text)
+        self.assertEqual(self.client.get('/media/' + visit.pdf_final.name).status_code, 404)
+        self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk])).status_code, 403)
+
+    @override_settings(FRONTEND_PUBLIC_URL='https://www.imporgasjj.com')
+    def test_definitive_pdf_has_safe_name_all_images_metadata_and_revocable_links(self):
+        def photo(name, color):
+            image = BytesIO()
+            PILImage.new('RGB', (120, 80), color).save(image, format='PNG')
+            return SimpleUploadedFile(name, image.getvalue(), content_type='image/png')
+
+        payload = self.valid_create_payload()
+        payload['cliente_nombre'] = 'Juan Pérez / prueba'
+        payload['completar_ahora'] = 'true'
+        payload['reporte'] = json.dumps({
+            'persona_atiende': 'Juan', 'equipo': 'estufa', 'ubicacion_equipo': 'cocina',
+            'motivo_servicio': 'Revisión', 'solucion_realizada': 'Trabajo terminado',
+        })
+        payload['fotos'] = [photo('roja.png', 'red'), photo('azul.png', 'blue')]
+        with self.captureOnCommitCallbacks(execute=True):
+            created = self.client.post(reverse('visitas-list-create'), payload, format='multipart')
+        self.assertEqual(created.status_code, 201, created.data)
+        visit = VisitaTecnica.objects.get(pk=created.data['id'])
+        self.assertEqual(visit.pdf_estado, 'listo')
+        self.assertRegex(visit.pdf_final.name, r'/VIS-\d{6}-Juan-Perez-prueba\.pdf$')
+        pdf_bytes = visit.pdf_final.read()
+        self.assertEqual(visit.pdf_bytes, len(pdf_bytes))
+        self.assertEqual(visit.pdf_sha256, hashlib.sha256(pdf_bytes).hexdigest())
+        self.assertIsNotNone(visit.pdf_generado_en)
+        self.assertEqual(sum(len(page.images) for page in PdfReader(BytesIO(pdf_bytes)).pages), 3)
+        for evidence in visit.evidencias.all():
+            self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
+            self.assertIsNotNone(evidence.archivada_en)
+            self.assertEqual(self.client.get('/media/' + evidence.imagen.name).status_code, 404)
+        admin_pdf = self.client.get(reverse('visitas-pdf', args=[visit.pk]))
+        self.assertEqual(admin_pdf.status_code, 200)
+        self.assertIn('inline', admin_pdf['Content-Disposition'])
+        self.assertIn('Juan-Perez-prueba.pdf', admin_pdf['Content-Disposition'])
+        detail = self.client.get(reverse('visitas-detail', args=[visit.pk]))
+        photo_url = urlparse(detail.data['evidencias'][0]['imagen'])
+        token = parse_qs(photo_url.query)['token'][0]
+        self.assertEqual(self.client.get(photo_url.path.removeprefix('/api'), {'token': token}).status_code, 200)
+        other_photo_id = detail.data['evidencias'][1]['id']
+        self.assertEqual(self.client.get(reverse('visitas-foto-publica', args=[visit.pk, other_photo_id]), {'token': token}).status_code, 403)
+        pdf_token = signing.dumps({'visit_id': visit.pk, 'version': 1}, salt='visita-pdf-publico')
+        self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk]), {'token': pdf_token}).status_code, 200)
+        self.assertEqual(self.client.post(reverse('visitas-pdf-revocar', args=[visit.pk])).status_code, 200)
+        self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk]), {'token': pdf_token}).status_code, 403)
+        self.assertEqual(self.client.get(photo_url.path.removeprefix('/api'), {'token': token}).status_code, 403)
+        self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[self.visit.pk]), {'token': pdf_token}).status_code, 403)
+        stored_name = visit.pdf_final.name
+        _save_pdf_and_notify(visit.pk)
+        visit.refresh_from_db()
+        self.assertEqual(visit.pdf_final.name, stored_name)
+        self.assertEqual(self.client.post(reverse('visitas-fotos', args=[visit.pk]), {
+            'fotos': photo('tardia.png', 'green'),
+        }, format='multipart').status_code, 409)
+        self.assertEqual(self.client.delete(reverse('visitas-fotos-delete', args=[visit.pk, other_photo_id])).status_code, 409)
+        from openpyxl import load_workbook
+        export = self.client.get(reverse('visitas-exportar'), {
+            'fecha_desde': date.today(), 'fecha_hasta': date.today(), 'estado': 'finalizada',
+        })
+        workbook = load_workbook(BytesIO(export.content))
+        sheet = workbook['Visitas']
+        self.assertIn('VisitasTecnicas', sheet.tables)
+        self.assertEqual(sheet.freeze_panes, 'A2')
+        self.assertEqual(sheet['A1'].fill.fgColor.rgb[-6:], '173A57')
+        self.assertEqual(sheet['B2'].number_format, 'dd/mm/yyyy')
+        self.assertIn('#,##0.00', sheet['I2'].number_format)
+        self.assertEqual(sheet['K2'].value, 'Ver PDF')
+        self.assertTrue(sheet['K2'].hyperlink.target.startswith('https://www.imporgasjj.com/api/visits/'))
+        excel_url = urlparse(sheet['K2'].hyperlink.target)
+        self.assertEqual(self.client.get(excel_url.path.removeprefix('/api'), {
+            'token': parse_qs(excel_url.query)['token'][0],
+        }).status_code, 200)
+        summary = workbook['Resumen']
+        self.assertEqual(summary['B5'].value, 'Finalizada')
+        self.assertEqual(summary['D5'].value, 1)
+
+    def test_pdf_failure_keeps_original_images_and_can_be_retried(self):
+        payload = self.valid_create_payload()
+        payload['completar_ahora'] = 'true'
+        payload['reporte'] = json.dumps({
+            'persona_atiende': 'Cliente', 'equipo': 'estufa', 'ubicacion_equipo': 'cocina',
+            'motivo_servicio': 'Revisión', 'solucion_realizada': 'Trabajo terminado',
+        })
+        payload['fotos'] = SimpleUploadedFile(
+            'evidencia.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+            content_type='image/png',
+        )
+        with patch('AppVisits.views._generar_pdf', side_effect=ValueError('fallo de prueba')):
+            with self.captureOnCommitCallbacks(execute=True):
+                created = self.client.post(reverse('visitas-list-create'), payload, format='multipart')
+        self.assertEqual(created.status_code, 201)
+        visit = VisitaTecnica.objects.get(pk=created.data['id'])
+        evidence = visit.evidencias.get()
+        self.assertEqual(visit.pdf_estado, 'error')
+        self.assertFalse(visit.pdf_final)
+        self.assertIsNone(evidence.archivada_en)
+        self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
+        self.assertEqual(self.client.get(reverse('visitas-pdf', args=[visit.pk])).status_code, 409)
+        retried = self.client.post(reverse('visitas-pdf-reintentar', args=[visit.pk]))
+        self.assertEqual(retried.status_code, 200, retried.data)
+        visit.refresh_from_db()
+        evidence.refresh_from_db()
+        self.assertEqual(visit.pdf_estado, 'listo')
+        self.assertIsNotNone(evidence.archivada_en)
+        self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
+
+    @override_settings(FRONTEND_PUBLIC_URL='https://www.imporgasjj.com')
+    @patch('crmChat.apps.meta.services.dispatch_outbound_message')
+    def test_pdf_whatsapp_only_uses_matching_recent_conversation(self, send):
+        self.visit.estado = VisitaTecnica.ESTADO_FINALIZADA
+        self.visit.cliente.telefono = '3001234567'
+        self.visit.cliente.save(update_fields=['telefono'])
+        self.visit.save(update_fields=['estado'])
+        ReporteVisita.objects.create(
+            visita=self.visit, persona_atiende='Cliente', equipo='estufa',
+            ubicacion_equipo='cocina', motivo_servicio='Revisar', solucion_realizada='Revisado',
+        )
+        integration = ChannelIntegration.objects.create(
+            name='Prueba', channel='whatsapp_web', active=True,
+            connection_status='connected', external_account_id='test-only',
+        )
+        wrong = CRMContact.objects.create(name='Otro', phone='3007654321')
+        session = ChatSession.objects.create(
+            user_name='Otro', contact=wrong, integration=integration,
+            channel='whatsapp_web', external_thread_id='573007654321@s.whatsapp.net',
+            status='active', last_customer_message_at=timezone.now(),
+        )
+        ChatMessage.objects.create(session=session, text='Hola', sender_type='user', direction='inbound', external_message_id='inbound-test-1')
+        _save_pdf_and_notify(self.visit.pk)
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.whatsapp_notificacion_estado, 'manual')
+        send.assert_not_called()
+
+        correct = CRMContact.objects.create(name='Cliente', phone='3001234567')
+        session.contact = correct
+        session.external_thread_id = '573001234567@s.whatsapp.net'
+        session.save(update_fields=['contact', 'external_thread_id'])
+        with override_settings(FRONTEND_PUBLIC_URL='https://backend'):
+            _save_pdf_and_notify(self.visit.pk)
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.whatsapp_notificacion_estado, 'manual')
+        send.assert_not_called()
+        _save_pdf_and_notify(self.visit.pk)
+        send.assert_called_once()
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.whatsapp_notificacion_estado, 'enviada')
+        message = ChatMessage.objects.get(client_message_id=f'visit-pdf-{self.visit.pk}')
+        self.assertIn('https://www.imporgasjj.com/api/visits/', message.text)
+        token = signing.dumps({'visit_id': self.visit.pk}, salt='visita-pdf-publico')
+        response = self.client.get(reverse('visitas-pdf-publico', args=[self.visit.pk]), {'token': token})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        with self.captureOnCommitCallbacks(execute=True):
+            updated = self.client.patch(reverse('visitas-costo', args=[self.visit.pk]), {'valor_visita': 12345}, format='json')
+        self.assertEqual(updated.status_code, 200)
+        self.visit.refresh_from_db()
+        revised_text = ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(self.visit.pdf_final.read())).pages)
+        self.assertIn('12,345', revised_text)
+        send.assert_called_once()
 
     def test_create_rejects_invalid_identity_phone_email_past_date_and_technician(self):
         cases = [

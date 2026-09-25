@@ -2,28 +2,40 @@ from .sync_version import serialize_visit_mutation
 import io
 import os
 import base64
-from datetime import datetime, date
+import re
+import json
+import ipaddress
+import hashlib
+import unicodedata
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+from xml.sax.saxutils import escape
+from urllib.parse import urlencode, urlparse
 
 from django.http import HttpResponse, FileResponse
 from django.db import transaction
 from django.db.models import Q
+from django.urls import reverse
 from django.utils import timezone
 from django.conf import settings
+from django.core import signing
+from django.core.files.base import ContentFile
 from django.core.mail import EmailMessage
 import logging
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework import serializers
 
-from .models import VisitaTecnica, ReporteVisita, EvidenciaFotografica, ClienteVisita
+from .models import VisitaTecnica, ReporteVisita, EvidenciaFotografica, ClienteVisita, TipoVisita, CambioCostoVisita
 from .serializers import (
     VisitaListSerializer, VisitaDetailSerializer,
     VisitaCreateSerializer, VisitaUpdateSerializer,
     ReporteSerializer, ReporteCreateSerializer,
-    EvidenciaSerializer, TecnicoSerializer, ClienteVisitaSerializer,
+    EvidenciaSerializer, EvidenciaResponseSerializer, TecnicoSerializer, ClienteVisitaSerializer, TipoVisitaSerializer,
 )
 from .permissions import IsAdminOrReadOwn, IsAdminUser
 from .notifications import notify_technician_visit_assigned
@@ -42,6 +54,22 @@ def _filter_visitas_by_user(qs, user):
     return qs
 
 
+def _set_visit_cost(visita, value, actor, motivo=''):
+    if visita.valor_visita == value:
+        return False
+    motivo = str(motivo or '').strip()
+    if visita.costo_inicial is not None and value != visita.costo_inicial and not motivo:
+        raise serializers.ValidationError({'motivo_cambio_costo': 'Indica el motivo del cambio respecto al costo inicial.'})
+    previous = visita.valor_visita
+    visita.valor_visita = value
+    visita.save(update_fields=['valor_visita', 'fecha_actualizacion'])
+    ReporteVisita.objects.filter(visita=visita).update(valor_servicio=value)
+    CambioCostoVisita.objects.create(
+        visita=visita, usuario=actor, valor_anterior=previous, valor_nuevo=value, motivo=motivo,
+    )
+    return True
+
+
 def _schedule_visit_assignment_notification(visita_id):
     """Envía FCM solo después de que la asignación quedó confirmada en BD."""
     def send_notification():
@@ -55,6 +83,8 @@ def _enviar_correo_visita_completada(visita):
     """Envía una sola vez el reporte final usando la configuración SMTP existente."""
     if visita.correo_completada_en:
         return False
+
+
     destinatario = (visita.cliente.correo or '').strip()
     if not destinatario:
         visita.correo_completada_error = 'El cliente no tiene correo configurado.'
@@ -86,6 +116,183 @@ def _enviar_correo_visita_completada(visita):
         return False
 
 
+def _normalized_colombian_phone(value):
+    digits = re.sub(r'\D', '', str(value or ''))
+    if len(digits) == 10 and digits.startswith('3'):
+        return '57' + digits
+    if len(digits) == 12 and digits.startswith('573'):
+        return digits
+    return ''
+
+
+def _valid_public_https_base(value):
+    parsed = urlparse(value)
+    host = parsed.hostname or ''
+    if parsed.scheme != 'https' or not host or '.' not in host or host.endswith(('.local', '.internal')):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return True
+
+
+def _pdf_filename(visit):
+    number = re.sub(r'[^A-Za-z0-9-]', '', str(visit.numero_tarea or visit.pk)) or str(visit.pk)
+    if number.isdecimal():
+        number = f'VIS-{int(number):06d}'
+    name = unicodedata.normalize('NFKD', visit.cliente.nombre or '')
+    name = name.encode('ascii', 'ignore').decode('ascii')
+    name = re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-')[:60].strip('-') or 'Cliente'
+    return f'{number}-{name}.pdf'
+
+
+def _public_pdf_url(visit):
+    base = settings.FRONTEND_PUBLIC_URL.rstrip('/')
+    if (not visit.pdf_final or visit.pdf_estado == 'error'
+            or (visit.pdf_source_hash and visit.pdf_source_hash != _pdf_source_hash(visit))
+            or not _valid_public_https_base(base)):
+        return None
+    token = signing.dumps({
+        'visit_id': visit.pk, 'version': visit.pdf_link_version,
+    }, salt='visita-pdf-publico')
+    return f'{base}/api{reverse("visitas-pdf-publico", args=[visit.pk])}?{urlencode({"token": token})}'
+
+
+def _pdf_source_hash(visit):
+    report = visit.reporte
+    payload = {
+        'visit': [visit.pk, visit.numero_tarea, visit.estado, visit.fecha, visit.hora,
+                  visit.tipo_tarea, visit.tipo_tarea_etiqueta, visit.descripcion,
+                  visit.valor_visita, visit.tecnico_id, visit.creado_por_id],
+        'client': [visit.cliente.nombre, visit.cliente.identificacion, visit.cliente.telefono,
+                   visit.cliente.correo, visit.cliente.direccion],
+        'report': [report.pk, report.actualizado_en, report.firma_cliente.name,
+                   report.firma_base64],
+        'photos': list(visit.evidencias.values_list('pk', 'imagen', 'subida_en')),
+    }
+    return hashlib.sha256(json.dumps(payload, default=str, sort_keys=True).encode()).hexdigest()
+
+
+def _persist_visit_pdf(visit_id):
+    """Una versión privada por contenido; conserva versiones anteriores para auditoría."""
+    from pypdf import PdfReader
+    with transaction.atomic():
+        visit = VisitaTecnica.objects.select_for_update().get(pk=visit_id)
+        if not hasattr(visit, 'reporte'):
+            raise ValueError('La visita no tiene reporte.')
+        source_hash = _pdf_source_hash(visit)
+        if (visit.pdf_source_hash == source_hash and visit.pdf_final
+                and visit.pdf_final.storage.exists(visit.pdf_final.name)):
+            return visit
+        pdf = _generar_pdf(visit)
+        if not pdf.startswith(b'%PDF-') or not PdfReader(io.BytesIO(pdf)).pages:
+            raise ValueError('El PDF generado no es válido.')
+        digest = hashlib.sha256(pdf).hexdigest()
+        name = f'visitas_pdf/{visit.pk}/{digest[:16]}/{_pdf_filename(visit)}'
+        storage = visit.pdf_final.storage
+        if storage.exists(name):
+            with storage.open(name, 'rb') as existing:
+                if hashlib.sha256(existing.read()).hexdigest() != digest:
+                    raise ValueError('Existe un archivo PDF distinto con el mismo nombre.')
+        else:
+            stored = storage.save(name, ContentFile(pdf))
+            if stored != name:
+                storage.delete(stored)
+                raise ValueError('No se pudo reservar el nombre del PDF.')
+        visit.pdf_final.name = name
+        visit.pdf_sha256 = digest
+        visit.pdf_source_hash = source_hash
+        visit.pdf_bytes = len(pdf)
+        visit.pdf_generado_en = timezone.now()
+        visit.pdf_estado = 'listo'
+        visit.pdf_error = ''
+        visit.save(update_fields=['pdf_final', 'pdf_sha256', 'pdf_source_hash',
+                                  'pdf_bytes', 'pdf_generado_en', 'pdf_estado', 'pdf_error'])
+        EvidenciaFotografica.objects.filter(visita=visit, archivada_en__isnull=True).update(
+            archivada_en=visit.pdf_generado_en,
+        )
+        return visit
+
+
+def _save_pdf_and_notify(visita_id):
+    """Persistir el PDF después del commit; avisar sólo en chat reactivo verificado."""
+    from crmChat.models import ChatSession, ChatMessage, ChannelIntegration
+    from crmChat.apps.meta.services import dispatch_outbound_message
+
+    visit = VisitaTecnica.objects.select_related('cliente', 'reporte', 'creado_por').get(pk=visita_id)
+    if not hasattr(visit, 'reporte'):
+        return
+    try:
+        visit = _persist_visit_pdf(visita_id)
+    except Exception:
+        logger.exception('No fue posible guardar PDF de visita %s', visita_id)
+        visit.pdf_estado = 'error'
+        visit.pdf_error = 'No se pudo generar o guardar el PDF. Reintenta desde el CRM.'
+        visit.whatsapp_notificacion_estado = 'error'
+        visit.whatsapp_notificacion_error = 'No se pudo generar el PDF.'
+        visit.save(update_fields=['pdf_estado', 'pdf_error', 'whatsapp_notificacion_estado', 'whatsapp_notificacion_error'])
+        return
+
+    phone = _normalized_colombian_phone(visit.cliente.telefono)
+    if not phone:
+        reason = 'Número del cliente no verificable para WhatsApp Web.'
+    else:
+        sessions = ChatSession.objects.select_related('integration', 'contact').filter(
+            channel=ChannelIntegration.CHANNEL_WHATSAPP_WEB,
+            status__in=['bot', 'waiting', 'active'],
+            integration__active=True,
+            integration__connection_status='connected',
+            last_customer_message_at__gte=timezone.now() - timedelta(hours=24),
+        ).order_by('-last_customer_message_at')
+        session = next((item for item in sessions if
+            item.external_thread_id == f'{phone}@s.whatsapp.net' and
+            item.contact and _normalized_colombian_phone(item.contact.phone) == phone and
+            item.messages.filter(sender_type='user', direction='inbound', external_message_id__isnull=False).exists()
+        ), None)
+        reason = '' if session else 'Sin conversación reciente de WhatsApp Web con número verificado.'
+    public_base = settings.FRONTEND_PUBLIC_URL.rstrip('/')
+    if not reason and not _valid_public_https_base(public_base):
+        reason = 'La URL pública HTTPS no está configurada.'
+    if reason:
+        visit.whatsapp_notificacion_estado = 'manual'
+        visit.whatsapp_notificacion_error = reason
+        visit.save(update_fields=['whatsapp_notificacion_estado', 'whatsapp_notificacion_error'])
+        return
+
+    link = _public_pdf_url(visit)
+    text = f'La visita técnica #{visit.numero_tarea} ha finalizado. Descargue el informe: {link}'
+    message, created = ChatMessage.objects.get_or_create(
+        client_message_id=f'visit-pdf-{visit.pk}',
+        defaults={
+            'session': session, 'text': text, 'sender_type': 'agent',
+            'direction': 'outbound', 'status': 'queued',
+            'metadata': {'origin': 'visit_completion', 'visit_id': visit.pk},
+        },
+    )
+    if not created:
+        return
+    try:
+        dispatch_outbound_message(message)
+        visit.whatsapp_notificacion_estado = 'enviada'
+        visit.whatsapp_notificacion_error = ''
+    except Exception as exc:
+        logger.warning('No se pudo entregar PDF de visita %s mediante WhatsApp Web: %s', visit.pk, type(exc).__name__)
+        visit.whatsapp_notificacion_estado = 'error'
+        visit.whatsapp_notificacion_error = str(exc)[:300]
+    visit.save(update_fields=['whatsapp_notificacion_estado', 'whatsapp_notificacion_error'])
+
+
+def _refresh_saved_pdf(visita_id):
+    visit = VisitaTecnica.objects.select_related('cliente', 'reporte', 'creado_por').get(pk=visita_id)
+    if visit.estado != VisitaTecnica.ESTADO_FINALIZADA or not hasattr(visit, 'reporte'):
+        return
+    try:
+        _persist_visit_pdf(visita_id)
+    except Exception:
+        logger.exception('No fue posible actualizar PDF de visita %s', visita_id)
+        VisitaTecnica.objects.filter(pk=visita_id).update(
+            pdf_estado='error', pdf_error='No se pudo actualizar el PDF. Reintenta desde el CRM.',
+        )
 # ─── Technicians list ──────────────────────────────────────────────────────────
 
 class TecnicosView(APIView):
@@ -100,14 +307,45 @@ class TecnicosView(APIView):
         return Response(data)
 
 
+class TiposVisitaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'tipo_usuario', 0) < 1:
+            return Response({'detail': 'No permitido.'}, status=403)
+        qs = TipoVisita.objects.all() if request.user.tipo_usuario >= 2 else TipoVisita.objects.filter(activo=True)
+        return Response(TipoVisitaSerializer(qs, many=True).data)
+
+    def post(self, request):
+        if getattr(request.user, 'tipo_usuario', 0) < 2:
+            return Response({'detail': 'Solo administradores.'}, status=403)
+        serializer = TipoVisitaSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(TipoVisitaSerializer(serializer.save()).data, status=201)
+
+
+class TipoVisitaDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def patch(self, request, pk):
+        try:
+            item = TipoVisita.objects.get(pk=pk)
+        except TipoVisita.DoesNotExist:
+            return Response({'detail': 'Tipo no encontrado.'}, status=404)
+        serializer = TipoVisitaSerializer(item, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        return Response(TipoVisitaSerializer(serializer.save()).data)
+
+
 # ─── Visits list / create ──────────────────────────────────────────────────────
 
 class VisitaListCreateView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         qs = VisitaTecnica.objects.select_related(
-            'cliente', 'tecnico', 'tecnico__usuario_rel'
+            'cliente', 'tecnico', 'tecnico__usuario_rel', 'creado_por', 'creado_por__usuario_rel'
         ).prefetch_related('evidencias')
 
         qs = _filter_visitas_by_user(qs, request.user)
@@ -161,11 +399,63 @@ class VisitaListCreateView(APIView):
         if tipo < 2:
             return Response({'error': 'Solo administradores pueden crear visitas.'}, status=403)
 
+        complete_now = str(request.data.get('completar_ahora', '')).lower() in ('true', '1')
+        if request.data.get('completar_ahora') not in (None, '', False, True, 'true', 'false', '1', '0'):
+            return Response({'completar_ahora': 'Valor inválido.'}, status=400)
+        photos = request.FILES.getlist('fotos')
+        if len(photos) > 20:
+            return Response({'fotos': 'Máximo 20 fotografías.'}, status=400)
+        for photo in photos:
+            evidence = EvidenciaSerializer(data={'imagen': photo})
+            evidence.is_valid(raise_exception=True)
+            photo.seek(0)
+        signature = request.FILES.get('firma_cliente')
+        if signature and not complete_now:
+            return Response({'firma_cliente': 'La firma sólo corresponde a una visita completada.'}, status=400)
+        if signature:
+            if signature.size > 1024 * 1024:
+                return Response({'firma_cliente': 'La firma no puede superar 1 MB.'}, status=400)
+            serializers.ImageField().run_validation(signature)
+            signature.seek(0)
+        report_data = {}
+        report_serializer = None
+        if complete_now:
+            try:
+                report_data = json.loads(request.data.get('reporte', '{}'))
+            except (TypeError, ValueError):
+                return Response({'reporte': 'JSON inválido.'}, status=400)
+            if not isinstance(report_data, dict):
+                return Response({'reporte': 'Debe ser un objeto.'}, status=400)
+            for field in ('persona_atiende', 'motivo_servicio', 'solucion_realizada'):
+                if not str(report_data.get(field, '')).strip():
+                    return Response({'reporte': {field: 'Este campo es obligatorio.'}}, status=400)
+            for selector, extra in (('equipo', 'equipo_otro'), ('ubicacion_equipo', 'ubicacion_otro')):
+                if report_data.get(selector) == 'otro' and not str(report_data.get(extra, '')).strip():
+                    return Response({'reporte': {extra: 'Especifica el valor de otro.'}}, status=400)
+            raw_cost = request.data.get('valor_visita')
+            report_data['valor_servicio'] = None if raw_cost in ('', None) else raw_cost
+            report_serializer = ReporteCreateSerializer(data=report_data)
+            report_serializer.is_valid(raise_exception=True)
         serializer = VisitaCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            visita = serializer.save()
-            if visita.tecnico_id:
-                _schedule_visit_assignment_notification(visita.pk)
+            with transaction.atomic():
+                visita = serializer.save()
+                for index, photo in enumerate(photos):
+                    EvidenciaFotografica.objects.create(visita=visita, imagen=photo, orden=index)
+                if report_serializer:
+                    report = report_serializer.save(visita=visita)
+                    if signature:
+                        report.firma_cliente = signature
+                        report.save(update_fields=['firma_cliente'])
+                    visita.estado = VisitaTecnica.ESTADO_FINALIZADA
+                    visita.save(update_fields=['estado', 'fecha_actualizacion'])
+                    transaction.on_commit(lambda visit_id=visita.pk: _save_pdf_and_notify(visit_id), robust=True)
+                if visita.valor_visita is not None:
+                    CambioCostoVisita.objects.create(
+                        visita=visita, usuario=request.user, valor_anterior=None, valor_nuevo=visita.valor_visita,
+                    )
+                if visita.tecnico_id and not complete_now:
+                    _schedule_visit_assignment_notification(visita.pk)
             return Response(VisitaDetailSerializer(visita).data, status=201)
         return Response(serializer.errors, status=400)
 
@@ -208,13 +498,24 @@ class VisitaDetailView(APIView):
                 status=400,
             )
         previous_technician_id = v.tecnico_id
+        previous_cost = v.valor_visita
+        motivo = request.data.get('motivo_cambio_costo', '')
         serializer = VisitaUpdateSerializer(v, data=request.data, partial=True)
         if serializer.is_valid():
             visita = serializer.save()
+            if visita.valor_visita != previous_cost:
+                if visita.costo_inicial is not None and visita.valor_visita != visita.costo_inicial and not str(motivo).strip():
+                    raise serializers.ValidationError({'motivo_cambio_costo': 'Indica el motivo del cambio.'})
+                CambioCostoVisita.objects.create(
+                    visita=visita, usuario=request.user,
+                    valor_anterior=previous_cost, valor_nuevo=visita.valor_visita, motivo=str(motivo).strip(),
+                )
+                ReporteVisita.objects.filter(visita=visita).update(valor_servicio=visita.valor_visita)
             if visita.tecnico_id and visita.tecnico_id != previous_technician_id:
                 _schedule_visit_assignment_notification(visita.pk)
             return Response(VisitaDetailSerializer(v).data)
         return Response(serializer.errors, status=400)
+
 
     @serialize_visit_mutation
     def delete(self, request, pk):
@@ -228,6 +529,201 @@ class VisitaDetailView(APIView):
         v.delete()
         return Response(status=204)
 
+
+class CostoVisitaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        if getattr(request.user, 'tipo_usuario', 0) < 1:
+            return Response({'detail': 'No permitido.'}, status=403)
+        field = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True, min_value=Decimal('0'))
+        if 'valor_visita' not in request.data:
+            return Response({'valor_visita': 'Este campo es obligatorio.'}, status=400)
+        try:
+            raw_value = request.data['valor_visita']
+            value = None if raw_value == '' else field.run_validation(raw_value)
+        except serializers.ValidationError as exc:
+            return Response({'valor_visita': exc.detail}, status=400)
+        with transaction.atomic():
+            qs = _filter_visitas_by_user(VisitaTecnica.objects.select_for_update(), request.user)
+            try:
+                visita = qs.get(pk=pk)
+            except VisitaTecnica.DoesNotExist:
+                return Response({'detail': 'Visita no encontrada o no asignada.'}, status=404)
+            if visita.estado in (VisitaTecnica.ESTADO_FINALIZADA, VisitaTecnica.ESTADO_CANCELADA) and request.user.tipo_usuario < 2:
+                return Response({'detail': 'Solo un administrador puede ajustar el costo de una visita cerrada.'}, status=403)
+            changed = _set_visit_cost(visita, value, request.user, request.data.get('motivo_cambio_costo', ''))
+            if changed and visita.estado == VisitaTecnica.ESTADO_FINALIZADA:
+                transaction.on_commit(lambda visit_id=visita.pk: _refresh_saved_pdf(visit_id), robust=True)
+        return Response(VisitaDetailSerializer(VisitaTecnica.objects.select_related('cliente', 'tecnico', 'creado_por').get(pk=pk)).data)
+
+
+def _safe_excel_text(value):
+    text = str(value or '')
+    return "'" + text if text.lstrip().startswith(('=', '+', '-', '@', '\t', '\r')) else text
+
+
+class ExportarVisitasView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'tipo_usuario', 0) < 1:
+            return Response({'detail': 'No permitido.'}, status=403)
+        try:
+            start = date.fromisoformat(request.query_params['fecha_desde'])
+            end = date.fromisoformat(request.query_params['fecha_hasta'])
+        except (KeyError, ValueError):
+            return Response({'detail': 'Indica fechas válidas en formato AAAA-MM-DD.'}, status=400)
+        if start > end:
+            return Response({'detail': 'La fecha inicial debe ser anterior o igual a la final.'}, status=400)
+        qs = _filter_visitas_by_user(
+            VisitaTecnica.objects.select_related(
+                'cliente', 'tecnico__usuario_rel', 'creado_por__usuario_rel', 'reporte',
+            ).prefetch_related('evidencias').filter(fecha__range=(start, end)), request.user,
+        )
+        tecnico_id = request.query_params.get('tecnico_id')
+        if tecnico_id and tecnico_id != 'all':
+            if not tecnico_id.isdecimal():
+                return Response({'tecnico_id': 'Técnico inválido.'}, status=400)
+            qs = qs.filter(tecnico_id=int(tecnico_id))
+        tipo = request.query_params.get('tipo_tarea')
+        if tipo and tipo != 'all':
+            qs = qs.filter(tipo_tarea=tipo)
+        state = request.query_params.get('estado', 'all')
+        if state not in ('all', 'pendiente', 'en_proceso', 'finalizada', 'cancelada'):
+            return Response({'estado': 'Estado inválido.'}, status=400)
+        if state != 'all':
+            qs = qs.filter(estado=state)
+        from collections import defaultdict
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+        from openpyxl.worksheet.table import Table as ExcelTable, TableStyleInfo
+        from openpyxl.utils import get_column_letter
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = 'Visitas'
+        sheet.sheet_view.showGridLines = False
+        headers = ['Número de visita', 'Fecha', 'Creada por', 'Técnico', 'Cliente',
+                   'Teléfono', 'Tipo de servicio', 'Costo inicial', 'Costo final',
+                   'Estado', 'PDF']
+        sheet.append(headers)
+        navy = '173A57'
+        gold = 'E9AF43'
+        pale = 'EAF2F7'
+        for cell in sheet[1]:
+            cell.fill = PatternFill('solid', fgColor=navy)
+            cell.font = Font(name='Aptos', size=11, bold=True, color='FFFFFF')
+            cell.alignment = Alignment(vertical='center', wrap_text=True)
+            cell.border = Border(bottom=Side(style='medium', color=gold))
+        sheet.row_dimensions[1].height = 30
+        width_caps = [24, 16, 36, 36, 40, 22, 44, 20, 20, 20, 19]
+        width_minimums = [18, 15, 20, 20, 20, 17, 24, 17, 17, 16, 16]
+        observed_widths = [len(header) for header in headers]
+        grouped_tech = defaultdict(lambda: [0, Decimal('0')])
+        grouped_type = defaultdict(lambda: [0, Decimal('0')])
+        grouped_state = defaultdict(int)
+        count = 0
+        total_cost = Decimal('0')
+        for visit in qs.order_by('fecha', 'id').iterator(chunk_size=100):
+            creator = visit.creado_por.usuario_rel.nombre_completo if visit.creado_por and visit.creado_por.usuario_rel else (visit.creado_por.usuario if visit.creado_por else '')
+            technician = visit.tecnico.usuario_rel.nombre_completo if visit.tecnico and visit.tecnico.usuario_rel else (visit.tecnico.usuario if visit.tecnico else '')
+            type_name = visit.get_tipo_tarea_display()
+            cost = visit.valor_visita if visit.valor_visita is not None else Decimal('0')
+            count += 1
+            total_cost += cost
+            grouped_tech[technician or 'Sin técnico'][0] += 1
+            grouped_tech[technician or 'Sin técnico'][1] += cost
+            grouped_type[type_name][0] += 1
+            grouped_type[type_name][1] += cost
+            grouped_state[visit.get_estado_display()] += 1
+            link = _public_pdf_url(visit) if visit.estado == VisitaTecnica.ESTADO_FINALIZADA else None
+            sheet.append([
+                _safe_excel_text(visit.numero_tarea), visit.fecha,
+                _safe_excel_text(creator), _safe_excel_text(technician),
+                _safe_excel_text(visit.cliente.nombre), _safe_excel_text(visit.cliente.telefono),
+                _safe_excel_text(type_name), visit.costo_inicial,
+                visit.valor_visita, visit.get_estado_display(),
+                'Ver PDF' if link else 'No disponible',
+            ])
+            row = sheet.max_row
+            for column, cell in enumerate(sheet[row], start=1):
+                observed_widths[column - 1] = max(observed_widths[column - 1],
+                                                  10 if column == 2 else len(str(cell.value or '')))
+                cell.font = Font(name='Aptos', size=10, color='173A57')
+                cell.alignment = Alignment(vertical='center', wrap_text=column in (3, 4, 5, 7))
+                if row % 2 == 0:
+                    cell.fill = PatternFill('solid', fgColor=pale)
+            sheet.cell(row, 2).number_format = 'dd/mm/yyyy'
+            for column in (8, 9):
+                sheet.cell(row, column).number_format = '"$" #,##0.00'
+                sheet.cell(row, column).alignment = Alignment(horizontal='right', vertical='center')
+            if link:
+                pdf_cell = sheet.cell(row, 11)
+                pdf_cell.hyperlink = link
+                pdf_cell.font = Font(name='Aptos', size=10, color='1463A5', underline='single')
+            sheet.row_dimensions[row].height = 22
+        sheet.freeze_panes = 'A2'
+        for index, (observed, minimum, cap) in enumerate(
+                zip(observed_widths, width_minimums, width_caps), start=1):
+            sheet.column_dimensions[get_column_letter(index)].width = min(cap, max(minimum, observed + 2))
+        table = ExcelTable(displayName='VisitasTecnicas', ref=f'A1:K{max(sheet.max_row, 2)}') if count else None
+        if table:
+            table.tableStyleInfo = TableStyleInfo(name='TableStyleMedium2', showFirstColumn=False,
+                                                  showLastColumn=False, showRowStripes=True,
+                                                  showColumnStripes=False)
+            sheet.add_table(table)
+        else:
+            sheet.auto_filter.ref = 'A1:K1'
+
+        summary = workbook.create_sheet('Resumen')
+        summary.sheet_view.showGridLines = False
+        summary.append(['IMPORGAS JJ · Resumen de visitas'])
+        summary['A1'].font = Font(name='Aptos Display', bold=True, size=16, color='FFFFFF')
+        summary['A1'].fill = PatternFill('solid', fgColor=navy)
+        summary.merge_cells('A1:D1')
+        summary.append(['Generado', timezone.localtime(timezone.now()).strftime('%d/%m/%Y %H:%M')])
+        summary.append(['Desde', start, 'Hasta', end])
+        summary['B3'].number_format = 'dd/mm/yyyy'
+        summary['D3'].number_format = 'dd/mm/yyyy'
+        if tecnico_id and tecnico_id != 'all':
+            selected_technician = Credenciales.objects.filter(pk=int(tecnico_id)).select_related('usuario_rel').first()
+            technician_filter = (selected_technician.usuario_rel.nombre_completo
+                                 if selected_technician and selected_technician.usuario_rel
+                                 else (selected_technician.usuario if selected_technician else tecnico_id))
+        else:
+            technician_filter = 'Todos'
+        selected_type = TipoVisita.objects.filter(codigo=tipo).first() if tipo and tipo != 'all' else None
+        type_filter = selected_type.nombre if selected_type else (tipo if tipo and tipo != 'all' else 'Todos')
+        state_filter = dict(VisitaTecnica.ESTADO_CHOICES).get(state, 'Todos')
+        summary.append(['Técnico', _safe_excel_text(technician_filter), 'Servicio', _safe_excel_text(type_filter)])
+        summary.append(['Estado', state_filter, 'Visitas', count])
+        summary.append(['Costo final total', total_cost])
+        summary['B6'].number_format = '"$" #,##0.00'
+        summary.append([])
+        for title, groups in (('Por técnico', grouped_tech), ('Por servicio', grouped_type)):
+            summary.append([title, 'Visitas', 'Costo final total'])
+            header_row = summary.max_row
+            for cell in summary[header_row][:3]:
+                cell.fill = PatternFill('solid', fgColor=navy)
+                cell.font = Font(bold=True, color='FFFFFF')
+            for name, values in sorted(groups.items()):
+                summary.append([_safe_excel_text(name), values[0], values[1]])
+                summary.cell(summary.max_row, 3).number_format = '"$" #,##0.00'
+            summary.append([])
+        summary.append(['Por estado', 'Visitas'])
+        for cell in summary[summary.max_row][:2]:
+            cell.fill = PatternFill('solid', fgColor=navy)
+            cell.font = Font(bold=True, color='FFFFFF')
+        for name, amount in sorted(grouped_state.items()):
+            summary.append([_safe_excel_text(name), amount])
+        for column, width in {'A': 39, 'B': 22, 'C': 25, 'D': 18}.items():
+            summary.column_dimensions[column].width = width
+        summary.freeze_panes = 'A2'
+        output = io.BytesIO()
+        workbook.save(output)
+        response = HttpResponse(output.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename="visitas.xlsx"'
+        return response
 
 # ─── Start visit ──────────────────────────────────────────────────────────────
 
@@ -287,6 +783,9 @@ class FinalizarVisitaView(APIView):
             return Response({'error': 'La visita ya fue finalizada o cancelada.'}, status=400)
 
         reporte_data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        motivo_cambio_costo = reporte_data.pop('motivo_cambio_costo', '')
+        if isinstance(motivo_cambio_costo, list):
+            motivo_cambio_costo = motivo_cambio_costo[0]
         firma = reporte_data.pop('firma_cliente', None)
         if isinstance(firma, list):
             firma = firma[0]
@@ -295,19 +794,52 @@ class FinalizarVisitaView(APIView):
         firma_b64 = reporte_data.pop('firma_base64', None)
         if isinstance(firma_b64, list):
             firma_b64 = firma_b64[0]
+        if firma:
+            serializers.ImageField().run_validation(firma)
+            firma.seek(0)
+        signature_file = None
+        signature_ext = 'png'
+        if firma_b64:
+            try:
+                signature_ext = 'jpg' if str(firma_b64).startswith('data:image/jpeg;') else 'png'
+                raw = base64.b64decode(str(firma_b64).split(';base64,')[-1], validate=True)
+                if len(raw) > 1024 * 1024:
+                    raise ValueError('Firma demasiado grande')
+                signature_file = ContentFile(raw, name=f'firma.{signature_ext}')
+                serializers.ImageField().run_validation(signature_file)
+                signature_file.seek(0)
+            except Exception:
+                return Response({'firma_base64': 'La firma debe ser una imagen válida de máximo 1 MB.'}, status=400)
 
-        reporte, _ = ReporteVisita.objects.get_or_create(visita=v, defaults={
-            'persona_atiende': '',
-            'equipo': 'estufa',
-            'ubicacion_equipo': 'cocina',
-            'motivo_servicio': '',
-            'solucion_realizada': '',
-        })
+        reporte = ReporteVisita.objects.filter(visita=v).first()
+        if reporte is None:
+            reporte = ReporteVisita(
+                visita=v, persona_atiende='', equipo='estufa',
+                ubicacion_equipo='cocina', motivo_servicio='', solucion_realizada='',
+            )
 
+        if reporte_data.get('valor_servicio') in ('', None):
+            reporte_data['valor_servicio'] = v.valor_visita
         serializer = ReporteCreateSerializer(reporte, data=reporte_data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
+        candidate = {
+            field: serializer.validated_data.get(field, getattr(reporte, field))
+            for field in ('persona_atiende', 'motivo_servicio', 'solucion_realizada',
+                          'equipo', 'equipo_otro', 'ubicacion_equipo', 'ubicacion_otro')
+        }
+        for field in ('persona_atiende', 'motivo_servicio', 'solucion_realizada'):
+            if not str(candidate[field]).strip():
+                return Response({field: 'Este campo es obligatorio.'}, status=400)
+        for selector, extra in (('equipo', 'equipo_otro'), ('ubicacion_equipo', 'ubicacion_otro')):
+            if candidate[selector] == 'otro' and not str(candidate[extra]).strip():
+                return Response({extra: 'Especifica el valor de otro.'}, status=400)
         reporte = serializer.save()
+        if 'valor_servicio' in serializer.validated_data:
+            _set_visit_cost(v, reporte.valor_servicio, request.user, motivo_cambio_costo)
+        else:
+            reporte.valor_servicio = v.valor_visita
+            reporte.save(update_fields=['valor_servicio'])
 
         # Save signature
         if firma:
@@ -316,27 +848,14 @@ class FinalizarVisitaView(APIView):
 
         if firma_b64:
             reporte.firma_base64 = firma_b64
-            try:
-                firma_str = firma_b64.strip()
-                if ';base64,' in firma_str:
-                    fmt, imgstr = firma_str.split(';base64,')
-                    ext = fmt.split('/')[-1] if '/' in fmt else 'png'
-                else:
-                    imgstr = firma_str
-                    ext = 'png'
-                img_bytes = base64.b64decode(imgstr)
-                from django.core.files.base import ContentFile
-                reporte.firma_cliente.save(
-                    f'firma_{v.numero_tarea}.{ext}',
-                    ContentFile(img_bytes),
-                    save=False,
-                )
-            except Exception:
-                pass
+            reporte.firma_cliente.save(
+                f'firma_{v.numero_tarea}.{signature_ext}', signature_file, save=False,
+            )
             reporte.save(update_fields=['firma_base64', 'firma_cliente'])
 
         v.estado = VisitaTecnica.ESTADO_FINALIZADA
         v.save(update_fields=['estado', 'fecha_actualizacion'])
+        transaction.on_commit(lambda visit_id=v.pk: _save_pdf_and_notify(visit_id), robust=True)
 
         correo_enviado = _enviar_correo_visita_completada(v)
 
@@ -361,6 +880,8 @@ class FotosView(APIView):
             v = qs.get(pk=pk)
         except VisitaTecnica.DoesNotExist:
             return Response({'error': 'Visita no encontrada.'}, status=404)
+        if v.estado in (VisitaTecnica.ESTADO_FINALIZADA, VisitaTecnica.ESTADO_CANCELADA):
+            return Response({'detail': 'Las evidencias de una visita cerrada no se pueden modificar.'}, status=409)
 
         fotos = request.FILES.getlist('fotos')
         if not fotos:
@@ -383,7 +904,7 @@ class FotosView(APIView):
             )
             evidencias.append(e)
 
-        return Response(EvidenciaSerializer(evidencias, many=True).data, status=201)
+        return Response(EvidenciaResponseSerializer(evidencias, many=True).data, status=201)
 
     @serialize_visit_mutation
     def delete(self, request, pk, foto_id):
@@ -394,9 +915,57 @@ class FotosView(APIView):
             e = EvidenciaFotografica.objects.get(pk=foto_id, visita=v)
         except (VisitaTecnica.DoesNotExist, EvidenciaFotografica.DoesNotExist):
             return Response({'error': 'No encontrado.'}, status=404)
+        if v.estado in (VisitaTecnica.ESTADO_FINALIZADA, VisitaTecnica.ESTADO_CANCELADA):
+            return Response({'detail': 'Las evidencias de una visita cerrada no se pueden modificar.'}, status=409)
 
         e.delete()
         return Response(status=204)
+
+
+class FotoPublicaView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, pk, foto_id):
+        try:
+            payload = signing.loads(request.query_params.get('token', ''),
+                                    salt='visita-foto-publica', max_age=24 * 3600)
+        except signing.BadSignature:
+            return Response({'detail': 'Enlace inválido o vencido.'}, status=403)
+        evidence = EvidenciaFotografica.objects.select_related('visita').filter(pk=foto_id, visita_id=pk).first()
+        if (not evidence or payload.get('visit_id') != pk or payload.get('photo_id') != foto_id
+                or payload.get('version') != evidence.visita.pdf_link_version):
+            return Response({'detail': 'Imagen no disponible.'}, status=403)
+        extension = evidence.imagen.name.rsplit('.', 1)[-1].lower()
+        content_type = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                        'webp': 'image/webp'}.get(extension, 'application/octet-stream')
+        response = FileResponse(evidence.imagen.open('rb'), content_type=content_type)
+        response['Cache-Control'] = 'private, no-store'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
+
+
+class FirmaPublicaView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, pk):
+        try:
+            payload = signing.loads(request.query_params.get('token', ''),
+                                    salt='visita-firma-publica', max_age=24 * 3600)
+        except signing.BadSignature:
+            return Response({'detail': 'Enlace inválido o vencido.'}, status=403)
+        visit = VisitaTecnica.objects.filter(pk=pk).first()
+        if (not visit or payload.get('visit_id') != pk
+                or payload.get('version') != visit.pdf_link_version
+                or not hasattr(visit, 'reporte') or not visit.reporte.firma_cliente):
+            return Response({'detail': 'Firma no disponible.'}, status=403)
+        filename = visit.reporte.firma_cliente.name.lower()
+        content_type = 'image/jpeg' if filename.endswith(('.jpg', '.jpeg')) else 'image/png'
+        response = FileResponse(visit.reporte.firma_cliente.open('rb'), content_type=content_type)
+        response['Cache-Control'] = 'private, no-store'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
 
 
 # ─── Calendar ─────────────────────────────────────────────────────────────────
@@ -461,13 +1030,76 @@ class PDFReporteView(APIView):
         except VisitaTecnica.DoesNotExist:
             return Response({'error': 'Visita no encontrada.'}, status=404)
 
-        if not hasattr(v, 'reporte'):
-            return Response({'error': 'Esta visita no tiene reporte aún.'}, status=400)
-
-        pdf_buffer = _generar_pdf(v)
-        response = HttpResponse(pdf_buffer, content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="reporte_{v.numero_tarea}.pdf"'
+        if not v.pdf_final or v.pdf_estado == 'error' or (
+                v.pdf_source_hash and v.pdf_source_hash != _pdf_source_hash(v)):
+            return Response({'detail': 'El PDF definitivo no está disponible. Reintenta su generación.'}, status=409)
+        response = FileResponse(v.pdf_final.open('rb'), content_type='application/pdf',
+                                filename=_pdf_filename(v),
+                                as_attachment=request.query_params.get('download') == '1')
+        response['Cache-Control'] = 'private, no-store'
+        response['X-Content-Type-Options'] = 'nosniff'
         return response
+
+
+class PDFPublicoView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, pk):
+        try:
+            payload = signing.loads(
+                request.query_params.get('token', ''),
+                salt='visita-pdf-publico', max_age=7 * 24 * 3600,
+            )
+        except signing.BadSignature:
+            return Response({'detail': 'Enlace inválido o vencido.'}, status=403)
+        visit = VisitaTecnica.objects.filter(pk=pk, estado=VisitaTecnica.ESTADO_FINALIZADA).first()
+        if (not visit or payload.get('visit_id') != pk
+                or payload.get('version', 1) != visit.pdf_link_version):
+            return Response({'detail': 'Enlace inválido.'}, status=403)
+        if not visit.pdf_final or visit.pdf_estado == 'error' or (
+                visit.pdf_source_hash and visit.pdf_source_hash != _pdf_source_hash(visit)):
+            return Response({'detail': 'Informe no disponible.'}, status=404)
+        response = FileResponse(
+            visit.pdf_final.open('rb'), as_attachment=request.query_params.get('download') == '1',
+            filename=_pdf_filename(visit), content_type='application/pdf',
+        )
+        response['Cache-Control'] = 'private, no-store'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
+
+
+class RevocarEnlacesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        if getattr(request.user, 'tipo_usuario', 0) < 2:
+            return Response({'detail': 'Solo administradores pueden revocar enlaces.'}, status=403)
+        visit = VisitaTecnica.objects.select_for_update().filter(pk=pk).first()
+        if not visit:
+            return Response({'detail': 'Visita no encontrada.'}, status=404)
+        visit.pdf_link_version += 1
+        visit.save(update_fields=['pdf_link_version'])
+        return Response({'detail': 'Enlaces anteriores revocados.'})
+
+
+class ReintentarPdfView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if getattr(request.user, 'tipo_usuario', 0) < 2:
+            return Response({'detail': 'Solo administradores pueden reintentar el PDF.'}, status=403)
+        visit = VisitaTecnica.objects.filter(pk=pk, estado=VisitaTecnica.ESTADO_FINALIZADA).first()
+        if not visit or not hasattr(visit, 'reporte'):
+            return Response({'detail': 'Visita finalizada no encontrada.'}, status=404)
+        try:
+            visit = _persist_visit_pdf(pk)
+        except Exception:
+            logger.exception('No fue posible regenerar PDF de visita %s', pk)
+            VisitaTecnica.objects.filter(pk=pk).update(pdf_estado='error', pdf_error='No se pudo generar o guardar el PDF.')
+            return Response({'detail': 'No se pudo generar el PDF. Las imágenes se conservaron.'}, status=500)
+        return Response({'pdf_disponible': True, 'pdf_sha256': visit.pdf_sha256})
 
 
 def _generar_pdf(visita: VisitaTecnica) -> bytes:
@@ -477,7 +1109,7 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
     from reportlab.lib.units import cm
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
-        Spacer, Image as RLImage, HRFlowable
+        Spacer, Image as RLImage, HRFlowable, KeepTogether
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
@@ -506,34 +1138,58 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         if visita.tecnico and visita.tecnico.usuario_rel
         else (visita.tecnico.usuario if visita.tecnico else 'No asignado')
     )
+    creator_name = (
+        visita.creado_por.usuario_rel.nombre_completo
+        if visita.creado_por and visita.creado_por.usuario_rel
+        else (visita.creado_por.usuario if visita.creado_por else 'No registrado')
+    )
 
     story = []
     w = A4[0] - 3 * cm  # usable width
 
+    # El SVG oficial incluye el logotipo como PNG incrustado. Se extrae la
+    # imagen real para que ReportLab la incorpore al archivo PDF.
+    logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'logo_imporgas.svg')
+    with open(logo_path, 'r', encoding='utf-8') as logo_file:
+        logo_svg = logo_file.read()
+    logo_match = re.search(r'data:image/png;base64,([A-Za-z0-9+/=]+)', logo_svg)
+    if not logo_match:
+        raise ValueError('El logo SVG no contiene una imagen PNG válida.')
+    logo_buffer = BytesIO(base64.b64decode(logo_match.group(1), validate=True))
+    with PILImage.open(logo_buffer) as logo_source:
+        logo_ratio = logo_source.height / logo_source.width
+    logo_buffer.seek(0)
+    logo_height = 2.75 * cm
+    logo = RLImage(logo_buffer, width=logo_height / logo_ratio, height=logo_height)
+
     # ── Header ──
     header_data = [[
+        logo,
         Paragraph('<b>Informes de tareas</b><br/>'
-                  '<b>DEPARTAMENTO DE SERVICIO TECNICO IMPORGAS JJ</b><br/>'
-                  'Teléfono: 3165266734 3176467820<br/>'
+                  '<b>DEPARTAMENTO DE SERVICIO TÉCNICO</b><br/>'
+                  '<b>IMPORGAS JJ</b><br/>'
+                  'Teléfono: 3165266734 / 3176467820<br/>'
                   'Número de identificación empresarial:<br/>'
                   'Email: servicioimporgas@gmail.com<br/>'
                   'Dirección: Sede Norte / Sede Sur', normal),
     ]]
-    header_table = Table(header_data, colWidths=[w])
+    header_table = Table(header_data, colWidths=[3.5 * cm, w - 3.5 * cm])
     header_table.setStyle(TableStyle([
         ('BOX', (0, 0), (-1, -1), 0.5, colors.black),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
         ('TOPPADDING', (0, 0), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (0, 0), 'CENTER'),
     ]))
     story.append(header_table)
     story.append(Spacer(1, 0.3 * cm))
 
     # ── Client + Task number ──
     client_header = [[
-        Paragraph(f'<b>{c.nombre.upper()}</b>', bold),
-        Paragraph(f'<b>Tarea {visita.numero_tarea}</b>', bold),
+        Paragraph(f'<b>{escape(c.nombre.upper())}</b>', bold),
+        Paragraph(f'<b>Tarea {escape(str(visita.numero_tarea))}</b>', bold),
     ]]
     ct = Table(client_header, colWidths=[w * 0.7, w * 0.3])
     ct.setStyle(TableStyle([
@@ -551,9 +1207,9 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
     # ── Client info ──
     story.append(Paragraph('<b>Informaciones del cliente</b>', bold))
     ci_data = [
-        [Paragraph('<b>Identificación Personal/Empresarial</b>', small), Paragraph(c.identificacion or '', normal)],
-        [Paragraph('<b>Teléfono</b>', small), Paragraph(c.telefono or '', normal)],
-        [Paragraph('<b>Email</b>', small), Paragraph(c.correo or '', normal)],
+        [Paragraph('<b>Identificación Personal/Empresarial</b>', small), Paragraph(escape(c.identificacion or ''), normal)],
+        [Paragraph('<b>Teléfono</b>', small), Paragraph(escape(c.telefono or ''), normal)],
+        [Paragraph('<b>Email</b>', small), Paragraph(escape(c.correo or ''), normal)],
     ]
     ci_table = Table(ci_data, colWidths=[w * 0.3, w * 0.7])
     ci_table.setStyle(TableStyle([
@@ -575,9 +1231,10 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
     act_data = [
         ['Para', tecnico_nombre, 'Tipo de tarea', visita.get_tipo_tarea_display()],
         ['Fecha', fecha_str, 'Estado', visita.get_estado_display()],
-        ['Dirección', Paragraph(c.direccion, normal), '', ''],
-        ['Descripción de la tarea', Paragraph(visita.descripcion or '', normal), '', ''],
-        ['Reporte de ejecución', Paragraph(r.solucion_realizada if r else '', normal), '', ''],
+        ['Dirección', Paragraph(escape(c.direccion), normal), '', ''],
+        ['Descripción de la tarea', Paragraph(escape(visita.descripcion or ''), normal), '', ''],
+        ['Reporte de ejecución', Paragraph(escape(r.solucion_realizada if r else ''), normal), '', ''],
+        ['Creada por', Paragraph(escape(creator_name), normal), '', ''],
     ]
     act_table = Table(act_data, colWidths=[w * 0.18, w * 0.32, w * 0.18, w * 0.32])
     act_table.setStyle(TableStyle([
@@ -588,6 +1245,7 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         ('SPAN', (1, 2), (3, 2)),
         ('SPAN', (1, 3), (3, 3)),
         ('SPAN', (1, 4), (3, 4)),
+        ('SPAN', (1, 5), (3, 5)),
         ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('LEFTPADDING', (0, 0), (-1, -1), 4),
         ('TOPPADDING', (0, 0), (-1, -1), 2),
@@ -619,10 +1277,10 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         form_data = [
             [Paragraph('<b>Nombre de la persona que atiende</b>', small),
              Paragraph('<b>Equipos a Asistir</b>', small)],
-            [Paragraph(r.persona_atiende or '', normal), Paragraph(equipo_val or '', normal)],
+            [Paragraph(escape(r.persona_atiende or ''), normal), Paragraph(escape(equipo_val or ''), normal)],
             [Paragraph('<b>Ubicacion de Equipo</b>', small),
              Paragraph('<b>Motivo del servicio</b>', small)],
-            [Paragraph(ubicacion_val or '', normal), Paragraph(r.motivo_servicio or '', normal)],
+            [Paragraph(escape(ubicacion_val or ''), normal), Paragraph(escape(r.motivo_servicio or ''), normal)],
         ]
         form_table = Table(form_data, colWidths=[w * 0.5, w * 0.5])
         form_table.setStyle(TableStyle([
@@ -642,12 +1300,12 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         sol_data = [
             [Paragraph('<b>Solucion y Observaciones</b>', small),
              Paragraph('<b>Recomendaciones</b>', small)],
-            [Paragraph(r.solucion_realizada or '', normal),
-             Paragraph(r.recomendaciones or '', normal)],
+            [Paragraph(escape(r.solucion_realizada or ''), normal),
+             Paragraph(escape(r.recomendaciones or ''), normal)],
             [Paragraph('<b>Cancela la visita al tecnico</b>', small),
              Paragraph('<b>Valor del servicio</b>', small)],
             [Paragraph(r.get_metodo_pago_display() if r.metodo_pago else '', normal),
-             Paragraph(f'{r.valor_servicio:,.0f}' if r.valor_servicio else '', normal)],
+             Paragraph(f'{visita.valor_visita:,.0f}' if visita.valor_visita is not None else '', normal)],
         ]
         sol_table = Table(sol_data, colWidths=[w * 0.5, w * 0.5])
         sol_table.setStyle(TableStyle([
@@ -686,50 +1344,9 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         story.append(Paragraph(garantias, italic_small))
         story.append(Spacer(1, 0.3 * cm))
 
-        # ── Signature ──
-        firma_agregada = False
-        if r.firma_base64:
-            story.append(Paragraph('<b>Firma del cliente:</b>', bold))
-            try:
-                firma_str = r.firma_base64.strip()
-                if ';base64,' in firma_str:
-                    fmt, imgstr = firma_str.split(';base64,')
-                else:
-                    imgstr = firma_str
-                img_bytes = base64.b64decode(imgstr)
-                from io import BytesIO
-                img_buffer = BytesIO(img_bytes)
-                img_buffer.seek(0)
-                firma_img = RLImage(img_buffer, width=5 * cm, height=3 * cm)
-                story.append(firma_img)
-                firma_agregada = True
-            except Exception as e:
-                if r.firma_cliente:
-                    try:
-                        firma_path = r.firma_cliente.path
-                        firma_img = RLImage(firma_path, width=5 * cm, height=3 * cm)
-                        story.append(firma_img)
-                        firma_agregada = True
-                    except Exception:
-                        pass
-        elif r.firma_cliente:
-            story.append(Paragraph('<b>Firma del cliente:</b>', bold))
-            try:
-                firma_path = r.firma_cliente.path
-                firma_img = RLImage(firma_path, width=5 * cm, height=3 * cm)
-                story.append(firma_img)
-                firma_agregada = True
-            except Exception:
-                pass
-
-        if firma_agregada:
-            story.append(HRFlowable(width=5 * cm, thickness=0.7, color=colors.black, spaceBefore=1, spaceAfter=2, hAlign='LEFT'))
-            story.append(Paragraph('Firma cliente', small))
-
         # ── Photos ──
         evidencias = list(visita.evidencias.all()[:20])
         if evidencias:
-            story.append(Spacer(1, 0.3 * cm))
             foto_header = Table([[Paragraph('<b>Fotos</b>', bold)]], colWidths=[w])
             foto_header.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#DCE6F1')),
@@ -738,20 +1355,27 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
                 ('TOPPADDING', (0, 0), (-1, -1), 3),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
             ]))
-            story.append(foto_header)
-            story.append(Spacer(1, 0.2 * cm))
-
-            cols = 3
+            cols = min(3, len(evidencias))
             img_w = (w - 0.4 * cm) / cols
-            img_h = img_w * 0.75
+            img_h = min(5.5 * cm, img_w * 0.75)
             row = []
             foto_rows = []
             for i, ev in enumerate(evidencias):
-                try:
-                    img = RLImage(ev.imagen.path, width=img_w, height=img_h)
-                    row.append(img)
-                except Exception:
-                    row.append('')
+                # Una imagen ilegible invalida el PDF; nunca se omite en silencio.
+                with ev.imagen.open('rb') as source:
+                    with PILImage.open(source) as picture:
+                        picture.load()
+                        picture.thumbnail((1600, 1600))
+                        if picture.mode not in ('RGB', 'RGBA'):
+                            picture = picture.convert('RGB')
+                        image_data = BytesIO()
+                        picture.save(image_data, format='PNG')
+                        original_width, original_height = picture.size
+                image_data.seek(0)
+                scale = min(img_w / original_width, img_h / original_height)
+                img = RLImage(image_data, width=original_width * scale,
+                              height=original_height * scale)
+                row.append(img)
                 if len(row) == cols:
                     foto_rows.append(row)
                     row = []
@@ -761,8 +1385,7 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
                 foto_rows.append(row)
 
             if foto_rows:
-                foto_table = Table(foto_rows, colWidths=[img_w] * cols)
-                foto_table.setStyle(TableStyle([
+                photo_style = TableStyle([
                     ('BOX', (0, 0), (-1, -1), 0.5, colors.black),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                     ('LEFTPADDING', (0, 0), (-1, -1), 2),
@@ -771,8 +1394,49 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
                     ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ]))
-                story.append(foto_table)
+                ])
+                first_photo_row = Table(foto_rows[:1], colWidths=[img_w] * cols)
+                first_photo_row.setStyle(photo_style)
+                story.append(Spacer(1, 0.2 * cm))
+                story.append(KeepTogether([foto_header, Spacer(1, 0.2 * cm), first_photo_row]))
+                if len(foto_rows) > 1:
+                    remaining_photos = Table(foto_rows[1:], colWidths=[img_w] * cols)
+                    remaining_photos.setStyle(photo_style)
+                    story.append(remaining_photos)
 
+        # Firma al final, unida a su línea en el mismo bloque.
+        signature_image = None
+        try:
+            if r.firma_cliente:
+                source = r.firma_cliente.path
+            elif r.firma_base64:
+                raw = r.firma_base64.split(';base64,')[-1]
+                source = BytesIO(base64.b64decode(raw, validate=True))
+            else:
+                source = None
+            if source:
+                with PILImage.open(source) as signature_source:
+                    ratio = signature_source.width / signature_source.height
+                if hasattr(source, 'seek'):
+                    source.seek(0)
+                signature_width = min(5 * cm, 2.2 * cm * ratio)
+                signature_image = RLImage(source, width=signature_width, height=signature_width / ratio)
+        except Exception:
+            logger.warning('Firma no legible para visita %s', visita.pk)
+        story.append(Spacer(1, 0.35 * cm))
+        if signature_image:
+            signature_table = Table([
+                [signature_image],
+                [HRFlowable(width=5 * cm, thickness=0.7, color=colors.black, hAlign='LEFT')],
+                [Paragraph('Firma cliente', small)],
+            ], colWidths=[5.4 * cm], hAlign='LEFT')
+            signature_table.setStyle(TableStyle([
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ]))
+            story.append(KeepTogether([signature_table]))
+        else:
+            story.append(Paragraph('Visita finalizada sin firma del cliente', bold))
     doc.build(story)
     return buffer.getvalue()

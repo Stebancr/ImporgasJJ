@@ -1,14 +1,17 @@
 import base64
 import shutil
 import tempfile
+from decimal import Decimal
+from io import BytesIO
 from datetime import date, time
 from unittest.mock import patch
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APITestCase
+from pypdf import PdfReader
 from usuarios.models import Credenciales
-from .models import ClienteVisita, VisitaTecnica, EvidenciaFotografica, ReporteVisita, VisitSyncReceipt
+from .models import ClienteVisita, VisitaTecnica, EvidenciaFotografica, ReporteVisita, VisitSyncReceipt, CambioCostoVisita
 from .sync_version import visit_sync_version
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
@@ -67,6 +70,12 @@ class OfflineSyncTests(APITestCase):
         self.assertFalse(EvidenciaFotografica.objects.exists())
         self.assertFalse(VisitSyncReceipt.objects.exists())
 
+    def test_changed_arrival_directions_invalidate_old_offline_snapshot(self):
+        self.visit.cliente.indicaciones_llegada = 'Acceso por portería norte'
+        self.visit.cliente.save(update_fields=['indicaciones_llegada'])
+        self.assertEqual(self.send().status_code, 412)
+        self.assertFalse(EvidenciaFotografica.objects.exists())
+
     def test_reassignment_and_ecommerce_account_cannot_access_visit(self):
         self.client.force_authenticate(self.other)
         self.assertEqual(self.send().status_code, 404)
@@ -80,9 +89,79 @@ class OfflineSyncTests(APITestCase):
         self.assertEqual(self.send(payload=data).status_code, 400)
         data = self.payload(); data['firma_base64'] = 'invalid'
         self.assertEqual(self.send(payload=data).status_code, 400)
+        data = self.payload(); data['valor_servicio'] = '-1'
+        self.assertEqual(self.send(payload=data).status_code, 400)
         self.assertFalse(EvidenciaFotografica.objects.exists())
         self.assertFalse(ReporteVisita.objects.exists())
         self.visit.refresh_from_db(); self.assertEqual(self.visit.estado, 'pendiente')
+
+    def test_completion_without_signature_updates_cost_and_replay_does_not_duplicate_photo(self):
+        data = self.payload()
+        data['firma_base64'] = ''
+        data['valor_servicio'] = '85000'
+        with self.captureOnCommitCallbacks(execute=True):
+            first = self.send(payload=data)
+        self.assertEqual(first.status_code, 200, first.data)
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.valor_visita, 85000)
+        self.assertFalse(ReporteVisita.objects.get(visita=self.visit).firma_cliente)
+        replay_data = self.payload()
+        replay_data['firma_base64'] = ''
+        replay_data['valor_servicio'] = '85000'
+        replay = self.send(payload=replay_data)
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(EvidenciaFotografica.objects.filter(visita=self.visit).count(), 1)
+
+    def test_blank_completion_cost_keeps_existing_initial_value(self):
+        self.visit.costo_inicial = Decimal('45000.00')
+        self.visit.valor_visita = Decimal('45000.00')
+        self.visit.save(update_fields=['costo_inicial', 'valor_visita'])
+        self.version = visit_sync_version(self.visit)
+        response = self.send()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.costo_inicial, Decimal('45000.00'))
+        self.assertEqual(self.visit.valor_visita, Decimal('45000.00'))
+        self.assertEqual(ReporteVisita.objects.get(visita=self.visit).valor_servicio, Decimal('45000.00'))
+        self.assertFalse(CambioCostoVisita.objects.filter(visita=self.visit).exists())
+
+    @patch('AppVisits.views._enviar_correo_visita_completada')
+    def test_final_cost_and_reason_are_atomic_audited_and_idempotent(self, email):
+        self.visit.costo_inicial = Decimal('45000.00')
+        self.visit.valor_visita = Decimal('45000.00')
+        self.visit.save(update_fields=['costo_inicial', 'valor_visita'])
+        self.version = visit_sync_version(self.visit)
+        data = self.payload()
+        data['valor_servicio'] = '70000'
+        self.assertEqual(self.send(payload=data).status_code, 400)
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.valor_visita, Decimal('45000.00'))
+        self.assertFalse(EvidenciaFotografica.objects.exists())
+        data = self.payload()
+        data['valor_servicio'] = '70000'
+        data['motivo_cambio_costo'] = 'Se agregó cambio de regulador'
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.send(payload=data)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['costo_inicial'], 45000)
+        self.assertEqual(response.data['costo_final'], 70000)
+        self.visit.refresh_from_db()
+        self.assertEqual(self.visit.costo_inicial, Decimal('45000.00'))
+        self.assertEqual(self.visit.valor_visita, Decimal('70000.00'))
+        self.assertEqual(ReporteVisita.objects.get(visita=self.visit).valor_servicio, Decimal('70000.00'))
+        change = CambioCostoVisita.objects.get(visita=self.visit)
+        self.assertEqual(change.usuario_id, self.tech.pk)
+        self.assertEqual(change.motivo, 'Se agregó cambio de regulador')
+        self.assertIn('70,000', ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(self.visit.pdf_final.read())).pages))
+        replay_data = self.payload()
+        replay_data['valor_servicio'] = '70000'
+        replay_data['motivo_cambio_costo'] = 'Se agregó cambio de regulador'
+        replay = self.send(payload=replay_data)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay['Idempotency-Replayed'], 'true')
+        self.assertEqual(CambioCostoVisita.objects.filter(visita=self.visit).count(), 1)
+        self.assertEqual(EvidenciaFotografica.objects.filter(visita=self.visit).count(), 1)
+        self.assertEqual(self.client.patch(reverse('visitas-costo', args=[self.visit.pk]), {'valor_visita': 90000, 'motivo_cambio_costo': 'Más trabajo'}, format='json').status_code, 403)
 
     def test_receipt_write_failure_rolls_back_report_photos_and_status(self):
         with patch.object(VisitSyncReceipt.objects, 'create', side_effect=RuntimeError('simulated commit failure')):
