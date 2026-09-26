@@ -9,6 +9,7 @@ class ClienteVisita(models.Model):
     telefono = models.CharField(max_length=20, blank=True)
     correo = models.CharField(max_length=100, blank=True)
     direccion = models.TextField()
+    indicaciones_llegada = models.TextField(blank=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -18,6 +19,20 @@ class ClienteVisita(models.Model):
 
     def __str__(self):
         return f"{self.nombre}"
+
+
+class TipoVisita(models.Model):
+    codigo = models.SlugField(max_length=50, unique=True)
+    nombre = models.CharField(max_length=150)
+    activo = models.BooleanField(default=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'visita_tipo'
+        ordering = ['nombre', 'codigo']
+
+    def __str__(self):
+        return self.nombre
 
 
 class VisitaTecnica(models.Model):
@@ -60,7 +75,8 @@ class VisitaTecnica(models.Model):
         on_delete=models.CASCADE,
         related_name='visitas',
     )
-    tipo_tarea = models.CharField(max_length=50, choices=TIPO_TAREA_CHOICES)
+    tipo_tarea = models.CharField(max_length=50)
+    tipo_tarea_etiqueta = models.CharField(max_length=150, blank=True)
     fecha = models.DateField()
     hora = models.TimeField()
     descripcion = models.TextField(blank=True)
@@ -72,6 +88,7 @@ class VisitaTecnica(models.Model):
         blank=True,
         help_text='Valor monetario acordado para la visita técnica.',
     )
+    costo_inicial = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
     creado_por = models.ForeignKey(
         'usuarios.Credenciales',
@@ -83,6 +100,16 @@ class VisitaTecnica(models.Model):
     fecha_actualizacion = models.DateTimeField(auto_now=True)
     correo_completada_en = models.DateTimeField(null=True, blank=True, editable=False)
     correo_completada_error = models.TextField(blank=True, editable=False)
+    pdf_final = models.FileField(upload_to='visitas_pdf/', blank=True, null=True)
+    pdf_sha256 = models.CharField(max_length=64, blank=True, default='')
+    pdf_source_hash = models.CharField(max_length=64, blank=True, default='')
+    pdf_bytes = models.PositiveBigIntegerField(null=True, blank=True)
+    pdf_generado_en = models.DateTimeField(null=True, blank=True)
+    pdf_estado = models.CharField(max_length=20, blank=True, default='')
+    pdf_error = models.CharField(max_length=300, blank=True, default='')
+    pdf_link_version = models.PositiveIntegerField(default=1)
+    whatsapp_notificacion_estado = models.CharField(max_length=20, blank=True, default='')
+    whatsapp_notificacion_error = models.CharField(max_length=300, blank=True, default='')
 
     class Meta:
         db_table = 'visita_tecnica'
@@ -94,10 +121,19 @@ class VisitaTecnica(models.Model):
                 condition=Q(valor_visita__gte=0) | Q(valor_visita__isnull=True),
                 name='visita_valor_no_negativo',
             ),
+            models.CheckConstraint(
+                condition=Q(costo_inicial__gte=0) | Q(costo_inicial__isnull=True),
+                name='visita_costo_inicial_no_negativo',
+            ),
         ]
 
     def __str__(self):
         return f"#{self.numero_tarea} — {self.cliente.nombre} ({self.get_estado_display()})"
+
+    def get_tipo_tarea_display(self):
+        # La etiqueta se congela al crear la visita: editar un tipo no cambia
+        # el significado de los informes históricos.
+        return self.tipo_tarea_etiqueta or dict(self.TIPO_TAREA_CHOICES).get(self.tipo_tarea, self.tipo_tarea)
 
     def save(self, *args, **kwargs):
         if self.pk:
@@ -173,10 +209,13 @@ class EvidenciaFotografica(models.Model):
         on_delete=models.CASCADE,
         related_name='evidencias',
     )
-    imagen = models.ImageField(upload_to='evidencias/')
+    imagen = models.ImageField(upload_to='evidencias_temporales/', blank=True)
     descripcion = models.CharField(max_length=200, blank=True)
     orden = models.IntegerField(default=0)
     subida_en = models.DateTimeField(auto_now_add=True)
+    archivada_en = models.DateTimeField(null=True, blank=True)
+    es_temporal = models.BooleanField(default=False)
+    eliminada_en = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'visita_evidencia'
@@ -200,3 +239,16 @@ class VisitSyncReceipt(models.Model):
     class Meta:
         db_table = 'visita_sync_receipt'
         constraints = [models.UniqueConstraint(fields=('visita', 'usuario', 'operation_key'), name='unique_visit_sync_operation')]
+
+
+class CambioCostoVisita(models.Model):
+    visita = models.ForeignKey(VisitaTecnica, on_delete=models.CASCADE, related_name='cambios_costo')
+    usuario = models.ForeignKey('usuarios.Credenciales', null=True, on_delete=models.SET_NULL)
+    valor_anterior = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    valor_nuevo = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    motivo = models.TextField(blank=True)
+    cambiado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'visita_cambio_costo'
+        ordering = ['-cambiado_en']

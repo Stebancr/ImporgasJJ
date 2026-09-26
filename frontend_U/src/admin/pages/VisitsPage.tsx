@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { visitsService } from '@/admin/services/admin_visits'
 import type {
-  VisitaItem, VisitaDetalle, CreateVisitaData, Tecnico, CalendarioData,
+  VisitaItem, VisitaDetalle, CreateVisitaData, Tecnico, CalendarioData, TipoVisita,
 } from '@/admin/services/admin_visits'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -35,20 +35,6 @@ const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
   cancelada:   { label: 'Cancelada',  color: 'bg-red-100 text-red-800' },
 }
 
-const TIPO_TAREA_OPTS = [
-  { value: 'visita_urbana', label: 'VISITA TECNICA PERIMETRO URBANO' },
-  { value: 'instalacion_calentador', label: '2025 INSTALACION DE CALENTADOR' },
-  { value: 'mantenimiento_calentador', label: '2025 MANTENIMIENTO O REPARACION DE CALENTADOR' },
-  { value: 'instalacion_secadora', label: '2025 INSTALACION DE SECADORA' },
-  { value: 'servicio_cancelado', label: 'SERVICIO CANCELADO' },
-  { value: 'visita_afueras', label: 'VISITA TECNICA PERIMETRO URBANO AFUERAS' },
-  { value: 'mantenimiento_estufa', label: '2025 MANTENIMIENTO O REPARACION DE ESTUFA' },
-  { value: 'revision_periodica', label: 'REVISION PERIODICA' },
-  { value: 'mantenimiento_acumulacion', label: '2025 MANTENIMIENTO O REPARACION CALENTADOR DE ACUMULACION A GAS' },
-  { value: 'programacion_doble', label: 'PROGRAMACION DOBLE' },
-  { value: 'mantenimiento_turco', label: '2025 MANTENIMIENTO O REPARACION CALENTADOR DE TURCO DE PASO' },
-]
-
 const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 
 const blankForm = (): CreateVisitaData => ({
@@ -57,6 +43,7 @@ const blankForm = (): CreateVisitaData => ({
   cliente_telefono: '',
   cliente_correo: '',
   cliente_direccion: '',
+  cliente_indicaciones_llegada: '',
   tipo_tarea: '',
   fecha: format(new Date(), 'yyyy-MM-dd'),
   hora: '08:00',
@@ -76,7 +63,6 @@ const validateVisitForm = (data: CreateVisitaData, editing: boolean): VisitFormE
 
   if (!editing) {
     required('cliente_nombre', data.cliente_nombre)
-    required('cliente_identificacion', data.cliente_identificacion)
     required('cliente_telefono', data.cliente_telefono)
     required('cliente_correo', data.cliente_correo)
     required('cliente_direccion', data.cliente_direccion)
@@ -97,8 +83,8 @@ const validateVisitForm = (data: CreateVisitaData, editing: boolean): VisitFormE
   required('fecha', data.fecha)
   required('hora', data.hora)
   if (!data.tecnico_id) errors.tecnico_id = 'Debe seleccionar un técnico.'
-  if (data.valor_visita == null || !Number.isFinite(data.valor_visita)) errors.valor_visita = 'Este campo es obligatorio.'
-  else if (data.valor_visita < 0) errors.valor_visita = 'El valor de la visita no puede ser negativo.'
+  if (data.valor_visita != null && !Number.isFinite(data.valor_visita)) errors.valor_visita = 'Valor inválido.'
+  else if (data.valor_visita != null && data.valor_visita < 0) errors.valor_visita = 'El valor de la visita no puede ser negativo.'
   if (data.fecha && data.fecha < format(new Date(), 'yyyy-MM-dd')) {
     errors.fecha = 'La fecha de la visita no puede ser anterior al día actual.'
   }
@@ -110,6 +96,12 @@ const apiValidationErrors = (error: unknown): VisitFormErrors => {
   if (!data || typeof data !== 'object') return { form: 'No fue posible guardar la visita.' }
   const errors: VisitFormErrors = {}
   Object.entries(data as Record<string, unknown>).forEach(([key, value]) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      errors.form = Object.entries(value as Record<string, unknown>)
+        .map(([field, message]) => `${field}: ${Array.isArray(message) ? message.map(String).join(' ') : String(message)}`)
+        .join(' · ')
+      return
+    }
     errors[key === 'detail' || key === 'non_field_errors' ? 'form' : key] = Array.isArray(value)
       ? value.map(String).join(' ')
       : String(value)
@@ -124,6 +116,24 @@ export default function VisitsPage() {
   const [visits, setVisits] = useState<VisitaItem[]>([])
   const [loading, setLoading] = useState(true)
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([])
+  const [tipos, setTipos] = useState<TipoVisita[]>([])
+  const [typesOpen, setTypesOpen] = useState(false)
+  const [typeCode, setTypeCode] = useState('')
+  const [typeName, setTypeName] = useState('')
+  const [typeError, setTypeError] = useState('')
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportFrom, setExportFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
+  const [exportTo, setExportTo] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [exportTechnician, setExportTechnician] = useState('all')
+  const [exportType, setExportType] = useState('all')
+  const [exportStatus, setExportStatus] = useState('all')
+  const [exportError, setExportError] = useState('')
+  const [creationFlow, setCreationFlow] = useState<'complete' | 'pending' | null>(null)
+  const completeNow = creationFlow === 'complete'
+  const [photos, setPhotos] = useState<File[]>([])
+  const [photosInputKey, setPhotosInputKey] = useState(0)
+  const [signature, setSignature] = useState<File | null>(null)
+  const [report, setReport] = useState({ persona_atiende: '', equipo: 'estufa', equipo_otro: '', ubicacion_equipo: 'cocina', ubicacion_otro: '', motivo_servicio: '', solucion_realizada: '', observaciones: '', recomendaciones: '', metodo_pago: '' })
 
   // Filters
   const [search, setSearch] = useState('')
@@ -189,6 +199,7 @@ export default function VisitsPage() {
     visitsService.getTecnicos()
       .then(setTecnicos)
       .catch(() => setTecnicos([]))
+    visitsService.getTipos().then(setTipos).catch(() => setTipos([]))
   }, [])
 
   useEffect(() => {
@@ -201,15 +212,27 @@ export default function VisitsPage() {
   // ── Create ──
   const handleCreate = async () => {
     const errors = validateVisitForm(form, false)
+    if (!creationFlow) errors.form = 'Selecciona el flujo de creación.'
+    if (completeNow) {
+      for (const key of ['persona_atiende', 'motivo_servicio', 'solucion_realizada'] as const) {
+        if (!report[key].trim()) errors[key] = 'Este campo es obligatorio.'
+      }
+      if (report.equipo === 'otro' && !report.equipo_otro.trim()) errors.equipo_otro = 'Especifica el equipo.'
+      if (report.ubicacion_equipo === 'otro' && !report.ubicacion_otro.trim()) errors.ubicacion_otro = 'Especifica la ubicación.'
+    }
     if (Object.keys(errors).length) {
       setFormErrors(errors)
       return
     }
     setSaving(true)
     try {
-      await visitsService.create(form)
+      await visitsService.create(form, photos, completeNow, report, signature)
       setCreateOpen(false)
       setForm(blankForm())
+      setPhotos([])
+      setSignature(null)
+      setCreationFlow(null)
+      setReport({ persona_atiende: '', equipo: 'estufa', equipo_otro: '', ubicacion_equipo: 'cocina', ubicacion_otro: '', motivo_servicio: '', solucion_realizada: '', observaciones: '', recomendaciones: '', metodo_pago: '' })
       setFormErrors({})
       loadVisits()
       if (tab === 'calendario') loadCalendar()
@@ -233,8 +256,9 @@ export default function VisitsPage() {
   }
 
   // ── Edit ──
-  const openEdit = (visit: VisitaItem) => {
+  const openEdit = async (visit: VisitaItem) => {
     if (visit.estado === 'finalizada') return
+    const full = await visitsService.getById(visit.id)
     setEditVisit(visit)
     setForm({
       cliente_nombre: visit.cliente_nombre,
@@ -242,11 +266,12 @@ export default function VisitsPage() {
       cliente_correo: '',
       cliente_identificacion: '',
       cliente_direccion: visit.cliente_direccion,
+      cliente_indicaciones_llegada: full.cliente.indicaciones_llegada || '',
       tipo_tarea: visit.tipo_tarea,
       fecha: visit.fecha,
       hora: visit.hora,
-      descripcion: '',
-      observaciones_iniciales: '',
+      descripcion: full.descripcion,
+      observaciones_iniciales: full.observaciones_iniciales,
       valor_visita: visit.valor_visita,
       tecnico_id: visit.tecnico_id,
     })
@@ -265,15 +290,24 @@ export default function VisitsPage() {
       setFormErrors(errors)
       return
     }
+    let motivoCosto = ''
+    if (form.valor_visita !== editVisit.valor_visita && editVisit.costo_inicial != null && form.valor_visita !== editVisit.costo_inicial) {
+      const reason = window.prompt('Motivo del cambio respecto al costo inicial')
+      if (reason === null) return
+      if (!reason.trim()) { setFormErrors({ valor_visita: 'Indica el motivo del cambio de costo.' }); return }
+      motivoCosto = reason.trim()
+    }
     setSaving(true)
     try {
       await visitsService.update(editVisit.id, {
-        ...(TIPO_TAREA_OPTS.some((option) => option.value === form.tipo_tarea) ? { tipo_tarea: form.tipo_tarea } : {}),
+        ...(tipos.some((option) => option.codigo === form.tipo_tarea && option.activo) ? { tipo_tarea: form.tipo_tarea } : {}),
+        cliente_indicaciones_llegada: form.cliente_indicaciones_llegada,
         fecha: form.fecha,
         hora: form.hora,
         descripcion: form.descripcion,
         observaciones_iniciales: form.observaciones_iniciales,
         valor_visita: form.valor_visita,
+        motivo_cambio_costo: motivoCosto,
         tecnico: form.tecnico_id ?? null,
       })
       setEditOpen(false)
@@ -350,9 +384,13 @@ export default function VisitsPage() {
           <h1 className="text-2xl font-bold">Visitas Técnicas</h1>
           <p className="text-muted-foreground text-sm">Agenda y gestiona las visitas de los técnicos</p>
         </div>
-        <Button className="w-full sm:w-auto" onClick={() => { setForm(blankForm()); setFormErrors({}); setCreateOpen(true) }}>
-          <Plus className="h-4 w-4 mr-2" /> Nueva Visita
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => setTypesOpen(true)}>Tipos de visita</Button>
+          <Button variant="outline" onClick={() => setExportOpen(true)}>Generar Excel</Button>
+          <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreationFlow(null); setPhotos([]); setSignature(null); setReport({ persona_atiende: '', equipo: 'estufa', equipo_otro: '', ubicacion_equipo: 'cocina', ubicacion_otro: '', motivo_servicio: '', solucion_realizada: '', observaciones: '', recomendaciones: '', metodo_pago: '' }); setPhotosInputKey((key) => key + 1); setCreateOpen(true) }}>
+            <Plus className="h-4 w-4 mr-2" /> Nueva Visita
+          </Button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -470,7 +508,7 @@ export default function VisitsPage() {
                           <Clock className="inline h-3 w-3 mr-1" />{v.hora?.slice(0, 5)}
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
-                          {v.valor_visita == null ? '—' : `$${v.valor_visita.toLocaleString('es-CO')}`}
+                          {v.costo_final == null ? '—' : `$${v.costo_final.toLocaleString('es-CO')}`}
                         </TableCell>
                         <TableCell className="text-xs">
                           {v.tecnico_nombre ?? <span className="text-muted-foreground italic">Sin asignar</span>}
@@ -681,7 +719,7 @@ export default function VisitsPage() {
                   {fieldError('cliente_nombre')}
                 </div>
                 <div>
-                  <Label>Identificación *</Label>
+                  <Label>Identificación (opcional)</Label>
                   <Input
                     inputMode="numeric"
                     maxLength={15}
@@ -712,6 +750,14 @@ export default function VisitsPage() {
                 </div>
               </>
             )}
+            {editOpen && <div className="col-span-2">
+              <Label>Dirección</Label>
+              <Textarea rows={2} value={form.cliente_direccion} readOnly />
+            </div>}
+            <div className="col-span-2">
+              <Label>Indicaciones para llegar</Label>
+              <Textarea rows={2} value={form.cliente_indicaciones_llegada || ''} onChange={(e) => setField('cliente_indicaciones_llegada', e.target.value)} />
+            </div>
 
             {/* ── Visit section ── */}
             <div className="col-span-2">
@@ -719,15 +765,15 @@ export default function VisitsPage() {
             </div>
             <div>
               <Label>Tipo de servicio *</Label>
-              <Select value={TIPO_TAREA_OPTS.some((option) => option.value === form.tipo_tarea) ? form.tipo_tarea : undefined} onValueChange={(v) => setField('tipo_tarea', v)}>
+              <Select value={tipos.some((option) => option.codigo === form.tipo_tarea && option.activo) ? form.tipo_tarea : undefined} onValueChange={(v) => setField('tipo_tarea', v)}>
                 <SelectTrigger className="min-w-0"><SelectValue placeholder="Selecciona un servicio" /></SelectTrigger>
                 <SelectContent className="max-w-[calc(100vw-2rem)]">
-                  {TIPO_TAREA_OPTS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  {tipos.filter((o) => o.activo).map((o) => (
+                    <SelectItem key={o.codigo} value={o.codigo}>{o.nombre}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {editOpen && form.tipo_tarea && !TIPO_TAREA_OPTS.some((option) => option.value === form.tipo_tarea) && <p className="mt-1 text-xs text-muted-foreground">Valor anterior: {editVisit?.tipo_tarea_display}. Se conserva si no eliges uno nuevo.</p>}
+              {editOpen && form.tipo_tarea && !tipos.some((option) => option.codigo === form.tipo_tarea && option.activo) && <p className="mt-1 text-xs text-muted-foreground">Valor anterior: {editVisit?.tipo_tarea_display}. Se conserva si no eliges uno nuevo.</p>}
               {fieldError('tipo_tarea')}
             </div>
             <div>
@@ -756,7 +802,7 @@ export default function VisitsPage() {
               {fieldError('hora')}
             </div>
             <div>
-              <Label>Valor de la visita *</Label>
+              <Label>{editOpen ? 'Costo final (opcional)' : 'Costo inicial (opcional)'}</Label>
               <Input
                 type="number"
                 min="0"
@@ -776,14 +822,82 @@ export default function VisitsPage() {
               <Label>Observaciones iniciales</Label>
               <Textarea rows={2} value={form.observaciones_iniciales || ''} onChange={(e) => setField('observaciones_iniciales', e.target.value)} />
             </div>
+            {!editOpen && <>
+              <div className="col-span-2">
+                <Label>Flujo de creación</Label>
+                <Select value={creationFlow ?? undefined} onValueChange={(value) => {
+                  if (value === 'pending' && (photos.length > 0 || signature)) {
+                    if (!window.confirm('Al asignar la visita para completar después se descartarán las imágenes y la firma seleccionadas. ¿Continuar?')) return
+                    setPhotos([])
+                    setSignature(null)
+                    setPhotosInputKey((key) => key + 1)
+                  }
+                  setCreationFlow(value as 'complete' | 'pending')
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona cómo crear la visita" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Dejar pendiente para el técnico</SelectItem>
+                    <SelectItem value="complete">Completar ahora</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {completeNow && <>
+                <div className="col-span-2">
+                  <Label>Imágenes de la visita</Label>
+                  <Input key={photosInputKey} type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => setPhotos(Array.from(e.target.files || []))} />
+                  <p className="text-xs text-muted-foreground">{photos.length} imagen(es) seleccionada(s)</p>
+                </div>
+                <div className="col-span-2"><Label>Persona que atiende *</Label><Input value={report.persona_atiende} onChange={(e) => setReport((prev) => ({ ...prev, persona_atiende: e.target.value }))} />{formErrors.persona_atiende && <p className="text-xs text-destructive">{formErrors.persona_atiende}</p>}</div>
+                <div><Label>Equipo *</Label><Select value={report.equipo} onValueChange={(value) => setReport((prev) => ({ ...prev, equipo: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['estufa', 'horno', 'calentador', 'parrilla', 'caldera', 'calefactor', 'otro'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
+                <div><Label>Ubicación del equipo *</Label><Select value={report.ubicacion_equipo} onValueChange={(value) => setReport((prev) => ({ ...prev, ubicacion_equipo: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['cocina', 'patio', 'balcon', 'exterior', 'sotano', 'otro'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
+                {report.equipo === 'otro' && <div className="col-span-2"><Label>Especifica el equipo *</Label><Input value={report.equipo_otro} onChange={(e) => setReport((prev) => ({ ...prev, equipo_otro: e.target.value }))} />{formErrors.equipo_otro && <p className="text-xs text-destructive">{formErrors.equipo_otro}</p>}</div>}
+                {report.ubicacion_equipo === 'otro' && <div className="col-span-2"><Label>Especifica la ubicación *</Label><Input value={report.ubicacion_otro} onChange={(e) => setReport((prev) => ({ ...prev, ubicacion_otro: e.target.value }))} />{formErrors.ubicacion_otro && <p className="text-xs text-destructive">{formErrors.ubicacion_otro}</p>}</div>}
+                <div className="col-span-2"><Label>Motivo del servicio *</Label><Textarea value={report.motivo_servicio} onChange={(e) => setReport((prev) => ({ ...prev, motivo_servicio: e.target.value }))} />{formErrors.motivo_servicio && <p className="text-xs text-destructive">{formErrors.motivo_servicio}</p>}</div>
+                <div className="col-span-2"><Label>Solución realizada *</Label><Textarea value={report.solucion_realizada} onChange={(e) => setReport((prev) => ({ ...prev, solucion_realizada: e.target.value }))} />{formErrors.solucion_realizada && <p className="text-xs text-destructive">{formErrors.solucion_realizada}</p>}</div>
+                <div className="col-span-2"><Label>Observaciones</Label><Textarea value={report.observaciones} onChange={(e) => setReport((prev) => ({ ...prev, observaciones: e.target.value }))} /></div>
+                <div className="col-span-2"><Label>Recomendaciones</Label><Textarea value={report.recomendaciones} onChange={(e) => setReport((prev) => ({ ...prev, recomendaciones: e.target.value }))} /></div>
+                <div className="col-span-2"><Label>Método de pago</Label><Select value={report.metodo_pago || 'none'} onValueChange={(value) => setReport((prev) => ({ ...prev, metodo_pago: value === 'none' ? '' : value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Sin informar</SelectItem>{['efectivo', 'transferencia', 'tarjeta', 'credito', 'otro'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
+                <div className="col-span-2"><Label>Firma del cliente (opcional)</Label><Input type="file" accept="image/png,image/jpeg" onChange={(e) => setSignature(e.target.files?.[0] || null)} /></div>
+              </>}
+            </>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setCreateOpen(false); setEditOpen(false) }}>Cancelar</Button>
-            <Button onClick={editOpen ? handleEdit : handleCreate} disabled={saving}>
+            <Button onClick={editOpen ? handleEdit : handleCreate} disabled={saving || (!editOpen && !creationFlow)}>
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {editOpen ? 'Guardar cambios' : 'Crear visita'}
+              {editOpen ? 'Guardar cambios' : !creationFlow ? 'Selecciona un flujo' : completeNow ? 'Crear y finalizar visita' : 'Crear visita pendiente'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Generar Excel de visitas</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><Label>Desde</Label><Input type="date" value={exportFrom} onChange={(e) => setExportFrom(e.target.value)} /></div>
+            <div><Label>Hasta</Label><Input type="date" value={exportTo} onChange={(e) => setExportTo(e.target.value)} /></div>
+            <div><Label>Técnico</Label><Select value={exportTechnician} onValueChange={setExportTechnician}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{tecnicos.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.nombre_completo}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Tipo de servicio</Label><Select value={exportType} onValueChange={setExportType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{tipos.map((item) => <SelectItem key={item.id} value={item.codigo}>{item.nombre}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Estado</Label><Select value={exportStatus} onValueChange={setExportStatus}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="pendiente">Pendiente</SelectItem><SelectItem value="en_proceso">En proceso</SelectItem><SelectItem value="finalizada">Finalizada</SelectItem><SelectItem value="cancelada">Cancelada</SelectItem></SelectContent></Select></div>
+          </div>
+          {exportError && <p className="text-sm text-destructive">{exportError}</p>}
+          <DialogFooter><Button onClick={async () => {
+            if (!exportFrom || !exportTo || exportFrom > exportTo) { setExportError('Selecciona un rango de fechas válido.'); return }
+            try {
+              await visitsService.exportExcel({ fecha_desde: exportFrom, fecha_hasta: exportTo, tecnico_id: exportTechnician, tipo_tarea: exportType, estado: exportStatus })
+              setExportOpen(false)
+              setExportError('')
+            } catch { setExportError('No fue posible generar el Excel.') }
+          }}>Descargar Excel</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={typesOpen} onOpenChange={setTypesOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Tipos de visita</DialogTitle></DialogHeader>
+          <div className="space-y-2">{tipos.map((item) => <div key={item.id} className="flex items-center gap-2 justify-between border-b py-2"><Input defaultValue={item.nombre} aria-label={`Nombre de ${item.codigo}`} onBlur={async (e) => { const nombre = e.target.value.trim(); if (nombre && nombre !== item.nombre) { try { await visitsService.updateTipo(item.id, { nombre }); setTipos(await visitsService.getTipos()) } catch { setTypeError('No fue posible editar el tipo.') } } }} /><Button variant="outline" onClick={async () => { try { await visitsService.updateTipo(item.id, { activo: !item.activo }); setTipos(await visitsService.getTipos()) } catch { setTypeError('No fue posible cambiar el estado.') } }}>{item.activo ? 'Desactivar' : 'Activar'}</Button></div>)}</div>
+          <div className="grid gap-2"><Label>Nuevo tipo</Label><Input placeholder="Código (sin espacios)" value={typeCode} onChange={(e) => setTypeCode(e.target.value)} /><Input placeholder="Nombre" value={typeName} onChange={(e) => setTypeName(e.target.value)} />{typeError && <p className="text-sm text-destructive">{typeError}</p>}<Button onClick={async () => { try { await visitsService.createTipo({ codigo: typeCode.trim(), nombre: typeName.trim() }); setTipos(await visitsService.getTipos()); setTypeCode(''); setTypeName(''); setTypeError('') } catch { setTypeError('Código o nombre inválido o duplicado.') } }}>Crear tipo</Button></div>
         </DialogContent>
       </Dialog>
 
@@ -816,14 +930,33 @@ export default function VisitsPage() {
                   {selectedVisit.cliente.telefono && <p className="text-sm flex items-center gap-1"><Phone className="h-3 w-3" />{selectedVisit.cliente.telefono}</p>}
                   {selectedVisit.cliente.correo && <p className="text-sm">{selectedVisit.cliente.correo}</p>}
                   <p className="text-sm flex items-start gap-1"><MapPin className="h-3 w-3 mt-0.5 shrink-0" />{selectedVisit.cliente.direccion}</p>
+                  {selectedVisit.cliente.indicaciones_llegada && <p className="text-sm">Indicaciones para llegar: {selectedVisit.cliente.indicaciones_llegada}</p>}
                 </CardContent></Card>
 
                 <Card><CardContent className="pt-3 pb-3 space-y-1">
                   <p className="text-xs text-muted-foreground font-semibold">VISITA</p>
                   <p className="text-sm"><CalendarDays className="inline h-3 w-3 mr-1" />{selectedVisit.fecha} a las {selectedVisit.hora?.slice(0, 5)}</p>
-                  <p className="text-sm">
-                    Valor: {selectedVisit.valor_visita == null ? 'No informado' : `$${selectedVisit.valor_visita.toLocaleString('es-CO')}`}
-                  </p>
+                  <p className="text-sm">Costo inicial: {selectedVisit.costo_inicial == null ? 'No informado' : `$${selectedVisit.costo_inicial.toLocaleString('es-CO')}`}</p>
+                  <p className="text-sm">Costo final: {selectedVisit.costo_final == null ? 'No informado' : `$${selectedVisit.costo_final.toLocaleString('es-CO')}`}</p>
+                  <p className="text-sm">Creada por: {selectedVisit.creado_por_nombre || 'No registrado'}</p>
+                  {selectedVisit.pdf_generado_en && selectedVisit.pdf_disponible && <p className="text-xs text-muted-foreground">PDF definitivo: {selectedVisit.pdf_nombre} · {new Date(selectedVisit.pdf_generado_en).toLocaleString('es-CO')}</p>}
+                  {['error', 'fallido'].includes(selectedVisit.pdf_estado || '') && <p className="text-sm text-destructive">PDF fallido: {selectedVisit.pdf_error || 'No se pudo generar.'}</p>}
+                  {['pendiente', 'procesando'].includes(selectedVisit.pdf_estado || '') && <p className="text-sm text-muted-foreground">PDF: {selectedVisit.pdf_estado}</p>}
+                  {selectedVisit.cambios_costo?.map((change, index) => <p key={index} className="text-xs text-muted-foreground">{change.usuario_nombre}, {new Date(change.cambiado_en).toLocaleString('es-CO')}: {change.valor_anterior ?? 'Sin valor'} → {change.valor_nuevo ?? 'Sin valor'}{change.motivo ? ` — ${change.motivo}` : ''}</p>)}
+                  {selectedVisit.estado === 'finalizada' && <p className="text-sm">WhatsApp: {selectedVisit.whatsapp_notificacion_estado === 'enviada' ? 'Enviado' : selectedVisit.whatsapp_notificacion_error || 'Comparte el PDF manualmente desde el CRM.'}</p>}
+                  {selectedVisit.costo_editable === false ? (
+                    <p className="text-xs text-muted-foreground">El costo quedó fijado en el PDF definitivo. Para estas visitas se eliminaron las imágenes temporales después de guardarlo.</p>
+                  ) : <Button variant="outline" size="sm" onClick={async () => {
+                    const value = window.prompt('Nuevo costo (vacío para dejar sin valor)', selectedVisit.valor_visita == null ? '' : String(selectedVisit.valor_visita))
+                    if (value === null) return
+                    const amount = value.trim() === '' ? null : Number(value)
+                    if (amount != null && (!Number.isFinite(amount) || amount < 0)) return
+                    const reason = selectedVisit.costo_inicial != null && amount !== selectedVisit.costo_inicial && amount !== selectedVisit.costo_final
+                      ? window.prompt('Motivo del cambio respecto al costo inicial') : ''
+                    if (reason === null) return
+                    if (selectedVisit.costo_inicial != null && amount !== selectedVisit.costo_inicial && amount !== selectedVisit.costo_final && !reason?.trim()) { window.alert('Indica el motivo del cambio.'); return }
+                    try { setSelectedVisit(await visitsService.updateCost(selectedVisit.id, amount, reason || '')); loadVisits() } catch { window.alert('No fue posible actualizar el costo.') }
+                  }}>Editar costo</Button>}
                   {selectedVisit.tecnico ? (
                     <p className="text-sm"><User className="inline h-3 w-3 mr-1" />{selectedVisit.tecnico.nombre_completo}</p>
                   ) : (
@@ -843,7 +976,7 @@ export default function VisitsPage() {
                       <div><span className="text-muted-foreground">Equipo:</span> {selectedVisit.reporte.equipo_display}</div>
                       <div><span className="text-muted-foreground">Ubicación:</span> {selectedVisit.reporte.ubicacion_display}</div>
                       <div><span className="text-muted-foreground">Método de pago:</span> {selectedVisit.reporte.metodo_pago_display}</div>
-                      {selectedVisit.reporte.valor_servicio && (
+                      {selectedVisit.reporte.valor_servicio !== null && (
                         <div><span className="text-muted-foreground">Valor:</span> ${Number(selectedVisit.reporte.valor_servicio).toLocaleString('es-CO')}</div>
                       )}
                     </div>
@@ -861,32 +994,23 @@ export default function VisitsPage() {
                 </Card>
               )}
 
-              {/* Photos */}
-              {selectedVisit.evidencias.length > 0 && (
-                <Card>
-                  <CardHeader className="py-3"><CardTitle className="text-sm">Evidencias ({selectedVisit.evidencias.length})</CardTitle></CardHeader>
-                  <CardContent className="pt-0">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {selectedVisit.evidencias.map((e) => (
-                        <a key={e.id} href={e.imagen} target="_blank" rel="noopener noreferrer">
-                          <img src={e.imagen} alt="" className="w-full h-28 object-cover rounded border hover:opacity-90 transition-opacity" />
-                        </a>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
             </div>
           ) : null}
           <DialogFooter>
-            {selectedVisit?.tiene_reporte && (
+            {selectedVisit?.pdf_disponible && (
+              <Button variant="outline" onClick={async () => {
+                try { await visitsService.openPDF(selectedVisit.id) }
+                catch { window.alert('No fue posible abrir el PDF.') }
+              }}>Abrir PDF</Button>
+            )}
+            {selectedVisit?.pdf_disponible && (
               <Button
                 variant="outline"
                 disabled={downloading}
                 onClick={async () => {
                   setDownloading(true)
                   try {
-                    await visitsService.downloadPDF(selectedVisit.id)
+                    await visitsService.downloadPDF(selectedVisit.id, selectedVisit.pdf_nombre)
                   } catch (err) {
                     console.error('Error descargando PDF:', err)
                   } finally {
@@ -906,6 +1030,18 @@ export default function VisitsPage() {
                   </>
                 )}
               </Button>
+            )}
+            {selectedVisit && ['error', 'fallido'].includes(selectedVisit.pdf_estado || '') && !selectedVisit.pdf_disponible && (
+              <Button variant="outline" onClick={async () => {
+                try { await visitsService.retryPDF(selectedVisit.id); setSelectedVisit(await visitsService.getById(selectedVisit.id)) }
+                catch { window.alert('No fue posible generar el PDF. Las imágenes se conservaron.') }
+              }}>Reintentar PDF</Button>
+            )}
+            {selectedVisit?.pdf_disponible && (
+              <Button variant="outline" onClick={async () => {
+                try { await visitsService.revokeLinks(selectedVisit.id); setSelectedVisit(await visitsService.getById(selectedVisit.id)) }
+                catch { window.alert('No fue posible revocar los enlaces.') }
+              }}>Revocar enlaces</Button>
             )}
             <Button onClick={() => setDetailOpen(false)}>Cerrar</Button>
           </DialogFooter>

@@ -64,6 +64,19 @@ class SincronizarVisitaView(APIView):
                 if receipt:
                     if receipt.request_hash != digest:
                         return Response({'detail': 'La clave ya se usó con otros datos.'}, status=409)
+                    if visit.pdf_estado == 'fallido' and hasattr(visit, 'reporte'):
+                        try:
+                            from .views import _persist_visit_pdf
+                            visit = _persist_visit_pdf(visit.pk, created_files)
+                        except Exception:
+                            logger.exception('No fue posible reintentar PDF de visita %s', visit.pk)
+                        else:
+                            receipt.response_data = {
+                                **dict(VisitaDetailSerializer(visit).data), 'operation_id': key,
+                                'correo_programado': True,
+                            }
+                            receipt.save(update_fields=['response_data'])
+                            transaction.on_commit(lambda: _notify_completed_visit(pk), robust=True)
                     return Response(receipt.response_data, headers={'Idempotency-Replayed': 'true'})
 
                 current_version = visit_sync_version(visit)
@@ -81,11 +94,19 @@ class SincronizarVisitaView(APIView):
                     photo.seek(0)
 
                 data = {key: request.data.get(key) for key in request.data if key not in ('fotos', 'firma_base64')}
-                if data.get('valor_servicio') == '':
-                    data['valor_servicio'] = None
+                directions = data.pop('cliente_indicaciones_llegada', None)
+                if directions is not None and (not isinstance(directions, str) or len(directions) > 2000):
+                    raise serializers.ValidationError({'cliente_indicaciones_llegada': 'Usa hasta 2000 caracteres.'})
+                motivo_cambio_costo = str(data.pop('motivo_cambio_costo', '') or '').strip()
+                if data.get('valor_servicio') in ('', None):
+                    data['valor_servicio'] = visit.valor_visita
                 report = ReporteVisita.objects.filter(visita=visit).first()
                 validator = ReporteCreateSerializer(report, data=data)
                 validator.is_valid(raise_exception=True)
+                final_cost = validator.validated_data.get('valor_servicio', visit.valor_visita)
+                if (final_cost != visit.valor_visita and visit.costo_inicial is not None
+                        and final_cost != visit.costo_inicial and not motivo_cambio_costo):
+                    raise serializers.ValidationError({'motivo_cambio_costo': 'Indica el motivo del cambio respecto al costo inicial.'})
                 for field in ('persona_atiende', 'motivo_servicio', 'solucion_realizada'):
                     if not str(data.get(field, '')).strip():
                         raise serializers.ValidationError({field: 'Este campo es obligatorio.'})
@@ -93,42 +114,62 @@ class SincronizarVisitaView(APIView):
                     if data.get(selector) == 'otro' and not str(data.get(extra, '')).strip():
                         raise serializers.ValidationError({extra: 'Especifica el valor de otro.'})
 
-                signature = request.data.get('firma_base64', '')
-                try:
-                    signature_bytes = base64.b64decode(signature.split(';base64,')[-1], validate=True)
-                    if len(signature_bytes) > 1024 * 1024:
-                        raise ValueError('Firma demasiado grande')
-                    signature_file = ContentFile(signature_bytes, name='firma.png')
-                    serializers.ImageField().run_validation(signature_file)
-                    signature_file.seek(0)
-                except Exception:
-                    raise serializers.ValidationError({'firma_base64': 'Se requiere una firma PNG o JPEG válida, de máximo 1 MB.'})
+                signature = request.data.get('firma_base64', '') or ''
+                signature_file = None
+                if signature:
+                    try:
+                        signature_bytes = base64.b64decode(signature.split(';base64,')[-1], validate=True)
+                        if len(signature_bytes) > 1024 * 1024:
+                            raise ValueError('Firma demasiado grande')
+                        signature_file = ContentFile(signature_bytes, name='firma.png')
+                        serializers.ImageField().run_validation(signature_file)
+                        signature_file.seek(0)
+                    except Exception:
+                        raise serializers.ValidationError({'firma_base64': 'La firma debe ser PNG o JPEG válida, de máximo 1 MB.'})
 
                 # All validation precedes writes. The receipt, evidence rows,
                 # report and completion are committed as one transaction.
                 count = visit.evidencias.count()
                 for index, photo in enumerate(photos):
-                    evidence = EvidenciaFotografica(visita=visit, orden=count + index)
+                    evidence = EvidenciaFotografica(visita=visit, orden=count + index, es_temporal=True)
                     evidence.imagen.save(photo.name, photo, save=False)
                     created_files.append((evidence.imagen.storage, evidence.imagen.name))
                     evidence.save()
                 report = validator.save(visita=visit)
+                if directions is not None:
+                    visit.cliente.indicaciones_llegada = directions.strip()
+                    visit.cliente.save(update_fields=['indicaciones_llegada'])
                 report.firma_base64 = signature
-                report.firma_cliente.save(f'firma_{visit.numero_tarea}_{key}.png', signature_file, save=False)
-                created_files.append((report.firma_cliente.storage, report.firma_cliente.name))
+                if signature_file:
+                    report.firma_cliente.save(f'firma_{visit.numero_tarea}_{key}.png', signature_file, save=False)
+                    created_files.append((report.firma_cliente.storage, report.firma_cliente.name))
                 report.save()
-                visit.estado = VisitaTecnica.ESTADO_FINALIZADA
-                visit.save(update_fields=['estado', 'fecha_actualizacion'])
-                visit = VisitaTecnica.objects.get(pk=visit.pk)
+                previous_cost = visit.valor_visita
+                if report.valor_servicio != previous_cost:
+                    from .models import CambioCostoVisita
+                    visit.valor_visita = report.valor_servicio
+                    CambioCostoVisita.objects.create(
+                        visita=visit, usuario=request.user,
+                        valor_anterior=previous_cost, valor_nuevo=report.valor_servicio,
+                        motivo=motivo_cambio_costo,
+                    )
+                visit.pdf_estado = 'procesando'
+                visit.save(update_fields=['pdf_estado', 'valor_visita', 'fecha_actualizacion'])
+                try:
+                    from .views import _persist_visit_pdf
+                    visit = _persist_visit_pdf(visit.pk, created_files)
+                except Exception:
+                    logger.exception('No fue posible completar PDF de visita %s', visit.pk)
+                    visit.pdf_estado = 'fallido'
+                    visit.pdf_error = 'No se pudo generar o guardar el PDF. Reintenta el envío.'
+                    visit.save(update_fields=['pdf_estado', 'pdf_error'])
+                completed = visit.estado == VisitaTecnica.ESTADO_FINALIZADA
                 response = dict(VisitaDetailSerializer(visit).data)
                 response['operation_id'] = key
-                response['correo_programado'] = True
+                response['correo_programado'] = completed
                 VisitSyncReceipt.objects.create(visita=visit, usuario=request.user, operation_key=key, request_hash=digest, response_data=response)
-
-                def notify():
-                    from .views import _enviar_correo_visita_completada
-                    _enviar_correo_visita_completada(VisitaTecnica.objects.select_related('cliente').get(pk=pk))
-                transaction.on_commit(notify, robust=True)
+                if completed:
+                    transaction.on_commit(lambda: _notify_completed_visit(pk), robust=True)
             return Response(response)
         except Exception:
             # Storage isn't transactional. Remove only files created by this
@@ -139,3 +180,8 @@ class SincronizarVisitaView(APIView):
                 except Exception:
                     logger.exception('No se pudo limpiar un archivo de sincronización revertida')
             raise
+
+
+def _notify_completed_visit(pk):
+    from .views import _save_pdf_and_notify
+    _save_pdf_and_notify(pk)

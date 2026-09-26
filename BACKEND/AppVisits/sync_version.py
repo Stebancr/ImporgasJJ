@@ -7,7 +7,7 @@ def visit_sync_version(visit):
     report = getattr(visit, 'reporte', None)
     payload = {
         'visit': {key: getattr(visit, key) for key in ('id', 'tecnico_id', 'tipo_tarea', 'fecha', 'hora', 'descripcion', 'observaciones_iniciales', 'valor_visita', 'estado', 'fecha_actualizacion')},
-        'client': {key: getattr(visit.cliente, key) for key in ('id', 'nombre', 'identificacion', 'telefono', 'correo', 'direccion')},
+        'client': {key: getattr(visit.cliente, key) for key in ('id', 'nombre', 'identificacion', 'telefono', 'correo', 'direccion', 'indicaciones_llegada')},
         'report': report.actualizado_en if report else None,
         'photos': list(visit.evidencias.values_list('id', flat=True)),
     }

@@ -18,5 +18,7 @@ whatsapp-gateway/node_modules/
 whatsapp-gateway/dist/
 whatsapp-gateway/auth/
 whatsapp-gateway/media/
+backups/
+.codex-pre-fix-*/
 docs/
 **/docs/
