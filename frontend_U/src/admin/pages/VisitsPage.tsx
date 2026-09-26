@@ -387,7 +387,7 @@ export default function VisitsPage() {
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setTypesOpen(true)}>Tipos de visita</Button>
           <Button variant="outline" onClick={() => setExportOpen(true)}>Generar Excel</Button>
-          <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreationFlow(null); setPhotos([]); setPhotosInputKey((key) => key + 1); setCreateOpen(true) }}>
+          <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreationFlow(null); setPhotos([]); setSignature(null); setReport({ persona_atiende: '', equipo: 'estufa', equipo_otro: '', ubicacion_equipo: 'cocina', ubicacion_otro: '', motivo_servicio: '', solucion_realizada: '', observaciones: '', recomendaciones: '', metodo_pago: '' }); setPhotosInputKey((key) => key + 1); setCreateOpen(true) }}>
             <Plus className="h-4 w-4 mr-2" /> Nueva Visita
           </Button>
         </div>
@@ -826,9 +826,10 @@ export default function VisitsPage() {
               <div className="col-span-2">
                 <Label>Flujo de creación</Label>
                 <Select value={creationFlow ?? undefined} onValueChange={(value) => {
-                  if (value === 'pending' && photos.length > 0) {
-                    if (!window.confirm('Al asignar la visita para completar después se descartarán las imágenes seleccionadas. ¿Continuar?')) return
+                  if (value === 'pending' && (photos.length > 0 || signature)) {
+                    if (!window.confirm('Al asignar la visita para completar después se descartarán las imágenes y la firma seleccionadas. ¿Continuar?')) return
                     setPhotos([])
+                    setSignature(null)
                     setPhotosInputKey((key) => key + 1)
                   }
                   setCreationFlow(value as 'complete' | 'pending')

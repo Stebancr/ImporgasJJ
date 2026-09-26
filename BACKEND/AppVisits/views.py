@@ -91,7 +91,12 @@ def _enviar_correo_visita_completada(visita):
         visita.save(update_fields=['correo_completada_error', 'fecha_actualizacion'])
         return False
     try:
-        pdf = _generar_pdf(visita)
+        if not visita.pdf_final or visita.pdf_estado != 'generado':
+            raise ValueError('El PDF definitivo todavía no está disponible.')
+        with visita.pdf_final.open('rb') as saved_pdf:
+            pdf = saved_pdf.read()
+        if len(pdf) != visita.pdf_bytes or hashlib.sha256(pdf).hexdigest() != visita.pdf_sha256:
+            raise ValueError('El PDF definitivo no superó la validación de integridad.')
         message = EmailMessage(
             subject=f'Visita técnica #{visita.numero_tarea} completada',
             body=(
@@ -1139,6 +1144,14 @@ class PDFReporteView(APIView):
         except VisitaTecnica.DoesNotExist:
             return Response({'error': 'Visita no encontrada.'}, status=404)
 
+        if (v.estado == VisitaTecnica.ESTADO_FINALIZADA and not v.pdf_final
+                and not v.pdf_estado and hasattr(v, 'reporte')):
+            try:
+                # Compatibilidad con informes históricos. No envía notificaciones.
+                v = _persist_visit_pdf(v.pk)
+            except Exception:
+                logger.exception('No fue posible archivar el PDF histórico de visita %s', v.pk)
+                return Response({'detail': 'No se pudo generar el informe histórico. Se conservaron sus archivos.'}, status=409)
         if v.estado != VisitaTecnica.ESTADO_FINALIZADA or not v.pdf_final or v.pdf_estado in ('error', 'fallido', 'procesando') or (
                 v.pdf_source_hash and v.pdf_source_hash != _pdf_source_hash(v)):
             return Response({'detail': 'El PDF definitivo no está disponible. Reintenta su generación.'}, status=409)

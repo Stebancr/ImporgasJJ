@@ -192,6 +192,9 @@ class VisitaDetailSerializer(serializers.ModelSerializer):
                     and obj.evidencias.filter(es_temporal=True, eliminada_en__isnull=False).exists())
 
     def get_pdf_disponible(self, obj):
+        if (obj.estado == VisitaTecnica.ESTADO_FINALIZADA and not obj.pdf_final
+                and not obj.pdf_estado and hasattr(obj, 'reporte')):
+            return True  # Informes anteriores al archivo permanente, generados al abrirlos.
         if obj.estado != VisitaTecnica.ESTADO_FINALIZADA or not obj.pdf_final or obj.pdf_estado in ('error', 'fallido', 'procesando'):
             return False
         if obj.pdf_source_hash:

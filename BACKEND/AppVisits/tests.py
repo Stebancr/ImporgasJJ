@@ -275,8 +275,17 @@ class VisitCompletionTests(APITestCase):
             visita=self.visit, persona_atiende='Cliente', equipo='estufa',
             ubicacion_equipo='cocina', motivo_servicio='Revisión', solucion_realizada='Ajuste',
         )
+        self.visit.estado = VisitaTecnica.ESTADO_FINALIZADA
+        self.visit.save(update_fields=['estado'])
+        detail = self.client.get(reverse('visitas-detail', args=[self.visit.pk]))
+        self.assertTrue(detail.data['pdf_disponible'])
         with self.captureOnCommitCallbacks(execute=True):
-            _persist_visit_pdf(self.visit.pk)
+            response = self.client.get(reverse('visitas-pdf', args=[self.visit.pk]))
+        self.assertEqual(response.status_code, 200)
+        response.close()
+        self.visit.refresh_from_db()
+        self.assertTrue(self.visit.pdf_final)
+        self.assertEqual(len(mail.outbox), 0)
         evidence.refresh_from_db()
         self.assertFalse(evidence.es_temporal)
         self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
@@ -611,6 +620,8 @@ class VisitCompletionTests(APITestCase):
         self.assertEqual(len(mail.outbox), 1)
         attachment = mail.outbox[0].attachments[0]
         self.assertEqual(attachment.mimetype, 'application/pdf')
+        with self.visit.pdf_final.open('rb') as saved_pdf:
+            self.assertEqual(attachment.content, saved_pdf.read())
         text = ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(attachment.content)).pages)
         self.assertIn(f'Tarea {self.visit.numero_tarea}', text)
         self.assertIn('Firma cliente', text)
