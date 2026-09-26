@@ -1,6 +1,7 @@
 import base64
 import json
 import hashlib
+import os
 import shutil
 import tempfile
 from datetime import date, time, timedelta
@@ -10,6 +11,7 @@ from urllib.parse import urlparse, parse_qs
 from unittest.mock import patch
 
 from django.core import mail
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core import signing
 from django.test import override_settings
@@ -20,8 +22,8 @@ from PIL import Image as PILImage
 from rest_framework.test import APITestCase
 
 from usuarios.models import Credenciales, Usuario
-from .models import ClienteVisita, VisitaTecnica, TipoVisita, CambioCostoVisita, ReporteVisita
-from .views import _save_pdf_and_notify
+from .models import ClienteVisita, VisitaTecnica, TipoVisita, CambioCostoVisita, ReporteVisita, EvidenciaFotografica
+from .views import _save_pdf_and_notify, _persist_visit_pdf, _public_pdf_url
 from crmChat.models import CRMContact, ChannelIntegration, ChatSession, ChatMessage
 from .notifications import notify_technician_visit_assigned
 from ecommerce.models import Notification
@@ -221,6 +223,7 @@ class VisitCompletionTests(APITestCase):
             'motivo_cambio_costo': 'Se agregó cambio de regulador',
             'fotos': [SimpleUploadedFile('evidencia.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='), content_type='image/png')],
         }
+
         with self.captureOnCommitCallbacks(execute=True):
             finished = self.client.post(
                 reverse('visitas-sincronizar', args=[visit_id]), report,
@@ -242,27 +245,62 @@ class VisitCompletionTests(APITestCase):
         excel = self.client.get(reverse('visitas-exportar'), {'fecha_desde': date.today(), 'fecha_hasta': date.today()})
         self.assertIn(70000, [cell for row in load_workbook(BytesIO(excel.content), read_only=True).active.values for cell in row])
         cost_url = reverse('visitas-costo', args=[visit_id])
-        self.assertEqual(self.client.patch(cost_url, {'valor_visita': 80000}, format='json').status_code, 400)
-        with self.captureOnCommitCallbacks(execute=True):
-            amended = self.client.patch(cost_url, {
-                'valor_visita': 80000, 'motivo_cambio_costo': 'Ajuste administrativo posterior',
-            }, format='json')
-        self.assertEqual(amended.status_code, 200, amended.data)
+        amended = self.client.patch(cost_url, {
+            'valor_visita': 80000, 'motivo_cambio_costo': 'Ajuste administrativo posterior',
+        }, format='json')
+        self.assertEqual(amended.status_code, 409, amended.data)
         visit.refresh_from_db()
         self.assertEqual(visit.costo_inicial, Decimal('45000.00'))
-        self.assertEqual(visit.valor_visita, Decimal('80000.00'))
-        self.assertIn('80,000', ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(visit.pdf_final.read())).pages))
-        with patch('AppVisits.views._generar_pdf', side_effect=ValueError('fallo de prueba')):
-            with self.captureOnCommitCallbacks(execute=True):
-                self.assertEqual(self.client.patch(cost_url, {
-                    'valor_visita': 90000, 'motivo_cambio_costo': 'Segundo ajuste',
-                }, format='json').status_code, 200)
-        visit.refresh_from_db()
-        self.assertEqual(visit.pdf_estado, 'error')
-        self.assertFalse(self.client.get(reverse('visitas-detail', args=[visit_id])).data['pdf_disponible'])
-        self.assertEqual(self.client.get(reverse('visitas-pdf', args=[visit_id])).status_code, 409)
-        self.assertTrue(visit.evidencias.exists())
-        self.assertEqual(self.client.post(reverse('visitas-pdf-reintentar', args=[visit_id])).status_code, 200)
+        self.assertEqual(visit.valor_visita, Decimal('70000.00'))
+        self.assertTrue(self.client.get(reverse('visitas-detail', args=[visit_id])).data['pdf_disponible'])
+
+    def test_assigned_technician_can_update_directions_without_erasing_other_fields(self):
+        self.visit.tecnico = self.technician
+        self.visit.save(update_fields=['tecnico'])
+        url = reverse('visitas-indicaciones', args=[self.visit.pk])
+        self.client.force_authenticate(self.technician)
+        response = self.client.patch(url, {'indicaciones_llegada': 'Portería, torre B'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.visit.cliente.refresh_from_db()
+        self.assertEqual(self.visit.cliente.indicaciones_llegada, 'Portería, torre B')
+        self.assertEqual(self.visit.cliente.direccion, 'Calle de prueba')
+
+    def test_historical_evidence_is_retained_when_pdf_is_generated(self):
+        photo = SimpleUploadedFile(
+            'historica.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+            content_type='image/png',
+        )
+        evidence = EvidenciaFotografica.objects.create(visita=self.visit, imagen=photo)
+        ReporteVisita.objects.create(
+            visita=self.visit, persona_atiende='Cliente', equipo='estufa',
+            ubicacion_equipo='cocina', motivo_servicio='Revisión', solucion_realizada='Ajuste',
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            _persist_visit_pdf(self.visit.pk)
+        evidence.refresh_from_db()
+        self.assertFalse(evidence.es_temporal)
+        self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
+        self.assertIsNone(evidence.eliminada_en)
+
+    def test_cleanup_only_removes_old_unreferenced_temporary_files(self):
+        folder = os.path.join(self.media_dir, 'evidencias_temporales')
+        os.makedirs(folder, exist_ok=True)
+        orphan = os.path.join(folder, 'orphan.png')
+        with open(orphan, 'wb') as output:
+            output.write(b'synthetic test file')
+        old = timezone.now().timestamp() - 32 * 86400
+        os.utime(orphan, (old, old))
+        photo = SimpleUploadedFile('retained.png', base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+        ), content_type='image/png')
+        evidence = EvidenciaFotografica.objects.create(visita=self.visit, imagen=photo, es_temporal=True)
+        retained = evidence.imagen.path
+        os.utime(retained, (old, old))
+        call_command('cleanup_visit_temporary_images', days=30)
+        self.assertTrue(os.path.exists(orphan))
+        call_command('cleanup_visit_temporary_images', days=30, apply=True)
+        self.assertFalse(os.path.exists(orphan))
+        self.assertTrue(os.path.exists(retained))
 
     def test_excel_filters_and_escapes_user_text(self):
         self.visit.cliente.nombre = '=SUM(1,1)'
@@ -321,6 +359,10 @@ class VisitCompletionTests(APITestCase):
         self.assertEqual(visit.evidencias.count(), 1)
         self.assertTrue(visit.pdf_final)
         self.assertEqual(visit.whatsapp_notificacion_estado, 'manual')
+        with override_settings(DEBUG=True):
+            self.assertTrue(_public_pdf_url(visit).startswith('http://localhost/api/visits/'))
+        with override_settings(DEBUG=False):
+            self.assertIsNone(_public_pdf_url(visit))
         reader = PdfReader(BytesIO(visit.pdf_final.read()))
         self.assertGreater(len(reader.pages[0].images), 0, 'El logo no se incorporó al PDF.')
         text = ''.join(page.extract_text() or '' for page in reader.pages)
@@ -329,6 +371,24 @@ class VisitCompletionTests(APITestCase):
         self.assertNotIn('Indicaciones para llegar', text)
         self.assertEqual(self.client.get('/media/' + visit.pdf_final.name).status_code, 404)
         self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk])).status_code, 403)
+
+    def test_admin_completion_without_images_still_stores_valid_pdf(self):
+        payload = self.valid_create_payload()
+        payload['completar_ahora'] = 'true'
+        payload['reporte'] = json.dumps({
+            'persona_atiende': 'Cliente sintético', 'equipo': 'estufa',
+            'ubicacion_equipo': 'cocina', 'motivo_servicio': 'Revisión',
+            'solucion_realizada': 'Trabajo terminado',
+        })
+        with self.captureOnCommitCallbacks(execute=True):
+            created = self.client.post(reverse('visitas-list-create'), payload, format='multipart')
+        self.assertEqual(created.status_code, 201, created.data)
+        visit = VisitaTecnica.objects.get(pk=created.data['id'])
+        self.assertEqual(visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
+        self.assertEqual(visit.evidencias.count(), 0)
+        self.assertTrue(visit.pdf_final.storage.exists(visit.pdf_final.name))
+        self.assertIn('Visita finalizada sin firma del cliente', ''.join(
+            page.extract_text() or '' for page in PdfReader(BytesIO(visit.pdf_final.read())).pages))
 
     @override_settings(FRONTEND_PUBLIC_URL='https://www.imporgasjj.com')
     def test_definitive_pdf_has_safe_name_all_images_metadata_and_revocable_links(self):
@@ -349,32 +409,34 @@ class VisitCompletionTests(APITestCase):
             created = self.client.post(reverse('visitas-list-create'), payload, format='multipart')
         self.assertEqual(created.status_code, 201, created.data)
         visit = VisitaTecnica.objects.get(pk=created.data['id'])
-        self.assertEqual(visit.pdf_estado, 'listo')
-        self.assertRegex(visit.pdf_final.name, r'/VIS-\d{6}-Juan-Perez-prueba\.pdf$')
+        self.assertEqual(visit.pdf_estado, 'generado')
+        self.assertRegex(visit.pdf_final.name, r'/VISITA-\d{6}-Juan-Perez-prueba\.pdf$')
         pdf_bytes = visit.pdf_final.read()
         self.assertEqual(visit.pdf_bytes, len(pdf_bytes))
         self.assertEqual(visit.pdf_sha256, hashlib.sha256(pdf_bytes).hexdigest())
         self.assertIsNotNone(visit.pdf_generado_en)
         self.assertEqual(sum(len(page.images) for page in PdfReader(BytesIO(pdf_bytes)).pages), 3)
         for evidence in visit.evidencias.all():
-            self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
-            self.assertIsNotNone(evidence.archivada_en)
-            self.assertEqual(self.client.get('/media/' + evidence.imagen.name).status_code, 404)
+            self.assertEqual(evidence.imagen.name, '')
+            self.assertIsNotNone(evidence.eliminada_en)
         admin_pdf = self.client.get(reverse('visitas-pdf', args=[visit.pk]))
         self.assertEqual(admin_pdf.status_code, 200)
         self.assertIn('inline', admin_pdf['Content-Disposition'])
         self.assertIn('Juan-Perez-prueba.pdf', admin_pdf['Content-Disposition'])
+        outsider = Credenciales.objects.create(usuario='qa-other-technician', tipo_usuario=1, estado=1)
+        self.client.force_authenticate(outsider)
+        self.assertEqual(self.client.get(reverse('visitas-pdf', args=[visit.pk])).status_code, 404)
+        self.client.force_authenticate(self.admin)
         detail = self.client.get(reverse('visitas-detail', args=[visit.pk]))
-        photo_url = urlparse(detail.data['evidencias'][0]['imagen'])
-        token = parse_qs(photo_url.query)['token'][0]
-        self.assertEqual(self.client.get(photo_url.path.removeprefix('/api'), {'token': token}).status_code, 200)
-        other_photo_id = detail.data['evidencias'][1]['id']
-        self.assertEqual(self.client.get(reverse('visitas-foto-publica', args=[visit.pk, other_photo_id]), {'token': token}).status_code, 403)
+        self.assertEqual(detail.data['evidencias'], [])
+        self.assertFalse(detail.data['costo_editable'])
         pdf_token = signing.dumps({'visit_id': visit.pk, 'version': 1}, salt='visita-pdf-publico')
         self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk]), {'token': pdf_token}).status_code, 200)
+        with patch('django.core.signing.time.time', return_value=1):
+            expired_token = signing.dumps({'visit_id': visit.pk, 'version': 1}, salt='visita-pdf-publico')
+        self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk]), {'token': expired_token}).status_code, 403)
         self.assertEqual(self.client.post(reverse('visitas-pdf-revocar', args=[visit.pk])).status_code, 200)
         self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[visit.pk]), {'token': pdf_token}).status_code, 403)
-        self.assertEqual(self.client.get(photo_url.path.removeprefix('/api'), {'token': token}).status_code, 403)
         self.assertEqual(self.client.get(reverse('visitas-pdf-publico', args=[self.visit.pk]), {'token': pdf_token}).status_code, 403)
         stored_name = visit.pdf_final.name
         _save_pdf_and_notify(visit.pk)
@@ -383,7 +445,7 @@ class VisitCompletionTests(APITestCase):
         self.assertEqual(self.client.post(reverse('visitas-fotos', args=[visit.pk]), {
             'fotos': photo('tardia.png', 'green'),
         }, format='multipart').status_code, 409)
-        self.assertEqual(self.client.delete(reverse('visitas-fotos-delete', args=[visit.pk, other_photo_id])).status_code, 409)
+        self.assertEqual(self.client.delete(reverse('visitas-fotos-delete', args=[visit.pk, visit.evidencias.first().pk])).status_code, 409)
         from openpyxl import load_workbook
         export = self.client.get(reverse('visitas-exportar'), {
             'fecha_desde': date.today(), 'fecha_hasta': date.today(), 'estado': 'finalizada',
@@ -422,18 +484,21 @@ class VisitCompletionTests(APITestCase):
         self.assertEqual(created.status_code, 201)
         visit = VisitaTecnica.objects.get(pk=created.data['id'])
         evidence = visit.evidencias.get()
-        self.assertEqual(visit.pdf_estado, 'error')
+        self.assertEqual(visit.pdf_estado, 'fallido')
+        self.assertNotEqual(visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
         self.assertFalse(visit.pdf_final)
         self.assertIsNone(evidence.archivada_en)
         self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
         self.assertEqual(self.client.get(reverse('visitas-pdf', args=[visit.pk])).status_code, 409)
-        retried = self.client.post(reverse('visitas-pdf-reintentar', args=[visit.pk]))
+        with self.captureOnCommitCallbacks(execute=True):
+            retried = self.client.post(reverse('visitas-pdf-reintentar', args=[visit.pk]))
         self.assertEqual(retried.status_code, 200, retried.data)
         visit.refresh_from_db()
         evidence.refresh_from_db()
-        self.assertEqual(visit.pdf_estado, 'listo')
-        self.assertIsNotNone(evidence.archivada_en)
-        self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
+        self.assertEqual(visit.pdf_estado, 'generado')
+        self.assertEqual(visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
+        self.assertIsNotNone(evidence.eliminada_en)
+        self.assertEqual(evidence.imagen.name, '')
 
     @override_settings(FRONTEND_PUBLIC_URL='https://www.imporgasjj.com')
     @patch('crmChat.apps.meta.services.dispatch_outbound_message')
@@ -536,9 +601,11 @@ class VisitCompletionTests(APITestCase):
             'firma_base64': f'data:image/png;base64,{signature_png}',
         }
         url = reverse('visitas-finalizar', args=[self.visit.id])
-        response = self.client.post(url, payload, format='json')
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, payload, format='json')
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data['correo_enviado'])
+        self.visit.refresh_from_db()
+        self.assertTrue(self.visit.pdf_final)
         self.visit.refresh_from_db()
         self.assertIsNotNone(self.visit.correo_completada_en)
         self.assertEqual(len(mail.outbox), 1)

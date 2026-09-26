@@ -47,7 +47,7 @@ urlpatterns = [
     path('visits/', include('AppVisits.urls')),
     # Los PDF de visitas solo se entregan por la vista con token firmado.
     # Esta ruta debe preceder al servidor genérico de media usado con DEBUG.
-    re_path(r'^media/(?:visitas_pdf|evidencias|firmas)(?:/.*)?$', lambda request: HttpResponseNotFound()),
+    re_path(r'^media/(?:visitas_pdf|evidencias|evidencias_temporales|firmas)(?:/.*)?$', lambda request: HttpResponseNotFound()),
     path('', api_root, name='api-root'),
 ]
 

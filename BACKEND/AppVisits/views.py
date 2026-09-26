@@ -136,21 +136,32 @@ def _valid_public_https_base(value):
         return True
 
 
+def _valid_pdf_link_base(value):
+    if _valid_public_https_base(value):
+        return True
+    parsed = urlparse(value)
+    return (settings.DEBUG and parsed.scheme == 'http'
+            and parsed.hostname == 'localhost' and not parsed.username
+            and not parsed.password and not parsed.query and not parsed.fragment
+            and parsed.path in ('', '/'))
+
+
 def _pdf_filename(visit):
     number = re.sub(r'[^A-Za-z0-9-]', '', str(visit.numero_tarea or visit.pk)) or str(visit.pk)
     if number.isdecimal():
-        number = f'VIS-{int(number):06d}'
+        number = f'{int(number):06d}'
     name = unicodedata.normalize('NFKD', visit.cliente.nombre or '')
     name = name.encode('ascii', 'ignore').decode('ascii')
     name = re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-')[:60].strip('-') or 'Cliente'
-    return f'{number}-{name}.pdf'
+    return f'VISITA-{number}-{name}.pdf'
 
 
 def _public_pdf_url(visit):
     base = settings.FRONTEND_PUBLIC_URL.rstrip('/')
-    if (not visit.pdf_final or visit.pdf_estado == 'error'
+    if (visit.estado != VisitaTecnica.ESTADO_FINALIZADA or not visit.pdf_final
+            or visit.pdf_estado in ('error', 'fallido', 'procesando')
             or (visit.pdf_source_hash and visit.pdf_source_hash != _pdf_source_hash(visit))
-            or not _valid_public_https_base(base)):
+            or not _valid_pdf_link_base(base)):
         return None
     token = signing.dumps({
         'visit_id': visit.pk, 'version': visit.pdf_link_version,
@@ -168,28 +179,45 @@ def _pdf_source_hash(visit):
                    visit.cliente.correo, visit.cliente.direccion],
         'report': [report.pk, report.actualizado_en, report.firma_cliente.name,
                    report.firma_base64],
-        'photos': list(visit.evidencias.values_list('pk', 'imagen', 'subida_en')),
+        # Las fotos temporales conservan su identidad después de vaciar el
+        # campo de archivo; así el PDF definitivo sigue vigente tras limpiarlas.
+        'photos': [(photo.pk, 'temporal' if photo.es_temporal else photo.imagen.name,
+                    photo.subida_en) for photo in visit.evidencias.all()],
     }
     return hashlib.sha256(json.dumps(payload, default=str, sort_keys=True).encode()).hexdigest()
 
 
-def _persist_visit_pdf(visit_id):
-    """Una versión privada por contenido; conserva versiones anteriores para auditoría."""
+def _persist_visit_pdf(visit_id, created_files=None):
+    """Confirma la finalización sólo después de guardar y validar el PDF."""
     from pypdf import PdfReader
     with transaction.atomic():
         visit = VisitaTecnica.objects.select_for_update().get(pk=visit_id)
         if not hasattr(visit, 'reporte'):
             raise ValueError('La visita no tiene reporte.')
+        visit.estado = VisitaTecnica.ESTADO_FINALIZADA
         source_hash = _pdf_source_hash(visit)
         if (visit.pdf_source_hash == source_hash and visit.pdf_final
                 and visit.pdf_final.storage.exists(visit.pdf_final.name)):
+            with visit.pdf_final.storage.open(visit.pdf_final.name, 'rb') as existing_pdf:
+                stored_pdf = existing_pdf.read()
+            if (hashlib.sha256(stored_pdf).hexdigest() != visit.pdf_sha256
+                    or len(stored_pdf) != visit.pdf_bytes
+                    or not PdfReader(io.BytesIO(stored_pdf)).pages):
+                raise ValueError('El PDF definitivo guardado no superó la validación de integridad.')
+            if VisitaTecnica.objects.filter(pk=visit.pk).exclude(estado=VisitaTecnica.ESTADO_FINALIZADA).exists():
+                visit.pdf_estado = 'generado'
+                visit.save(update_fields=['estado', 'pdf_estado', 'fecha_actualizacion'])
+            transaction.on_commit(lambda: _purge_temporary_images(visit_id), robust=True)
             return visit
+        if visit.evidencias.filter(es_temporal=True, imagen='').exists():
+            raise ValueError('No se puede regenerar un informe cuyas imágenes temporales ya se eliminaron.')
         pdf = _generar_pdf(visit)
         if not pdf.startswith(b'%PDF-') or not PdfReader(io.BytesIO(pdf)).pages:
             raise ValueError('El PDF generado no es válido.')
         digest = hashlib.sha256(pdf).hexdigest()
         name = f'visitas_pdf/{visit.pk}/{digest[:16]}/{_pdf_filename(visit)}'
         storage = visit.pdf_final.storage
+        saved_new = False
         if storage.exists(name):
             with storage.open(name, 'rb') as existing:
                 if hashlib.sha256(existing.read()).hexdigest() != digest:
@@ -199,23 +227,60 @@ def _persist_visit_pdf(visit_id):
             if stored != name:
                 storage.delete(stored)
                 raise ValueError('No se pudo reservar el nombre del PDF.')
+            saved_new = True
+            if created_files is not None:
+                created_files.append((storage, name))
+        with storage.open(name, 'rb') as saved_pdf:
+            persisted_bytes = saved_pdf.read()
+        if hashlib.sha256(persisted_bytes).hexdigest() != digest or not PdfReader(io.BytesIO(persisted_bytes)).pages:
+            if saved_new:
+                storage.delete(name)
+            raise ValueError('El PDF guardado no superó la validación de integridad.')
         visit.pdf_final.name = name
         visit.pdf_sha256 = digest
         visit.pdf_source_hash = source_hash
         visit.pdf_bytes = len(pdf)
         visit.pdf_generado_en = timezone.now()
-        visit.pdf_estado = 'listo'
+        visit.pdf_estado = 'generado'
         visit.pdf_error = ''
-        visit.save(update_fields=['pdf_final', 'pdf_sha256', 'pdf_source_hash',
-                                  'pdf_bytes', 'pdf_generado_en', 'pdf_estado', 'pdf_error'])
-        EvidenciaFotografica.objects.filter(visita=visit, archivada_en__isnull=True).update(
-            archivada_en=visit.pdf_generado_en,
-        )
-        return visit
+        try:
+            visit.save(update_fields=['estado', 'fecha_actualizacion', 'pdf_final', 'pdf_sha256', 'pdf_source_hash',
+                                      'pdf_bytes', 'pdf_generado_en', 'pdf_estado', 'pdf_error'])
+        except Exception:
+            if saved_new:
+                storage.delete(name)
+            raise
+        transaction.on_commit(lambda: _purge_temporary_images(visit_id), robust=True)
+    return visit
+
+
+def _purge_temporary_images(visit_id):
+    """Desvincula sólo archivos nuevos tras confirmar el PDF; nunca toca fotos históricas."""
+    evidence_ids = list(EvidenciaFotografica.objects.filter(
+        visita_id=visit_id, es_temporal=True, eliminada_en__isnull=True,
+    ).exclude(imagen='').values_list('pk', flat=True))
+    for evidence_id in evidence_ids:
+        with transaction.atomic():
+            evidence = EvidenciaFotografica.objects.select_for_update().select_related('visita').get(pk=evidence_id)
+            visit = evidence.visita
+            if (visit.estado != VisitaTecnica.ESTADO_FINALIZADA or not visit.pdf_final
+                    or visit.pdf_estado != 'generado' or not visit.pdf_final.storage.exists(visit.pdf_final.name)):
+                return
+            storage, name = evidence.imagen.storage, evidence.imagen.name
+            if not name:
+                continue
+            evidence.imagen = ''
+            evidence.eliminada_en = timezone.now()
+            evidence.archivada_en = evidence.eliminada_en
+            evidence.save(update_fields=['imagen', 'eliminada_en', 'archivada_en'])
+        try:
+            storage.delete(name)
+        except Exception:
+            logger.exception('No se pudo eliminar un archivo temporal de la visita %s', visit_id)
 
 
 def _save_pdf_and_notify(visita_id):
-    """Persistir el PDF después del commit; avisar sólo en chat reactivo verificado."""
+    """Finalizar tras el PDF; avisar sólo en chat reactivo verificado."""
     from crmChat.models import ChatSession, ChatMessage, ChannelIntegration
     from crmChat.apps.meta.services import dispatch_outbound_message
 
@@ -226,12 +291,14 @@ def _save_pdf_and_notify(visita_id):
         visit = _persist_visit_pdf(visita_id)
     except Exception:
         logger.exception('No fue posible guardar PDF de visita %s', visita_id)
-        visit.pdf_estado = 'error'
+        visit.pdf_estado = 'fallido'
         visit.pdf_error = 'No se pudo generar o guardar el PDF. Reintenta desde el CRM.'
         visit.whatsapp_notificacion_estado = 'error'
         visit.whatsapp_notificacion_error = 'No se pudo generar el PDF.'
         visit.save(update_fields=['pdf_estado', 'pdf_error', 'whatsapp_notificacion_estado', 'whatsapp_notificacion_error'])
         return
+
+    _enviar_correo_visita_completada(visit)
 
     phone = _normalized_colombian_phone(visit.cliente.telefono)
     if not phone:
@@ -403,6 +470,8 @@ class VisitaListCreateView(APIView):
         if request.data.get('completar_ahora') not in (None, '', False, True, 'true', 'false', '1', '0'):
             return Response({'completar_ahora': 'Valor inválido.'}, status=400)
         photos = request.FILES.getlist('fotos')
+        if photos and not complete_now:
+            return Response({'fotos': 'Las imágenes corresponden al flujo de completar ahora.'}, status=400)
         if len(photos) > 20:
             return Response({'fotos': 'Máximo 20 fotografías.'}, status=400)
         for photo in photos:
@@ -441,19 +510,27 @@ class VisitaListCreateView(APIView):
             with transaction.atomic():
                 visita = serializer.save()
                 for index, photo in enumerate(photos):
-                    EvidenciaFotografica.objects.create(visita=visita, imagen=photo, orden=index)
+                    EvidenciaFotografica.objects.create(visita=visita, imagen=photo, orden=index, es_temporal=True)
+                if visita.valor_visita is not None:
+                    CambioCostoVisita.objects.create(
+                        visita=visita, usuario=request.user, valor_anterior=None, valor_nuevo=visita.valor_visita,
+                    )
                 if report_serializer:
                     report = report_serializer.save(visita=visita)
                     if signature:
                         report.firma_cliente = signature
                         report.save(update_fields=['firma_cliente'])
-                    visita.estado = VisitaTecnica.ESTADO_FINALIZADA
-                    visita.save(update_fields=['estado', 'fecha_actualizacion'])
-                    transaction.on_commit(lambda visit_id=visita.pk: _save_pdf_and_notify(visit_id), robust=True)
-                if visita.valor_visita is not None:
-                    CambioCostoVisita.objects.create(
-                        visita=visita, usuario=request.user, valor_anterior=None, valor_nuevo=visita.valor_visita,
-                    )
+                    visita.pdf_estado = 'procesando'
+                    visita.save(update_fields=['pdf_estado'])
+                    try:
+                        visita = _persist_visit_pdf(visita.pk)
+                    except Exception:
+                        logger.exception('No fue posible completar PDF de visita %s', visita.pk)
+                        visita.pdf_estado = 'fallido'
+                        visita.pdf_error = 'No se pudo generar o guardar el PDF. Reintenta desde el CRM.'
+                        visita.save(update_fields=['pdf_estado', 'pdf_error'])
+                    else:
+                        transaction.on_commit(lambda visit_id=visita.pk: _save_pdf_and_notify(visit_id), robust=True)
                 if visita.tecnico_id and not complete_now:
                     _schedule_visit_assignment_notification(visita.pk)
             return Response(VisitaDetailSerializer(visita).data, status=201)
@@ -552,10 +629,33 @@ class CostoVisitaView(APIView):
                 return Response({'detail': 'Visita no encontrada o no asignada.'}, status=404)
             if visita.estado in (VisitaTecnica.ESTADO_FINALIZADA, VisitaTecnica.ESTADO_CANCELADA) and request.user.tipo_usuario < 2:
                 return Response({'detail': 'Solo un administrador puede ajustar el costo de una visita cerrada.'}, status=403)
+            if (visita.estado == VisitaTecnica.ESTADO_FINALIZADA
+                    and visita.evidencias.filter(es_temporal=True, eliminada_en__isnull=False).exists()):
+                return Response({'detail': 'El PDF definitivo ya contiene las evidencias y el costo. No se puede modificar el costo después de eliminar las imágenes temporales.'}, status=409)
             changed = _set_visit_cost(visita, value, request.user, request.data.get('motivo_cambio_costo', ''))
             if changed and visita.estado == VisitaTecnica.ESTADO_FINALIZADA:
                 transaction.on_commit(lambda visit_id=visita.pk: _refresh_saved_pdf(visit_id), robust=True)
         return Response(VisitaDetailSerializer(VisitaTecnica.objects.select_related('cliente', 'tecnico', 'creado_por').get(pk=pk)).data)
+
+
+class IndicacionesVisitaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @serialize_visit_mutation
+    def patch(self, request, pk):
+        if 'indicaciones_llegada' not in request.data:
+            return Response({'indicaciones_llegada': 'Este campo es obligatorio.'}, status=400)
+        value = request.data['indicaciones_llegada']
+        if not isinstance(value, str) or len(value) > 2000:
+            return Response({'indicaciones_llegada': 'Usa hasta 2000 caracteres.'}, status=400)
+        visit = _filter_visitas_by_user(VisitaTecnica.objects.select_related('cliente'), request.user).filter(pk=pk).first()
+        if not visit:
+            return Response({'detail': 'Visita no encontrada o no asignada.'}, status=404)
+        if visit.estado not in (VisitaTecnica.ESTADO_PENDIENTE, VisitaTecnica.ESTADO_EN_PROCESO):
+            return Response({'detail': 'La visita ya no admite cambios.'}, status=409)
+        visit.cliente.indicaciones_llegada = value.strip()
+        visit.cliente.save(update_fields=['indicaciones_llegada'])
+        return Response(VisitaDetailSerializer(visit).data)
 
 
 def _safe_excel_text(value):
@@ -853,11 +953,19 @@ class FinalizarVisitaView(APIView):
             )
             reporte.save(update_fields=['firma_base64', 'firma_cliente'])
 
-        v.estado = VisitaTecnica.ESTADO_FINALIZADA
-        v.save(update_fields=['estado', 'fecha_actualizacion'])
-        transaction.on_commit(lambda visit_id=v.pk: _save_pdf_and_notify(visit_id), robust=True)
+        v.pdf_estado = 'procesando'
+        v.save(update_fields=['pdf_estado'])
+        try:
+            v = _persist_visit_pdf(v.pk)
+        except Exception:
+            logger.exception('No fue posible completar PDF de visita %s', v.pk)
+            v.pdf_estado = 'fallido'
+            v.pdf_error = 'No se pudo generar o guardar el PDF. Reintenta desde el CRM.'
+            v.save(update_fields=['pdf_estado', 'pdf_error'])
+        else:
+            transaction.on_commit(lambda visit_id=v.pk: _save_pdf_and_notify(visit_id), robust=True)
 
-        correo_enviado = _enviar_correo_visita_completada(v)
+        correo_enviado = False
 
         response_data = VisitaDetailSerializer(
             VisitaTecnica.objects.select_related('cliente', 'tecnico').prefetch_related('evidencias').get(pk=pk)
@@ -901,6 +1009,7 @@ class FotosView(APIView):
                 visita=v,
                 imagen=foto,
                 orden=current_count + i,
+                es_temporal=True,
             )
             evidencias.append(e)
 
@@ -933,7 +1042,7 @@ class FotoPublicaView(APIView):
         except signing.BadSignature:
             return Response({'detail': 'Enlace inválido o vencido.'}, status=403)
         evidence = EvidenciaFotografica.objects.select_related('visita').filter(pk=foto_id, visita_id=pk).first()
-        if (not evidence or payload.get('visit_id') != pk or payload.get('photo_id') != foto_id
+        if (not evidence or not evidence.imagen or payload.get('visit_id') != pk or payload.get('photo_id') != foto_id
                 or payload.get('version') != evidence.visita.pdf_link_version):
             return Response({'detail': 'Imagen no disponible.'}, status=403)
         extension = evidence.imagen.name.rsplit('.', 1)[-1].lower()
@@ -1030,7 +1139,7 @@ class PDFReporteView(APIView):
         except VisitaTecnica.DoesNotExist:
             return Response({'error': 'Visita no encontrada.'}, status=404)
 
-        if not v.pdf_final or v.pdf_estado == 'error' or (
+        if v.estado != VisitaTecnica.ESTADO_FINALIZADA or not v.pdf_final or v.pdf_estado in ('error', 'fallido', 'procesando') or (
                 v.pdf_source_hash and v.pdf_source_hash != _pdf_source_hash(v)):
             return Response({'detail': 'El PDF definitivo no está disponible. Reintenta su generación.'}, status=409)
         response = FileResponse(v.pdf_final.open('rb'), content_type='application/pdf',
@@ -1057,9 +1166,10 @@ class PDFPublicoView(APIView):
         if (not visit or payload.get('visit_id') != pk
                 or payload.get('version', 1) != visit.pdf_link_version):
             return Response({'detail': 'Enlace inválido.'}, status=403)
-        if not visit.pdf_final or visit.pdf_estado == 'error' or (
+        if not visit.pdf_final or visit.pdf_estado in ('error', 'fallido', 'procesando') or (
                 visit.pdf_source_hash and visit.pdf_source_hash != _pdf_source_hash(visit)):
             return Response({'detail': 'Informe no disponible.'}, status=404)
+        logger.info('Acceso autorizado al PDF público de visita %s', visit.pk)
         response = FileResponse(
             visit.pdf_final.open('rb'), as_attachment=request.query_params.get('download') == '1',
             filename=_pdf_filename(visit), content_type='application/pdf',
@@ -1090,15 +1200,16 @@ class ReintentarPdfView(APIView):
     def post(self, request, pk):
         if getattr(request.user, 'tipo_usuario', 0) < 2:
             return Response({'detail': 'Solo administradores pueden reintentar el PDF.'}, status=403)
-        visit = VisitaTecnica.objects.filter(pk=pk, estado=VisitaTecnica.ESTADO_FINALIZADA).first()
+        visit = VisitaTecnica.objects.filter(pk=pk, pdf_estado__in=('error', 'fallido')).first()
         if not visit or not hasattr(visit, 'reporte'):
-            return Response({'detail': 'Visita finalizada no encontrada.'}, status=404)
+            return Response({'detail': 'No hay una generación fallida para reintentar.'}, status=404)
         try:
             visit = _persist_visit_pdf(pk)
         except Exception:
             logger.exception('No fue posible regenerar PDF de visita %s', pk)
-            VisitaTecnica.objects.filter(pk=pk).update(pdf_estado='error', pdf_error='No se pudo generar o guardar el PDF.')
+            VisitaTecnica.objects.filter(pk=pk).update(pdf_estado='fallido', pdf_error='No se pudo generar o guardar el PDF.')
             return Response({'detail': 'No se pudo generar el PDF. Las imágenes se conservaron.'}, status=500)
+        transaction.on_commit(lambda visit_id=pk: _save_pdf_and_notify(visit_id), robust=True)
         return Response({'pdf_disponible': True, 'pdf_sha256': visit.pdf_sha256})
 
 
@@ -1147,15 +1258,11 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
     story = []
     w = A4[0] - 3 * cm  # usable width
 
-    # El SVG oficial incluye el logotipo como PNG incrustado. Se extrae la
-    # imagen real para que ReportLab la incorpore al archivo PDF.
-    logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'logo_imporgas.svg')
-    with open(logo_path, 'r', encoding='utf-8') as logo_file:
-        logo_svg = logo_file.read()
-    logo_match = re.search(r'data:image/png;base64,([A-Za-z0-9+/=]+)', logo_svg)
-    if not logo_match:
-        raise ValueError('El logo SVG no contiene una imagen PNG válida.')
-    logo_buffer = BytesIO(base64.b64decode(logo_match.group(1), validate=True))
+    # Copia versionada del PNG oficial; la generación no depende del frontend
+    # en ejecución ni de descargas externas.
+    logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'logo_imporgas.png')
+    with open(logo_path, 'rb') as logo_file:
+        logo_buffer = BytesIO(logo_file.read())
     with PILImage.open(logo_buffer) as logo_source:
         logo_ratio = logo_source.height / logo_source.width
     logo_buffer.seek(0)
@@ -1345,7 +1452,7 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
         story.append(Spacer(1, 0.3 * cm))
 
         # ── Photos ──
-        evidencias = list(visita.evidencias.all()[:20])
+        evidencias = list(visita.evidencias.exclude(imagen='')[:20])
         if evidencias:
             foto_header = Table([[Paragraph('<b>Fotos</b>', bold)]], colWidths=[w])
             foto_header.setStyle(TableStyle([

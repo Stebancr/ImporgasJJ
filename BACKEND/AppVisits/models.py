@@ -209,11 +209,13 @@ class EvidenciaFotografica(models.Model):
         on_delete=models.CASCADE,
         related_name='evidencias',
     )
-    imagen = models.ImageField(upload_to='evidencias/')
+    imagen = models.ImageField(upload_to='evidencias_temporales/', blank=True)
     descripcion = models.CharField(max_length=200, blank=True)
     orden = models.IntegerField(default=0)
     subida_en = models.DateTimeField(auto_now_add=True)
     archivada_en = models.DateTimeField(null=True, blank=True)
+    es_temporal = models.BooleanField(default=False)
+    eliminada_en = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'visita_evidencia'

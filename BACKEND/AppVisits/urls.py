@@ -8,6 +8,7 @@ urlpatterns = [
     path('exportar/', views.ExportarVisitasView.as_view(), name='visitas-exportar'),
     path('<int:pk>/sincronizar/', SincronizarVisitaView.as_view(), name='visitas-sincronizar'),
     path('<int:pk>/costo/', views.CostoVisitaView.as_view(), name='visitas-costo'),
+    path('<int:pk>/indicaciones/', views.IndicacionesVisitaView.as_view(), name='visitas-indicaciones'),
     # Technician helpers
     path('tecnicos/', views.TecnicosView.as_view(), name='visitas-tecnicos'),
 

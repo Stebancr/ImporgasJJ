@@ -60,6 +60,7 @@ export interface VisitaDetalle extends VisitaItem {
   whatsapp_notificacion_estado?: string
   whatsapp_notificacion_error?: string
   pdf_disponible?: boolean
+  costo_editable?: boolean
   pdf_nombre?: string | null
   pdf_estado?: string
   pdf_error?: string

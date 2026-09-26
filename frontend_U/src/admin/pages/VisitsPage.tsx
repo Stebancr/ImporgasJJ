@@ -128,8 +128,10 @@ export default function VisitsPage() {
   const [exportType, setExportType] = useState('all')
   const [exportStatus, setExportStatus] = useState('all')
   const [exportError, setExportError] = useState('')
-  const [completeNow, setCompleteNow] = useState(false)
+  const [creationFlow, setCreationFlow] = useState<'complete' | 'pending' | null>(null)
+  const completeNow = creationFlow === 'complete'
   const [photos, setPhotos] = useState<File[]>([])
+  const [photosInputKey, setPhotosInputKey] = useState(0)
   const [signature, setSignature] = useState<File | null>(null)
   const [report, setReport] = useState({ persona_atiende: '', equipo: 'estufa', equipo_otro: '', ubicacion_equipo: 'cocina', ubicacion_otro: '', motivo_servicio: '', solucion_realizada: '', observaciones: '', recomendaciones: '', metodo_pago: '' })
 
@@ -210,6 +212,7 @@ export default function VisitsPage() {
   // ── Create ──
   const handleCreate = async () => {
     const errors = validateVisitForm(form, false)
+    if (!creationFlow) errors.form = 'Selecciona el flujo de creación.'
     if (completeNow) {
       for (const key of ['persona_atiende', 'motivo_servicio', 'solucion_realizada'] as const) {
         if (!report[key].trim()) errors[key] = 'Este campo es obligatorio.'
@@ -228,7 +231,7 @@ export default function VisitsPage() {
       setForm(blankForm())
       setPhotos([])
       setSignature(null)
-      setCompleteNow(false)
+      setCreationFlow(null)
       setReport({ persona_atiende: '', equipo: 'estufa', equipo_otro: '', ubicacion_equipo: 'cocina', ubicacion_otro: '', motivo_servicio: '', solucion_realizada: '', observaciones: '', recomendaciones: '', metodo_pago: '' })
       setFormErrors({})
       loadVisits()
@@ -384,7 +387,7 @@ export default function VisitsPage() {
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setTypesOpen(true)}>Tipos de visita</Button>
           <Button variant="outline" onClick={() => setExportOpen(true)}>Generar Excel</Button>
-          <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreateOpen(true) }}>
+          <Button onClick={() => { setForm(blankForm()); setFormErrors({}); setCreationFlow(null); setPhotos([]); setPhotosInputKey((key) => key + 1); setCreateOpen(true) }}>
             <Plus className="h-4 w-4 mr-2" /> Nueva Visita
           </Button>
         </div>
@@ -821,14 +824,16 @@ export default function VisitsPage() {
             </div>
             {!editOpen && <>
               <div className="col-span-2">
-                <Label>Imágenes de la visita</Label>
-                <Input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => setPhotos(Array.from(e.target.files || []))} />
-                <p className="text-xs text-muted-foreground">{photos.length} imagen(es) seleccionada(s)</p>
-              </div>
-              <div className="col-span-2">
                 <Label>Flujo de creación</Label>
-                <Select value={completeNow ? 'complete' : 'pending'} onValueChange={(value) => setCompleteNow(value === 'complete')}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={creationFlow ?? undefined} onValueChange={(value) => {
+                  if (value === 'pending' && photos.length > 0) {
+                    if (!window.confirm('Al asignar la visita para completar después se descartarán las imágenes seleccionadas. ¿Continuar?')) return
+                    setPhotos([])
+                    setPhotosInputKey((key) => key + 1)
+                  }
+                  setCreationFlow(value as 'complete' | 'pending')
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona cómo crear la visita" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pending">Dejar pendiente para el técnico</SelectItem>
                     <SelectItem value="complete">Completar ahora</SelectItem>
@@ -836,6 +841,11 @@ export default function VisitsPage() {
                 </Select>
               </div>
               {completeNow && <>
+                <div className="col-span-2">
+                  <Label>Imágenes de la visita</Label>
+                  <Input key={photosInputKey} type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => setPhotos(Array.from(e.target.files || []))} />
+                  <p className="text-xs text-muted-foreground">{photos.length} imagen(es) seleccionada(s)</p>
+                </div>
                 <div className="col-span-2"><Label>Persona que atiende *</Label><Input value={report.persona_atiende} onChange={(e) => setReport((prev) => ({ ...prev, persona_atiende: e.target.value }))} />{formErrors.persona_atiende && <p className="text-xs text-destructive">{formErrors.persona_atiende}</p>}</div>
                 <div><Label>Equipo *</Label><Select value={report.equipo} onValueChange={(value) => setReport((prev) => ({ ...prev, equipo: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['estufa', 'horno', 'calentador', 'parrilla', 'caldera', 'calefactor', 'otro'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
                 <div><Label>Ubicación del equipo *</Label><Select value={report.ubicacion_equipo} onValueChange={(value) => setReport((prev) => ({ ...prev, ubicacion_equipo: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['cocina', 'patio', 'balcon', 'exterior', 'sotano', 'otro'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
@@ -852,9 +862,9 @@ export default function VisitsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setCreateOpen(false); setEditOpen(false) }}>Cancelar</Button>
-            <Button onClick={editOpen ? handleEdit : handleCreate} disabled={saving}>
+            <Button onClick={editOpen ? handleEdit : handleCreate} disabled={saving || (!editOpen && !creationFlow)}>
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {editOpen ? 'Guardar cambios' : completeNow ? 'Crear y finalizar visita' : 'Crear visita pendiente'}
+              {editOpen ? 'Guardar cambios' : !creationFlow ? 'Selecciona un flujo' : completeNow ? 'Crear y finalizar visita' : 'Crear visita pendiente'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -929,10 +939,13 @@ export default function VisitsPage() {
                   <p className="text-sm">Costo final: {selectedVisit.costo_final == null ? 'No informado' : `$${selectedVisit.costo_final.toLocaleString('es-CO')}`}</p>
                   <p className="text-sm">Creada por: {selectedVisit.creado_por_nombre || 'No registrado'}</p>
                   {selectedVisit.pdf_generado_en && selectedVisit.pdf_disponible && <p className="text-xs text-muted-foreground">PDF definitivo: {selectedVisit.pdf_nombre} · {new Date(selectedVisit.pdf_generado_en).toLocaleString('es-CO')}</p>}
-                  {selectedVisit.pdf_estado === 'error' && <p className="text-sm text-destructive">PDF pendiente: {selectedVisit.pdf_error || 'No se pudo generar.'}</p>}
+                  {['error', 'fallido'].includes(selectedVisit.pdf_estado || '') && <p className="text-sm text-destructive">PDF fallido: {selectedVisit.pdf_error || 'No se pudo generar.'}</p>}
+                  {['pendiente', 'procesando'].includes(selectedVisit.pdf_estado || '') && <p className="text-sm text-muted-foreground">PDF: {selectedVisit.pdf_estado}</p>}
                   {selectedVisit.cambios_costo?.map((change, index) => <p key={index} className="text-xs text-muted-foreground">{change.usuario_nombre}, {new Date(change.cambiado_en).toLocaleString('es-CO')}: {change.valor_anterior ?? 'Sin valor'} → {change.valor_nuevo ?? 'Sin valor'}{change.motivo ? ` — ${change.motivo}` : ''}</p>)}
                   {selectedVisit.estado === 'finalizada' && <p className="text-sm">WhatsApp: {selectedVisit.whatsapp_notificacion_estado === 'enviada' ? 'Enviado' : selectedVisit.whatsapp_notificacion_error || 'Comparte el PDF manualmente desde el CRM.'}</p>}
-                  <Button variant="outline" size="sm" onClick={async () => {
+                  {selectedVisit.costo_editable === false ? (
+                    <p className="text-xs text-muted-foreground">El costo quedó fijado en el PDF definitivo. Para estas visitas se eliminaron las imágenes temporales después de guardarlo.</p>
+                  ) : <Button variant="outline" size="sm" onClick={async () => {
                     const value = window.prompt('Nuevo costo (vacío para dejar sin valor)', selectedVisit.valor_visita == null ? '' : String(selectedVisit.valor_visita))
                     if (value === null) return
                     const amount = value.trim() === '' ? null : Number(value)
@@ -942,7 +955,7 @@ export default function VisitsPage() {
                     if (reason === null) return
                     if (selectedVisit.costo_inicial != null && amount !== selectedVisit.costo_inicial && amount !== selectedVisit.costo_final && !reason?.trim()) { window.alert('Indica el motivo del cambio.'); return }
                     try { setSelectedVisit(await visitsService.updateCost(selectedVisit.id, amount, reason || '')); loadVisits() } catch { window.alert('No fue posible actualizar el costo.') }
-                  }}>Editar costo</Button>
+                  }}>Editar costo</Button>}
                   {selectedVisit.tecnico ? (
                     <p className="text-sm"><User className="inline h-3 w-3 mr-1" />{selectedVisit.tecnico.nombre_completo}</p>
                   ) : (
@@ -980,21 +993,6 @@ export default function VisitsPage() {
                 </Card>
               )}
 
-              {/* Photos */}
-              {selectedVisit.evidencias.length > 0 && (
-                <Card>
-                  <CardHeader className="py-3"><CardTitle className="text-sm">Evidencias ({selectedVisit.evidencias.length})</CardTitle></CardHeader>
-                  <CardContent className="pt-0">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {selectedVisit.evidencias.map((e) => (
-                        <a key={e.id} href={e.imagen} target="_blank" rel="noopener noreferrer">
-                          <img src={e.imagen} alt="" className="w-full h-28 object-cover rounded border hover:opacity-90 transition-opacity" />
-                        </a>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
             </div>
           ) : null}
           <DialogFooter>
@@ -1032,7 +1030,7 @@ export default function VisitsPage() {
                 )}
               </Button>
             )}
-            {selectedVisit?.estado === 'finalizada' && !selectedVisit.pdf_disponible && (
+            {selectedVisit && ['error', 'fallido'].includes(selectedVisit.pdf_estado || '') && !selectedVisit.pdf_disponible && (
               <Button variant="outline" onClick={async () => {
                 try { await visitsService.retryPDF(selectedVisit.id); setSelectedVisit(await visitsService.getById(selectedVisit.id)) }
                 catch { window.alert('No fue posible generar el PDF. Las imágenes se conservaron.') }

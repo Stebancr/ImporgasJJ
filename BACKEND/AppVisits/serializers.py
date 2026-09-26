@@ -170,7 +170,7 @@ class VisitaListSerializer(serializers.ModelSerializer):
         return hasattr(obj, 'reporte')
 
     def get_evidencias_count(self, obj):
-        return obj.evidencias.count()
+        return obj.evidencias.exclude(imagen='').count()
 
 
 # ─── detail ────────────────────────────────────────────────────────────────────
@@ -185,9 +185,14 @@ class VisitaDetailSerializer(serializers.ModelSerializer):
     cambios_costo = CambioCostoSerializer(many=True, read_only=True)
     pdf_disponible = serializers.SerializerMethodField()
     pdf_nombre = serializers.SerializerMethodField()
+    costo_editable = serializers.SerializerMethodField()
+
+    def get_costo_editable(self, obj):
+        return not (obj.estado == VisitaTecnica.ESTADO_FINALIZADA
+                    and obj.evidencias.filter(es_temporal=True, eliminada_en__isnull=False).exists())
 
     def get_pdf_disponible(self, obj):
-        if not obj.pdf_final or obj.pdf_estado == 'error':
+        if obj.estado != VisitaTecnica.ESTADO_FINALIZADA or not obj.pdf_final or obj.pdf_estado in ('error', 'fallido', 'procesando'):
             return False
         if obj.pdf_source_hash:
             from .views import _pdf_source_hash
@@ -214,7 +219,10 @@ class VisitaDetailSerializer(serializers.ModelSerializer):
     cliente = ClienteVisitaSerializer(read_only=True)
     tecnico = TecnicoSerializer(read_only=True)
     reporte = ReporteSerializer(read_only=True)
-    evidencias = EvidenciaResponseSerializer(many=True, read_only=True)
+    evidencias = serializers.SerializerMethodField()
+
+    def get_evidencias(self, obj):
+        return EvidenciaResponseSerializer(obj.evidencias.exclude(imagen=''), many=True).data
     tipo_tarea_display = serializers.CharField(source='get_tipo_tarea_display', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
 
@@ -339,6 +347,7 @@ class VisitaCreateSerializer(serializers.Serializer):
             valor_visita=validated_data.get('valor_visita'),
             costo_inicial=validated_data.get('valor_visita'),
             creado_por=creado_por,
+            pdf_estado='pendiente',
         )
         return visita
 

@@ -57,6 +57,41 @@ class OfflineSyncTests(APITestCase):
         self.assertEqual(report.ubicacion_otro, 'Terraza')
         self.assertIsNone(report.valor_servicio)
 
+    def test_atomic_sync_updates_directions_and_removes_only_new_temporary_photo(self):
+        data = self.payload()
+        data['cliente_indicaciones_llegada'] = 'Entrar por portería B'
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.send(payload=data)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.visit.refresh_from_db()
+        self.visit.cliente.refresh_from_db()
+        evidence = self.visit.evidencias.get()
+        self.assertEqual(self.visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
+        self.assertEqual(self.visit.cliente.indicaciones_llegada, 'Entrar por portería B')
+        self.assertEqual(evidence.imagen.name, '')
+        self.assertIsNotNone(evidence.eliminada_en)
+        self.assertTrue(self.visit.pdf_final)
+
+    def test_pdf_failure_keeps_offline_upload_and_same_receipt_can_complete(self):
+        with patch('AppVisits.views._generar_pdf', side_effect=ValueError('fallo de prueba')):
+            first = self.send()
+        self.assertEqual(first.status_code, 200, first.data)
+        self.visit.refresh_from_db()
+        evidence = self.visit.evidencias.get()
+        self.assertNotEqual(self.visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
+        self.assertEqual(self.visit.pdf_estado, 'fallido')
+        self.assertTrue(evidence.imagen.storage.exists(evidence.imagen.name))
+        with self.captureOnCommitCallbacks(execute=True):
+            replay = self.send()
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay['Idempotency-Replayed'], 'true')
+        self.visit.refresh_from_db()
+        evidence.refresh_from_db()
+        self.assertEqual(self.visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
+        self.assertEqual(evidence.imagen.name, '')
+        self.assertEqual(VisitSyncReceipt.objects.count(), 1)
+        self.assertEqual(EvidenciaFotografica.objects.count(), 1)
+
     def test_reusing_key_with_changed_payload_is_rejected(self):
         self.assertEqual(self.send().status_code, 200)
         data = self.payload(); data['observaciones'] = 'Cambió'
