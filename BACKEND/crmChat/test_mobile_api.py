@@ -1,6 +1,9 @@
 import shutil
 import tempfile
 import uuid
+from io import BytesIO
+from PIL import Image
+from pypdf import PdfWriter
 from urllib.parse import urlparse
 from unittest.mock import patch
 
@@ -49,9 +52,11 @@ class MobileCRMMessageTests(APITestCase):
         self.assertEqual(first.data['origin'], 'mobile')
 
     def test_image_upload_is_validated_and_requires_authorization_to_read(self):
+        content = BytesIO()
+        Image.new('RGB', (4, 4), 'white').save(content, format='PNG')
         image = SimpleUploadedFile(
             'evidencia.png',
-            b'\x89PNG\r\n\x1a\n' + b'valid-test-content',
+            content.getvalue(),
             content_type='image/png',
         )
         response = self.client.post(self.url, {
@@ -79,7 +84,7 @@ class MobileCRMMessageTests(APITestCase):
             'origin': 'mobile', 'client_message_id': str(uuid.uuid4()), 'file': invalid,
         }, format='multipart')
         self.assertEqual(response.status_code, 400)
-        self.assertIn('no coincide', response.data['error'])
+        self.assertIn('Archivo dañado', response.data['error'])
         self.assertFalse(ChatMessage.objects.exists())
 
     @patch('crmChat.views.dispatch_outbound_message')
@@ -92,7 +97,11 @@ class MobileCRMMessageTests(APITestCase):
             user_name='Cliente externo', status='active', channel='facebook',
             integration=integration, external_thread_id='recipient-test',
         )
-        pdf = SimpleUploadedFile('ficha.pdf', b'%PDF-1.4\ncontrolled', content_type='application/pdf')
+        content = BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        writer.write(content)
+        pdf = SimpleUploadedFile('ficha.pdf', content.getvalue(), content_type='application/pdf')
         response = self.client.post(reverse('crm-messages', kwargs={'pk': external_session.id}), {
             'origin': 'mobile', 'client_message_id': str(uuid.uuid4()), 'file': pdf,
         }, format='multipart')

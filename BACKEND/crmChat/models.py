@@ -448,6 +448,7 @@ class ChatMessage(models.Model):
         choices=[
             ('received', 'Recibido'),
             ('queued', 'En cola'),
+            ('processing', 'Procesando'),
             ('sent', 'Enviado'),
             ('delivered', 'Entregado'),
             ('read', 'Leído'),
@@ -491,6 +492,36 @@ class ChatAttachment(models.Model):
 
     class Meta:
         db_table = 'crm_chat_attachment'
+
+
+class BotConversationLease(models.Model):
+    session = models.OneToOneField(ChatSession, on_delete=models.CASCADE, primary_key=True)
+    owner = models.CharField(max_length=36)
+    expires_at = models.DateTimeField(db_index=True)
+
+
+class QuickReply(models.Model):
+    """Internal composer drafts, never WhatsApp Cloud API templates."""
+    name = models.CharField(max_length=120)
+    category = models.CharField(max_length=80, blank=True)
+    channels = models.JSONField(default=list)
+    text = models.TextField()
+    active = models.BooleanField(default=True)
+    attachment = models.FileField(upload_to='crm_templates/%Y/%m/', blank=True)
+    attachment_metadata = models.JSONField(default=dict, blank=True)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class QuickReplyPreference(models.Model):
+    template = models.ForeignKey(QuickReply, on_delete=models.CASCADE, related_name='preferences')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    favorite = models.BooleanField(default=False)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['template', 'user'], name='crm_unique_template_preference')]
 
 
 class WebhookEvent(models.Model):

@@ -24,9 +24,9 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
-      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
-      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
@@ -52,7 +52,7 @@ services:
     build: ./BACKEND
     container_name: celery-worker
     restart: on-failure
-    command: celery -A core worker --loglevel=INFO --concurrency=2
+    command: celery -A core worker --loglevel=INFO --concurrency=2 -Q celery
     volumes:
       - ./BACKEND:/app
       - media_data:/app/media
@@ -66,9 +66,42 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:4b}
-      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-90}
-      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
+      - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - shared_net
+      - email_net
+
+  celery-chatbot:
+    build: ./BACKEND
+    container_name: celery-chatbot
+    restart: on-failure
+    command: celery -A core worker --loglevel=INFO --concurrency=2 -Q chatbot
+    volumes:
+      - ./BACKEND:/app
+      - media_data:/app/media
+    env_file:
+      - path: .envdev
+        format: raw
+    environment:
+      - REDIS_URL=redis://redis:6379/1
+      - CHANNEL_REDIS_URL=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - OLLAMA_API_URL=http://ollama:11434/api/chat
+      - WOMPI_API_URL=https://sandbox.wompi.co/v1
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
@@ -191,7 +224,7 @@ services:
     image: redis:7-alpine
     container_name: redis
     restart: unless-stopped
-    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     networks:
       - shared_net
     healthcheck:
@@ -228,6 +261,8 @@ services:
     restart: unless-stopped
     environment:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_NO_CLOUD=1
       - OLLAMA_MAX_QUEUE=${OLLAMA_MAX_QUEUE:-64}
     ports:
       - "127.0.0.1:11434:11434"
@@ -248,7 +283,7 @@ services:
     restart: "no"
     environment:
       - OLLAMA_HOST=http://ollama:11434
-    command: ["pull", "${OLLAMA_MODEL:-qwen:4b}"]
+    command: ["pull", "${OLLAMA_MODEL:-qwen2.5:1.5b}"]
     depends_on:
       ollama:
         condition: service_healthy

@@ -4,7 +4,7 @@ import { MessageCircle, X, Send, Bot, Sparkles, Loader2, UserCheck, PhoneOff, Ro
 import { useAuth } from '../context/AuthContext'
 import { chatService } from '../services/chat'
 import { locationsService } from '../services/locations'
-import { sendMessage as sendOllamaMessage } from '../services/chatbotService'
+import { sendMessage as sendOllamaMessage, getSessionMessages } from '../services/chatbotService'
 import type { ChatSession } from '../services/chat'
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -150,11 +150,11 @@ function Chatbot() {
   }, [isAuthenticated])
 
   // ── polling ───────────────────────────────────────────────────────────────
-  const startPolling = useCallback((id: number) => {
+  const startPolling = useCallback((id: number, publicBot = false) => {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
     const poll = async () => {
       try {
-        const result = await chatService.getMessages(id, lastMsgIdRef.current ?? undefined)
+        const result = publicBot ? await getSessionMessages(id, lastMsgIdRef.current ?? undefined) : await chatService.getMessages(id, lastMsgIdRef.current ?? undefined)
         if (result.messages.length > 0) {
           const newMsgs: Message[] = result.messages
             .filter((m) => m.sender_type !== 'user')
@@ -163,12 +163,15 @@ function Chatbot() {
               text:       m.text,
               isBot:      true,
               isAgent:    m.sender_type === 'agent',
+              needsLogin: publicBot && result.status === 'waiting',
               senderName: m.sender_type === 'agent' ? m.sender_name : undefined,
               timestamp:  new Date(m.created_at),
             }))
-          if (newMsgs.length > 0) setMessages((prev) => [...prev, ...newMsgs])
+          if (newMsgs.length > 0) { setMessages((prev) => [...prev, ...newMsgs]); setIsTyping(false) }
           lastMsgIdRef.current = result.messages[result.messages.length - 1].id
         }
+        if (publicBot && (result as any).bot_error) setIsTyping(false)
+        if (publicBot && !(result as any).pending) setIsTyping(false)
         if (result.status === 'active') { setChatMode('active'); if (result.agent_name) setAgentName(result.agent_name) }
         if (result.status === 'closed') { setChatMode('closed'); clearInterval(pollIntervalRef.current!) }
       } catch { /* silent */ }
@@ -180,6 +183,11 @@ function Chatbot() {
     if (sessionId && (chatMode === 'waiting' || chatMode === 'active')) startPolling(sessionId)
     return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current) }
   }, [sessionId, chatMode, startPolling])
+
+  useEffect(() => {
+    if (ollamaBotSessionId && !sessionId) startPolling(ollamaBotSessionId, true)
+    return () => { if (!sessionId && pollIntervalRef.current) clearInterval(pollIntervalRef.current) }
+  }, [ollamaBotSessionId, sessionId, startPolling])
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const pushBotMsg = (text: string) =>
@@ -232,7 +240,7 @@ Fecha: ${result.created_at}
     try {
       const response = await sendOllamaMessage(messageText, ollamaBotSessionId)
       setOllamaBotSessionId(response.session_id) // Guardar la sesión del bot de Ollama
-      setIsTyping(false)
+      setIsTyping(Boolean(!response.message && !response.bot_message_id && response.status === 'bot'))
       
       // Agregar respuesta del bot con flag de needs_login si aplica
       if (response.message) {

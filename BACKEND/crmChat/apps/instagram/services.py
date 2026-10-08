@@ -214,3 +214,9 @@ def sender_action(integration, recipient_id, action):
     if action not in {'mark_seen', 'typing_on', 'typing_off'}:
         raise ValueError('Sender action no soportada.')
     return _send(integration, recipient_id, {'sender_action': action})
+
+
+def send_image(integration, recipient_id, url):
+    return _send(integration, recipient_id, {'message': {
+        'attachment': {'type': 'image', 'payload': {'url': url}},
+    }})

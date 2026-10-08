@@ -709,7 +709,7 @@ def persist_normalized_message(event):
                 external_timestamp=_timestamp(event.timestamp),
                 reply_to_external_id=event.reply_to_external_id,
                 metadata=event.metadata,
-                status='received',
+                status='queued' if session.status == 'bot' and integration.configuration.get('bot_enabled', False) else 'received',
             )
     except IntegrityError:
         if not event.external_message_id:
@@ -749,6 +749,34 @@ def _mask_destination(value):
 
 
 def dispatch_outbound_message(message):
+    with transaction.atomic():
+        stored = ChatMessage.objects.select_for_update().get(pk=message.pk)
+        if stored.status in ('sent', 'delivered', 'read'):
+            message.refresh_from_db()
+            return message
+        if stored.status == 'processing':
+            raise MetaAPIError('El envío sigue en curso. No se repetirá la operación.')
+        if stored.metadata.get('delivery_uncertain'):
+            raise MetaAPIError('Entrega no confirmada; verifica el canal para evitar duplicados.')
+        message.metadata = {**stored.metadata, 'dispatch_started_at': timezone.now().isoformat()}
+        message.status = 'processing'
+        message.save(update_fields=['status', 'metadata'])
+    try:
+        return _dispatch_outbound_message(message)
+    except Exception as exc:
+        message.refresh_from_db()
+        uncertain = (message.session.channel in ('facebook', 'instagram')
+                     and not message.metadata.get('error_code')
+                     and (isinstance(exc.__cause__, requests.RequestException)
+                          or getattr(exc, 'phase', '') == 'delivery_confirmation'
+                          or (getattr(exc, 'http_status', 0) or 0) >= 500))
+        message.status = 'failed'
+        message.metadata = {**message.metadata, 'delivery_uncertain': uncertain}
+        message.save(update_fields=['status', 'metadata'])
+        raise
+
+
+def _dispatch_outbound_message(message):
     """Envía un mensaje por su canal y actualiza su estado sin ocultar fallos."""
 
     session = message.session
@@ -827,6 +855,21 @@ def dispatch_outbound_message(message):
     )
     try:
         outbound_payload = message.metadata.get('outbound_payload', {})
+        attachment = message.attachments.filter(file__gt='').first()
+        if attachment:
+            from django.core import signing
+            from urllib.parse import urlencode, urlparse
+            from crmChat.attachment_validation import ensure_channel_media
+            ensure_channel_media(session.channel, message.message_type)
+            base = (getattr(settings, 'CRM_GATEWAY_MEDIA_BASE_URL', 'http://backend:8000')
+                    if session.channel == 'whatsapp_web' else settings.FRONTEND_PUBLIC_URL).rstrip('/')
+            if session.channel in ('facebook', 'instagram'):
+                parsed = urlparse(base)
+                if parsed.scheme != 'https' or not parsed.hostname or '.' not in parsed.hostname or parsed.hostname in ('localhost', '127.0.0.1'):
+                    raise MetaAPIError('Meta requiere una URL pública HTTPS para descargar el adjunto.')
+            token = signing.dumps(attachment.pk, salt='crm-chat-delivery')
+            outbound_payload = {'url': f'{base}/api/crm-chat/attachments/{attachment.pk}/delivery/?{urlencode({"token": token})}',
+                                'filename': attachment.original_name, 'mime_type': attachment.mime_type}
         if session.channel == ChannelIntegration.CHANNEL_WHATSAPP_WEB:
             from crmChat.apps.whatsapp_web.services import send_message as gateway_send
             response = gateway_send(message, outbound_payload)
@@ -847,18 +890,24 @@ def dispatch_outbound_message(message):
         elif session.channel == ChannelIntegration.CHANNEL_FACEBOOK:
             from crmChat.apps.facebook import services as channel_service
             if message.message_type in {'image', 'audio', 'video', 'document'}:
-                response = channel_service.send_attachment(session.integration, recipient, message.message_type, outbound_payload.get('url', ''))
+                response = channel_service.send_attachment(session.integration, recipient,
+                    'file' if message.message_type == 'document' else message.message_type, outbound_payload.get('url', ''))
             else:
                 response = channel_service.send_text(session.integration, recipient, message.text, outbound_payload.get('quick_replies'))
             external_id = response.get('message_id', '')
         elif session.channel == ChannelIntegration.CHANNEL_INSTAGRAM:
             from crmChat.apps.instagram import services as channel_service
-            response = channel_service.send_text(session.integration, recipient, message.text, outbound_payload.get('quick_replies'))
+            if message.message_type == 'image':
+                response = channel_service.send_image(session.integration, recipient, outbound_payload.get('url', ''))
+            elif message.message_type != 'text':
+                raise MetaAPIError('Instagram: solo texto e imágenes están habilitados para esta integración.')
+            else:
+                response = channel_service.send_text(session.integration, recipient, message.text, outbound_payload.get('quick_replies'))
             external_id = response.get('message_id', '')
         else:
             raise MetaAPIError('Canal de salida no soportado.')
         if not external_id:
-            raise MetaAPIError('Meta no confirmó el identificador del mensaje enviado.')
+            raise MetaAPIError('Meta no confirmó el identificador del mensaje enviado.', phase='delivery_confirmation')
         with transaction.atomic():
             persisted_message = ChatMessage.objects.select_for_update().get(pk=message.pk)
             conflicting_message = ChatMessage.objects.select_for_update().filter(
@@ -871,15 +920,18 @@ def dispatch_outbound_message(message):
             persisted_message.external_message_id = external_id or None
             persisted_message.status = 'sent'
             persisted_message.direction = 'outbound'
+            persisted_message.metadata = {key: value for key, value in message.metadata.items()
+                                          if key not in ('error', 'delivery_uncertain', 'dispatch_started_at')}
             if persisted_message.external_timestamp is None:
                 persisted_message.external_timestamp = timezone.now()
             persisted_message.save(
-                update_fields=['external_message_id', 'status', 'direction', 'external_timestamp'],
+                update_fields=['external_message_id', 'status', 'direction', 'external_timestamp', 'metadata'],
             )
         message.external_message_id = persisted_message.external_message_id
         message.status = persisted_message.status
         message.direction = persisted_message.direction
         message.external_timestamp = persisted_message.external_timestamp
+        message.metadata = persisted_message.metadata
         ChannelIntegration.objects.filter(pk=session.integration_id, active=True).update(
             connection_status='connected', last_error='',
         )

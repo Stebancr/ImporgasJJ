@@ -140,6 +140,7 @@ export async function sendOutbound(sock: WASocket, payload: any, messageId?: str
   const crmOrigin = new URL(process.env.CRM_API_URL!).origin
   if (mediaUrl.origin !== crmOrigin) throw new Error('La URL multimedia no pertenece al CRM.')
   const content: any = { [type === 'document' ? 'document' : type]: { url: mediaUrl.toString() } }
+  if (payload.mime_type) content.mimetype = String(payload.mime_type)
   if (payload.text && ['image', 'video', 'document'].includes(type)) content.caption = String(payload.text)
   if (type === 'document') {
     content.fileName = String(payload.file_name || 'archivo')

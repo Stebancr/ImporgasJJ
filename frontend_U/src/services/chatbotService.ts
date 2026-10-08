@@ -7,11 +7,11 @@ import api from './api';
 const API_URL = '/api/crm-chat/bot';
 
 export interface ChatMessage {
-  id?: number;
+  id: number;
   text: string;
   sender_type: 'user' | 'bot' | 'agent';
   sender_name?: string;
-  created_at?: string;
+  created_at: string;
 }
 
 export interface ChatResponse {
@@ -26,6 +26,9 @@ export interface ChatResponse {
 }
 
 export interface SessionMessagesResponse {
+  pending: boolean;
+  bot_error: boolean;
+  needs_login: boolean;
   session_id: number;
   status: string;
   messages: ChatMessage[];

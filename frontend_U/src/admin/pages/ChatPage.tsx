@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Avatar, Box, Button, Chip, CircularProgress, FormControlLabel,
   IconButton, MenuItem, Paper, Stack, Switch, TextField,
-  ThemeProvider, Tooltip, Typography,
+  ThemeProvider, Tooltip, Typography, LinearProgress,
 } from '@mui/material'
 import {
   ArrowDown, ArrowLeft, Bell, BellOff, Bot, Check, CheckCheck, ExternalLink, Inbox, Paperclip, RefreshCw, Send,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 
 import { ChannelBadge } from '../components/ChannelBadge'
+import TemplateDialog from '../components/TemplateDialog'
 import { useCRMWebSocket } from '../hooks/useCRMWebSocket'
 import { crmTheme } from '../theme/crmTheme'
 import {
@@ -114,6 +115,7 @@ function messageState(message: ChatMessage) {
   if (message.status === 'read') return <CheckCheck size={13} color="#2563eb" />
   if (message.status === 'delivered') return <CheckCheck size={13} />
   if (['sent', 'received'].includes(message.status)) return <Check size={13} />
+  if (['queued', 'processing'].includes(message.status)) return <Tooltip title={message.status === 'queued' ? 'En cola' : 'Procesando'}><CircularProgress size={13} /></Tooltip>
   return null
 }
 
@@ -170,10 +172,10 @@ function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
   )
 }
 
-function ConversationMessage({ message, avatarUrl, contactName }: { message: ChatMessage; avatarUrl?: string; contactName: string }) {
+function ConversationMessage({ message, avatarUrl, contactName, onRetry }: { message: ChatMessage; avatarUrl?: string; contactName: string; onRetry: (id: number) => void }) {
   const incoming = message.direction === 'inbound' || message.sender_type === 'user'
   const bot = message.sender_type === 'bot'
-  const originLabel = bot ? 'Ollama' : message.origin === 'mobile' ? 'Celular' : message.origin === 'crm' ? 'CRM' : 'Cliente'
+  const originLabel = bot ? 'Ollama' : message.template_id ? 'Plantilla CRM' : message.origin === 'mobile' ? 'Celular' : message.origin === 'crm' ? 'CRM' : 'Cliente'
   return (
     <Stack direction="row" spacing={1} sx={{ justifyContent: incoming ? 'flex-start' : 'flex-end' }}>
       {incoming && <Avatar src={avatarUrl || undefined} alt={contactName} sx={{ width: 28, height: 28, bgcolor: '#ffedd5', color: '#b45309', fontSize: 13 }}>{contactName.charAt(0).toUpperCase() || 'C'}</Avatar>}
@@ -195,6 +197,8 @@ function ConversationMessage({ message, avatarUrl, contactName }: { message: Cha
           : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
         )}
         {message.attachments.map((attachment) => <AttachmentView key={attachment.id} attachment={attachment} />)}
+        {message.status === 'failed' && <Typography variant="caption" sx={{ display: 'block' }}>{message.error || 'No fue posible completar el procesamiento.'}</Typography>}
+        {message.retry_allowed && <Button size="small" color="inherit" onClick={() => onRetry(message.id)}>Reintentar</Button>}
         <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end', alignItems: 'center', mt: 0.5, opacity: 0.75 }}>
           <Typography variant="caption">{new Date(message.timestamp || message.created_at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</Typography>
           {!incoming && messageState(message)}
@@ -213,6 +217,17 @@ export default function ChatPage() {
   const [unanswered, setUnanswered] = useState(false)
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | undefined>()
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [template, setTemplate] = useState<{ id: number; values: Record<string, string> }>()
+  const [progress, setProgress] = useState(0)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const clientId = useRef<string>(crypto.randomUUID())
+  useEffect(() => { clientId.current = crypto.randomUUID() }, [text, file, selectedId, template])
+  useEffect(() => {
+    if (!file) { setPreviewUrl(''); return }
+    const url = URL.createObjectURL(file); setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const messagesBoxRef = useRef<HTMLDivElement | null>(null)
   const forceScrollRef = useRef(true)
@@ -271,6 +286,7 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
+    setText(''); setFile(undefined); setTemplate(undefined)
     forceScrollRef.current = true
     lastMessageIdRef.current = null
     setNearBottom(true)
@@ -308,9 +324,12 @@ export default function ChatPage() {
   }
 
   const send = useMutation({
-    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim(), file),
-    onSuccess: () => { setText(''); setFile(undefined); if (fileInputRef.current) fileInputRef.current.value = ''; invalidate() },
+    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim(), file, clientId.current, template, setProgress),
+    onSuccess: (message) => { if (message.status !== 'failed') { setText(''); setFile(undefined); setTemplate(undefined); if (fileInputRef.current) fileInputRef.current.value = '' }; invalidate() },
+    onError: invalidate,
   })
+  const retry = useMutation({ mutationFn: (id: number) => adminChatService.retryMessage(selectedId!, id), onSettled: invalidate })
+  const allowedFiles = selected?.channel === 'instagram' ? '.jpg,.jpeg,.png,.webp,.gif' : '.jpg,.jpeg,.png,.webp,.gif,.pdf,.docx,.xlsx,.mp3,.ogg,.wav,.m4a,.mp4,.webm'
   const take = useMutation({ mutationFn: () => adminChatService.takeSession(selectedId!), onSuccess: invalidate })
   const close = useMutation({ mutationFn: () => adminChatService.closeSession(selectedId!), onSuccess: invalidate })
   const priority = useMutation({
@@ -324,6 +343,7 @@ export default function ChatPage() {
 
   return (
     <ThemeProvider theme={crmTheme}>
+      <TemplateDialog open={templatesOpen} onClose={() => setTemplatesOpen(false)} session={selected || undefined} initialText={text} onInsert={(value, item, values, attachment) => { setText(value); setTemplate({ id: item.id, values }); if (attachment) setFile(attachment) }} />
       <Stack spacing={2} sx={{ minHeight: { xs: 0, lg: 'calc(100dvh - 8rem)' }, height: { xs: 'auto', lg: 'calc(100dvh - 8rem)' }, minWidth: 0, maxWidth: '100%', overflowX: 'hidden', color: '#0f172a' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' }, gap: 1 }}>
           <Box>
@@ -407,15 +427,24 @@ export default function ChatPage() {
               </Stack>
               <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
-                {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} avatarUrl={selected.avatar_url} contactName={selected.user_name} />)}
+                {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} avatarUrl={selected.avatar_url} contactName={selected.user_name} onRetry={id => { if (!retry.isPending) retry.mutate(id) }} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
               <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
+                {retry.error && <Alert severity="error">{(retry.error as any).response?.data?.error || 'No fue posible reintentar.'}</Alert>}
+                {send.isPending && <><LinearProgress variant="determinate" value={progress} /><Typography variant="caption">{progress < 100 ? `Cargando ${progress}%` : 'Esperando confirmación del canal…'}</Typography></>}
+                {template && <Chip size="small" label="Borrador de plantilla editable" onDelete={() => setTemplate(undefined)} />}
+                {file && previewUrl && file.type.startsWith('image/') && <Box component="img" src={previewUrl} alt="Vista previa" sx={{ maxWidth: '100%', maxHeight: 160 }} />}
+                {file && previewUrl && file.type.startsWith('audio/') && <Box component="audio" controls src={previewUrl} />}
+                {file && previewUrl && file.type.startsWith('video/') && <Box component="video" controls src={previewUrl} sx={{ maxWidth: '100%', maxHeight: 160 }} />}
+                {selected.channel === 'instagram' && <Typography variant="caption">Instagram: imágenes compatibles. Audio, video y documentos no están habilitados.</Typography>}
                 {file && <Chip sx={{ mb: 1 }} label={`${file.name} (${Math.ceil(file.size / 1024)} KB)`} onDelete={send.isPending ? undefined : () => setFile(undefined)} />}
+                {file && text.trim() && (['facebook', 'instagram'].includes(selected.channel) || file.type.startsWith('audio/')) && <Alert severity="warning">Este canal no admite texto junto a este archivo. Revisa el borrador y envía cada contenido por separado.</Alert>}
                 <Stack direction="row" spacing={1}>
-                  <input ref={fileInputRef} hidden type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx" onChange={(event) => setFile(event.target.files?.[0])} />
-                  <Tooltip title="Adjuntar imagen o documento"><span><IconButton aria-label="Adjuntar archivo" disabled={send.isPending || selected.status === 'closed'} onClick={() => fileInputRef.current?.click()}><Paperclip size={20} /></IconButton></span></Tooltip>
+                  <Button size="small" disabled={send.isPending || selected.status === 'closed'} onClick={() => setTemplatesOpen(true)}>Plantillas</Button>
+                  <input ref={fileInputRef} hidden type="file" accept={allowedFiles} onChange={(event) => setFile(event.target.files?.[0])} />
+                  <Tooltip title="Adjuntar archivo compatible (máximo 25 MB)"><span><IconButton aria-label="Adjuntar archivo" disabled={send.isPending || selected.status === 'closed' || selected.channel === 'whatsapp'} onClick={() => fileInputRef.current?.click()}><Paperclip size={20} /></IconButton></span></Tooltip>
                   <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim() && !send.isPending && selected.status !== 'closed') send.mutate() } }} />
                   <IconButton aria-label="Enviar mensaje" color="primary" disabled={(!text.trim() && !file) || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
                 </Stack>

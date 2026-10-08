@@ -11,6 +11,7 @@ from asgiref.sync import async_to_sync
 from channels.testing import WebsocketCommunicator
 from django.test import override_settings
 from django.core.cache import cache
+from django.core import signing
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 from django.utils import timezone
@@ -142,8 +143,10 @@ class ConversationStateTests(APITestCase):
             text='Contexto anterior', sender_type='user', direction='inbound',
         )
         session = old_message.session
+        self.client.cookies['crm_bot_session_' + str(session.pk)] = signing.dumps(session.pk, salt='crm-web-session')
         response = self.client.post(reverse('bot-chat'), {'message': 'Necesito ayuda', 'session_id': session.id}, format='json')
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 202)
+        generate_omnichannel_bot_reply.run(response.data['user_message_id'])
         session.refresh_from_db()
         self.assertEqual(session.status, 'closed')
         self.assertEqual(session.messages.count(), 1)
@@ -174,7 +177,8 @@ class ConversationStateTests(APITestCase):
         response = self.client.post(reverse('bot-chat'), {
             'message': 'Hola', 'user_name': 'Cliente web',
         }, format='json')
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 202)
+        generate_omnichannel_bot_reply.run(response.data['user_message_id'])
         self.assertNotEqual(response.data['message'], ollama_service.INITIAL_GREETING)
         session = ChatSession.objects.get(pk=response.data['session_id'])
         self.assertEqual(session.messages.filter(sender_type='user').count(), 1)
@@ -301,7 +305,7 @@ class ChatbotIntelligenceTests(APITestCase):
         self.assertEqual(changed['use_case'], 'piscina')
         self.assertEqual(changed['category'], 'Calentadores')
 
-    @patch('crmChat.ollama_service.requests.post')
+    @patch('crmChat.ollama_service.requests.Session.post')
     def test_ollama_receives_recent_history_state_and_persistent_summary(self, post):
         response = Mock()
         response.raise_for_status.return_value = None
@@ -319,13 +323,13 @@ class ChatbotIntelligenceTests(APITestCase):
         self.assertIn('atención mañana', system_text)
         self.assertEqual(result['error'], None)
 
-    @patch('crmChat.ollama_service.requests.post', side_effect=requests.exceptions.Timeout)
+    @patch('crmChat.ollama_service.requests.Session.post', side_effect=requests.exceptions.Timeout)
     def test_temporary_ollama_error_returns_safe_retry_message(self, _post):
         result = ollama_service.get_bot_response('¿Qué horarios manejan?')
         self.assertEqual(result['error'], 'timeout')
         self.assertIn('tardando más', result['response'])
 
-    @patch('crmChat.ollama_service.requests.post')
+    @patch('crmChat.ollama_service.requests.Session.post')
     def test_legacy_global_lock_does_not_block_an_ollama_request(self, post):
         response = Mock()
         response.raise_for_status.return_value = None
@@ -529,7 +533,7 @@ class ChatInactivityTests(APITestCase):
         self.assertEqual(ollama.call_count, 1)
         self.assertEqual(dispatch.call_count, 1)
 
-    @patch('crmChat.ollama_service.requests.post')
+    @patch('crmChat.ollama_service.requests.Session.post')
     def test_api_persists_structured_memory_across_turns(self, ollama_post):
         provider_response = Mock()
         provider_response.raise_for_status.return_value = None
@@ -544,9 +548,10 @@ class ChatInactivityTests(APITestCase):
                 'session_id': session_id,
                 'user_name': 'Cliente',
             }, format='json')
-            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.status_code, 202)
+            generate_omnichannel_bot_reply.run(response.data['user_message_id'])
             session_id = response.data['session_id']
-            responses[message] = response.data['message']
+            responses[message] = ChatMessage.objects.get(reply_to_message_id=response.data['user_message_id']).text
 
         session = ChatSession.objects.get(pk=session_id)
         self.assertEqual(session.conversation_state['intent'], 'recommendation')
@@ -569,8 +574,8 @@ class ChatInactivityTests(APITestCase):
             'message': 'Quiero hablar con un asesor',
             'session_id': session_id,
         }, format='json')
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data['needs_agent'])
+        self.assertEqual(response.status_code, 202)
+        generate_omnichannel_bot_reply.run(response.data['user_message_id'])
         session.refresh_from_db()
         self.assertTrue(session.conversation_state['needs_human'])
         self.assertEqual(session.status, 'waiting')

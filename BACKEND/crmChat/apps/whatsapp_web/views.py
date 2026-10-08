@@ -97,12 +97,37 @@ class InternalMediaView(InternalAPIView):
             return Response({'detail': 'Archivo Base64 inválido.'}, status=400)
         if len(content) > settings.WHATSAPP_GATEWAY_MAX_MEDIA_BYTES:
             return Response({'detail': 'El archivo supera el límite permitido.'}, status=413)
-        media_id = str(uuid.uuid4())
+        media_key = str(request.data.get('media_key') or '')
+        if media_key and (len(media_key) != 64 or any(c not in '0123456789abcdef' for c in media_key)):
+            return Response({'detail': 'Clave de archivo inválida.'}, status=400)
+        media_id = str(uuid.uuid5(uuid.NAMESPACE_URL, connection_id + ':' + media_key)) if media_key else str(uuid.uuid4())
         supplied_name = os.path.basename(str(request.data.get('file_name') or 'archivo').replace('\\', '/'))
         safe_name = ''.join(char for char in supplied_name if char.isalnum() or char in '._-')[:120] or 'archivo'
-        stored = default_storage.save(f'crm_gateway/{media_id}-{safe_name}', ContentFile(content))
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from crmChat.attachment_validation import validate_chat_upload, ALLOWED_ATTACHMENT_TYPES
+        mime_type = str(request.data.get('mime_type') or '').split(';')[0].strip().lower()
+        if '.' not in safe_name:
+            extension = next((ext for ext, mimes in ALLOWED_ATTACHMENT_TYPES.items() if mime_type in mimes), '')
+            safe_name += extension
+        upload = SimpleUploadedFile(safe_name, content, content_type=mime_type)
+        try:
+            safe_name, mime_type, _ = validate_chat_upload(upload)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+        digest = hashlib.sha256(content).hexdigest()
+        stored = f'crm_gateway/{media_id}'
+        if default_storage.exists(stored):
+            with default_storage.open(stored, 'rb') as existing_file:
+                previous = hashlib.sha256()
+                for chunk in existing_file.chunks():
+                    previous.update(chunk)
+            if previous.hexdigest() != digest:
+                return Response({'detail': 'La clave de archivo ya pertenece a otro contenido.'}, status=409)
+        else:
+            stored = default_storage.save(stored, ContentFile(content))
         cache.set(f'whatsapp-web-media:{media_id}', {
-            'path': stored, 'name': safe_name, 'mime_type': str(request.data.get('mime_type') or '')[:150], 'size': len(content),
+            'path': stored, 'name': safe_name, 'mime_type': mime_type, 'size': len(content),
+            'sha256': digest,
         }, timeout=900)
         return Response({'media_id': media_id, 'url': ''}, status=201)
 
@@ -294,7 +319,10 @@ class InternalWebhookView(InternalAPIView):
                 message = ChatMessage.objects.create(
                     session=session, text=str(data.get('text') or ''), sender_type=sender_type, sender_name=sender_name,
                     direction='inbound' if origin == 'customer' else 'outbound',
-                    message_type=message_type, status='received' if origin == 'customer' else 'sent',
+                    message_type=message_type,
+                    status=('queued' if origin == 'customer' and event_source == 'notify'
+                            and session.status == 'bot' and integration.configuration.get('bot_enabled')
+                            else 'received' if origin == 'customer' else 'sent'),
                     client_message_id=client_message_id or None,
                     external_message_id=key, external_timestamp=timestamp,
                     reply_to_external_id=str(data.get('quoted_message_id') or '')[:255],
@@ -326,7 +354,8 @@ class InternalWebhookView(InternalAPIView):
         if media:
             attachment = ChatAttachment.objects.create(
                 message=message, external_media_id=media_id, original_name=media['name'], mime_type=media['mime_type'],
-                size=media['size'], metadata={'protected': True, 'gateway': True},
+                size=media['size'], metadata={'protected': True, 'gateway': True, 'sha256': media.get('sha256', ''),
+                                             'channel': 'whatsapp_web', 'state': 'stored'},
             )
             attachment.file.name = media['path']
             attachment.save(update_fields=['file'])
@@ -356,7 +385,8 @@ class InternalWebhookView(InternalAPIView):
         )
         if bot_allowed:
             from crmChat.tasks import generate_omnichannel_bot_reply
-            generate_omnichannel_bot_reply.delay(message.pk)
+            ChatMessage.objects.filter(pk=message.pk).update(status='queued')
+            transaction.on_commit(lambda: generate_omnichannel_bot_reply.delay(message.pk))
         return Response({'created': True, 'message_id': message.pk}, status=201)
 
 

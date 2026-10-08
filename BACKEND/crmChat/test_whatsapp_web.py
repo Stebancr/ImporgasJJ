@@ -5,6 +5,9 @@ import json
 import tempfile
 import time
 import uuid
+import os
+from io import BytesIO
+from PIL import Image
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -34,13 +37,15 @@ class WhatsAppWebInternalAPITests(APITestCase):
         timestamp = str(timestamp if timestamp is not None else int(time.time()))
         request_id = request_id or str(uuid.uuid4())
         signature = hmac.new(secret.encode(), f'{timestamp}.{request_id}.'.encode() + raw, hashlib.sha256).hexdigest()
-        return self.client.generic(
-            'POST', path, raw, content_type='application/json',
-            HTTP_AUTHORIZATION=f'Bearer {secret}',
-            HTTP_X_WHATSAPP_GATEWAY_TIMESTAMP=timestamp,
-            HTTP_X_WHATSAPP_GATEWAY_REQUEST_ID=request_id,
-            HTTP_X_WHATSAPP_GATEWAY_SIGNATURE=signature,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.generic(
+                'POST', path, raw, content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {secret}',
+                HTTP_X_WHATSAPP_GATEWAY_TIMESTAMP=timestamp,
+                HTTP_X_WHATSAPP_GATEWAY_REQUEST_ID=request_id,
+                HTTP_X_WHATSAPP_GATEWAY_SIGNATURE=signature,
+            )
+        return response
 
     def connect(self, **extra):
         return self.signed_post('/internal/whatsapp/status/', {
@@ -228,12 +233,14 @@ class WhatsAppWebInternalAPITests(APITestCase):
         self.assertEqual(session.contact.avatar_url, 'https://cdn.example.test/whatsapp-avatar.jpg')
 
     def test_media_is_stored_and_attached_without_public_url(self):
+        content = BytesIO()
+        Image.new('RGB', (4, 4), 'white').save(content, format='PNG')
         media_root = tempfile.mkdtemp(prefix='whatsapp-web-test-')
         with self.settings(MEDIA_ROOT=media_root):
             self.connect()
             media = self.signed_post('/internal/whatsapp/media/', {
                 'connection_id': 'primary', 'mime_type': 'image/png', 'file_name': '../../foto.png',
-                'data_base64': base64.b64encode(b'png-data').decode(),
+                'data_base64': base64.b64encode(content.getvalue()).decode(),
             })
             self.assertEqual(media.status_code, 201)
             response, _ = self.incoming(type='image', text='Foto', media={'media_id': media.data['media_id']})
@@ -241,6 +248,19 @@ class WhatsAppWebInternalAPITests(APITestCase):
             attachment = ChatAttachment.objects.get()
             self.assertEqual(attachment.original_name, 'foto.png')
             self.assertTrue(attachment.metadata['protected'])
+
+    def test_media_retries_reuse_persisted_file_and_infer_missing_extension(self):
+        content = BytesIO()
+        Image.new('RGB', (4, 4), 'white').save(content, format='PNG')
+        with tempfile.TemporaryDirectory() as root, self.settings(MEDIA_ROOT=root):
+            self.connect()
+            payload = {'connection_id': 'primary', 'mime_type': 'image/png', 'file_name': 'archivo',
+                       'media_key': 'a' * 64, 'data_base64': base64.b64encode(content.getvalue()).decode()}
+            first = self.signed_post('/internal/whatsapp/media/', payload)
+            second = self.signed_post('/internal/whatsapp/media/', payload)
+            self.assertEqual(first.status_code, 201)
+            self.assertEqual(first.data['media_id'], second.data['media_id'])
+            self.assertEqual(len(os.listdir(os.path.join(root, 'crm_gateway'))), 1)
 
 
 @override_settings(CRM_INTERNAL_SERVICE_TOKEN=TEST_SECRET, WHATSAPP_GATEWAY_CONNECTION_ID='primary')
