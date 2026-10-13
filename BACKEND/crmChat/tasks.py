@@ -12,6 +12,7 @@ from celery import shared_task
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .apps.meta.services import (
@@ -310,7 +311,12 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             user_message.bot_processing_at = timezone.now()
             user_message.save(update_fields=['bot_processing_at'])
 
-    previous = list(session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:12])
+    previous_messages = session.messages.exclude(pk=user_message.pk)
+    if not settings.CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:
+        previous_messages = previous_messages.filter(
+            Q(pk__lt=user_message.pk) | Q(sender_type='bot', reply_to_message_id__lt=user_message.pk),
+        )
+    previous = list(previous_messages.order_by('-created_at')[:12])
     is_new_conversation = not previous
     history = [
         {
@@ -340,9 +346,10 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         user_message = ChatMessage.objects.select_for_update().get(pk=user_message.pk)
         if session.status != 'bot' or hasattr(user_message, 'bot_reply'):
             logger.info('Bot omitido message_id=%s reason=conversation_taken_or_replied.', user_message_id)
+            ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
             return {'skipped': 'conversation_taken_or_replied'}
         reply_text = result.get('response', 'No pude procesar el mensaje.')
-        if is_new_conversation:
+        if is_new_conversation and (session.channel != 'ecommerce' or settings.CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED):
             reply_text = ollama_service.add_initial_greeting(reply_text)
         next_state = result.get('state', session.conversation_state)
         next_state['last_response'] = reply_text[:2000]
@@ -361,6 +368,9 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         session.inactivity_warning_at = None
         session.save(update_fields=['last_bot_message_at', 'inactivity_warning_at', 'updated_at'])
         if result.get('needs_agent'):
+            from .assignment import assign_session_automatically
+            if session.assigned_to_id is None:
+                assign_session_automatically(session)
             publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
     try:
         dispatch_outbound_message(reply)
@@ -369,11 +379,6 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         raise
     ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
     logger.info('Respuesta omnicanal enviada message_id=%s reply_id=%s session_id=%s.', user_message_id, reply.id, session.id)
-    if result.get('needs_agent'):
-        from .assignment import assign_session_automatically
-        session.refresh_from_db()
-        if session.status == 'waiting' and session.assigned_to_id is None:
-            assign_session_automatically(session)
     publish_crm_event('message.created', session_id=session.id, message_id=reply.id)
     return {'message_id': reply.id}
 
@@ -385,6 +390,8 @@ def close_inactive_bot_sessions():
     warned = closed = 0
     candidates = ChatSession.objects.filter(status__in=('bot', 'waiting'), last_bot_message_at__isnull=False)
     for session in candidates.iterator():
+        if (session.conversation_state or {}).get('simple_handoff'):
+            continue
         # Una respuesta posterior del cliente cancela cualquier cierre pendiente.
         if session.last_customer_message_at and session.last_customer_message_at > session.last_bot_message_at:
             if session.inactivity_warning_at:
