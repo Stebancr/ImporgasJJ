@@ -432,6 +432,9 @@ def _generate_bot_reply(user_message_id):
         session.inactivity_warning_at = None
         session.save(update_fields=['last_bot_message_at', 'inactivity_warning_at', 'updated_at'])
         if result.get('needs_agent'):
+            from .assignment import assign_session_automatically
+            if session.assigned_to_id is None:
+                assign_session_automatically(session)
             publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
     try:
         dispatch_outbound_message(reply)
@@ -440,11 +443,6 @@ def _generate_bot_reply(user_message_id):
         raise
     ChatMessage.objects.filter(pk=user_message_id).update(bot_processing_at=None)
     logger.info('Respuesta omnicanal enviada message_id=%s reply_id=%s session_id=%s.', user_message_id, reply.id, session.id)
-    if result.get('needs_agent'):
-        from .assignment import assign_session_automatically
-        session.refresh_from_db()
-        if session.status == 'waiting' and session.assigned_to_id is None:
-            assign_session_automatically(session)
     publish_crm_event('message.created', session_id=session.id, message_id=reply.id)
     return {'message_id': reply.id}
 
@@ -491,6 +489,9 @@ def close_inactive_bot_sessions():
     warned = closed = 0
     candidates = ChatSession.objects.filter(status__in=('bot', 'waiting'), last_bot_message_at__isnull=False)
     for session in candidates.iterator():
+        # A commercial handoff belongs to the advisor; never warn/close it as a bot.
+        if (session.conversation_state or {}).get('simple_handoff'):
+            continue
         # Una respuesta posterior del cliente cancela cualquier cierre pendiente.
         if session.last_customer_message_at and session.last_customer_message_at > session.last_bot_message_at:
             if session.inactivity_warning_at:

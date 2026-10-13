@@ -50,6 +50,7 @@ from core.logging_filters import redact_webhook_tokens
 from ecommerce.models import Brand, Category, Product, ProductSpec, SpecAttribute
 
 
+@override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=True)
 class ConversationStateTests(APITestCase):
     def test_product_context_remembers_budget_and_tracks_topics(self):
         state = ollama_service.update_state('Estoy interesado en un calentador')
@@ -186,6 +187,7 @@ class ConversationStateTests(APITestCase):
         self.assertFalse(session.messages.filter(metadata__system_event='initial_greeting').exists())
 
 
+@override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=True)
 class ChatbotIntelligenceTests(APITestCase):
     def setUp(self):
         self.brand = Brand.objects.create(name='Marca contextual')
@@ -378,6 +380,7 @@ class ChatbotIntelligenceTests(APITestCase):
         self.assertNotIn('localhost**Ver producto', dev['response'])
 
 
+@override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=True)
 class ChatInactivityTests(APITestCase):
     def _session_after_bot_reply(self):
         session = ChatSession.objects.create(user_name='Inactivo', status='bot')

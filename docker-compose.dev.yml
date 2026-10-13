@@ -24,6 +24,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
+      - CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=${CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:-False}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
@@ -66,6 +67,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
+      - CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=${CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:-False}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
@@ -99,6 +101,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
+      - CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=${CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:-False}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
