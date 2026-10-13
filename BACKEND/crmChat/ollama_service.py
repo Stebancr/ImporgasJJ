@@ -1094,6 +1094,12 @@ REGLAS ESTRICTAS:
         return f'{self.INITIAL_GREETING}\n\n{response}' if response else self.INITIAL_GREETING
 
     def get_bot_response(self, message, conversation_history=None, conversation_state=None, summary='', channel='ecommerce'):
+        if not settings.CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:
+            from .simple_chatbot import respond
+            return respond(self, message, conversation_history, conversation_state, summary, channel)
+        return self._get_recommendation_response(message, conversation_history, conversation_state, summary, channel)
+
+    def _get_recommendation_response(self, message, conversation_history=None, conversation_state=None, summary='', channel='ecommerce'):
         state = self.update_state(message, conversation_state)
         state_summary = self.summarize_state(state)
 
