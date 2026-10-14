@@ -14,6 +14,8 @@ import {
 import { ChannelBadge } from '../components/ChannelBadge'
 import TemplateDialog from '../components/TemplateDialog'
 import { useCRMWebSocket } from '../hooks/useCRMWebSocket'
+import { useInboxFilters } from '../hooks/useInboxFilters'
+import { useAuth } from '../context/AuthContext'
 import { crmTheme } from '../theme/crmTheme'
 import {
   adminChatService,
@@ -209,12 +211,15 @@ function ConversationMessage({ message, avatarUrl, contactName, onRetry }: { mes
 }
 
 export default function ChatPage() {
+  const { user } = useAuth()
+  return <CRMInbox key={user?.id} userId={user?.id} />
+}
+
+function CRMInbox({ userId }: { userId?: number | string }) {
   const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [status, setStatus] = useState('all')
-  const [channel, setChannel] = useState('all')
-  const [search, setSearch] = useState('')
-  const [unanswered, setUnanswered] = useState(false)
+  const [filters, setFilters] = useInboxFilters(userId)
+  const { status, channel, search = '', unanswered, priority: priorityFilter, queue: queueFilter } = filters
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | undefined>()
   const [templatesOpen, setTemplatesOpen] = useState(false)
@@ -222,7 +227,29 @@ export default function ChatPage() {
   const [progress, setProgress] = useState(0)
   const [previewUrl, setPreviewUrl] = useState('')
   const clientId = useRef<string>(crypto.randomUUID())
-  useEffect(() => { clientId.current = crypto.randomUUID() }, [text, file, selectedId, template])
+  const selectedRef = useRef(selectedId)
+  selectedRef.current = selectedId
+  const draftRef = useRef({ text, file, template })
+  draftRef.current = { text, file, template }
+  const restoringDraft = useRef(false)
+  const drafts = useRef(new Map<number, { text: string; file?: File; template?: typeof template; clientId: string }>())
+  const selectSession = (id: number | null) => {
+    if (id === selectedId) return
+    if (selectedId !== null) drafts.current.set(selectedId, { text, file, template, clientId: clientId.current })
+    const draft = id === null ? undefined : drafts.current.get(id)
+    restoringDraft.current = true
+    clientId.current = draft?.clientId || crypto.randomUUID()
+    setText(draft?.text || ''); setFile(draft?.file); setTemplate(draft?.template)
+    setSelectedId(id)
+  }
+  const changeFilters = (patch: Partial<SessionFilters>) => {
+    selectSession(null)
+    setFilters(patch)
+  }
+  useEffect(() => {
+    if (restoringDraft.current) { restoringDraft.current = false; return }
+    clientId.current = crypto.randomUUID()
+  }, [text, file, selectedId, template])
   useEffect(() => {
     if (!file) { setPreviewUrl(''); return }
     const url = URL.createObjectURL(file); setPreviewUrl(url)
@@ -239,21 +266,30 @@ export default function ChatPage() {
     () => notificationsSupported && Notification.permission === 'granted' && localStorage.getItem('crm-notifications') === 'enabled',
   )
 
-  const filters: SessionFilters = useMemo(
-    () => ({ status, channel, search: search.trim(), unanswered }),
-    [status, channel, search, unanswered],
-  )
   const sessions = useQuery({
-    queryKey: ['crm-sessions', filters],
-    queryFn: () => adminChatService.getSessions(filters),
+    queryKey: ['crm-sessions', userId, filters],
+    queryFn: ({ signal }) => adminChatService.getSessions(filters, signal),
+    refetchInterval: 30_000,
+  })
+  const counts = useQuery({
+    queryKey: ['crm-session-counts', userId, filters],
+    queryFn: ({ signal }) => adminChatService.getSessionCounts(filters, signal),
     refetchInterval: 30_000,
   })
   const queues = useQuery({ queryKey: ['crm-queues'], queryFn: adminChatService.getQueues })
   const selected = sessions.data?.find((item) => item.id === selectedId) ?? null
   const messages = useQuery({
-    queryKey: ['crm-messages', selectedId],
-    queryFn: () => adminChatService.getMessages(selectedId!),
-    enabled: selectedId !== null,
+    queryKey: ['crm-messages', userId, selectedId],
+    queryFn: async ({ signal }) => {
+      const result = await adminChatService.getMessages(selectedId!, undefined, signal)
+      if (!signal.aborted) {
+        queryClient.invalidateQueries({ queryKey: ['crm-session-counts'] })
+        queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
+      }
+      return result
+    },
+    enabled: selected !== null,
+    retry: false,
     refetchInterval: 30_000,
   })
   const orderedMessages = useMemo(() => {
@@ -267,16 +303,18 @@ export default function ChatPage() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
-    if (selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', selectedId] })
+    queryClient.invalidateQueries({ queryKey: ['crm-session-counts'] })
+    if (selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', userId, selectedId] })
   }
   const connected = useCRMWebSocket((event) => {
     queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
-    if (event.session_id === selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', selectedId] })
+    queryClient.invalidateQueries({ queryKey: ['crm-session-counts'] })
+    if (event.session_id === selectedId) queryClient.invalidateQueries({ queryKey: ['crm-messages', userId, selectedId] })
     if (event.type === 'session.pending' && notificationsEnabled && Notification.permission === 'granted') {
       const notification = new Notification('Nuevo chat pendiente', { body: 'Un usuario ha iniciado una nueva conversación.', tag: `crm-session-${event.session_id}` })
       notification.onclick = () => { window.focus(); window.location.href = '/admin/chat'; notification.close() }
     }
-  })
+  }, invalidate)
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const box = messagesBoxRef.current
@@ -286,7 +324,6 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
-    setText(''); setFile(undefined); setTemplate(undefined)
     forceScrollRef.current = true
     lastMessageIdRef.current = null
     setNearBottom(true)
@@ -324,10 +361,23 @@ export default function ChatPage() {
   }
 
   const send = useMutation({
-    mutationFn: () => adminChatService.sendMessage(selectedId!, text.trim(), file, clientId.current, template, setProgress),
-    onSuccess: (message) => { if (message.status !== 'failed') { setText(''); setFile(undefined); setTemplate(undefined); if (fileInputRef.current) fileInputRef.current.value = '' }; invalidate() },
+    mutationFn: (draft: { sessionId: number; text: string; file?: File; clientId: string; template?: typeof template }) => adminChatService.sendMessage(draft.sessionId, draft.text.trim(), draft.file, draft.clientId, draft.template, setProgress),
+    onSuccess: (message, draft) => {
+      if (message.status !== 'failed') {
+        const saved = drafts.current.get(draft.sessionId)
+        if (saved?.text === draft.text && saved.file === draft.file && saved.template === draft.template) drafts.current.delete(draft.sessionId)
+        if (selectedRef.current === draft.sessionId && draftRef.current.text === draft.text && draftRef.current.file === draft.file && draftRef.current.template === draft.template) {
+          setText(''); setFile(undefined); setTemplate(undefined)
+          if (fileInputRef.current) fileInputRef.current.value = ''
+        }
+      }
+      invalidate()
+    },
     onError: invalidate,
   })
+  const submit = () => {
+    if (selected && !send.isPending && !messages.isError && selected.status !== 'closed') send.mutate({ sessionId: selected.id, text, file, clientId: clientId.current, template })
+  }
   const retry = useMutation({ mutationFn: (id: number) => adminChatService.retryMessage(selectedId!, id), onSettled: invalidate })
   const allowedFiles = selected?.channel === 'instagram' ? '.jpg,.jpeg,.png,.webp,.gif' : '.jpg,.jpeg,.png,.webp,.gif,.pdf,.docx,.xlsx,.mp3,.ogg,.wav,.m4a,.mp4,.webm'
   const take = useMutation({ mutationFn: () => adminChatService.takeSession(selectedId!), onSuccess: invalidate })
@@ -361,26 +411,35 @@ export default function ChatPage() {
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flex: 1, minHeight: 0 }}>
           <Paper variant="outlined" sx={{ width: { xs: '100%', lg: 320 }, height: { xs: 'min(58dvh, 560px)', lg: 'auto' }, maxHeight: { xs: 560, lg: 'none' }, flexShrink: 0, minHeight: 0, display: { xs: selected ? 'none' : 'flex', lg: 'flex' }, flexDirection: 'column', overflow: 'hidden' }}>
             <Stack spacing={1} sx={{ p: 1.5, borderBottom: '1px solid #e2e8f0' }}>
-              <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <TextField size="small" placeholder="Buscar cliente o identificador" value={search} onChange={(event) => changeFilters({ search: event.target.value })} />
               <Stack direction="row" spacing={1}>
-                <TextField select size="small" label="Canal" value={channel} onChange={(event) => setChannel(event.target.value)} fullWidth>
-                  <MenuItem value="all">Todos</MenuItem><MenuItem value="whatsapp">WhatsApp Cloud</MenuItem><MenuItem value="whatsapp_web">WhatsApp Web experimental</MenuItem><MenuItem value="facebook">Facebook</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
+                <TextField select size="small" label="Canal" value={channel} onChange={(event) => changeFilters({ channel: event.target.value })} fullWidth>
+                  <MenuItem value="all">Todos los canales</MenuItem><MenuItem value="whatsapp">WhatsApp Cloud</MenuItem><MenuItem value="whatsapp_web">WhatsApp Web</MenuItem><MenuItem value="facebook">Facebook Messenger</MenuItem><MenuItem value="instagram">Instagram</MenuItem><MenuItem value="ecommerce">Ecommerce</MenuItem>
                 </TextField>
-                <TextField select size="small" label="Estado" value={status} onChange={(event) => setStatus(event.target.value)} fullWidth>
+                <TextField select size="small" label="Estado" value={status} onChange={(event) => changeFilters({ status: event.target.value })} fullWidth>
                   <MenuItem value="all">Todos</MenuItem><MenuItem value="waiting">Pendientes</MenuItem><MenuItem value="active">Abiertos</MenuItem><MenuItem value="closed">Cerrados</MenuItem><MenuItem value="bot">Con bot</MenuItem>
                 </TextField>
                 <Tooltip title="Actualizar"><IconButton onClick={() => sessions.refetch()}><RefreshCw size={17} /></IconButton></Tooltip>
               </Stack>
-              <FormControlLabel control={<Switch size="small" checked={unanswered} onChange={(event) => setUnanswered(event.target.checked)} />} label="Sin responder" />
+              <Stack direction="row" spacing={1}>
+                <TextField select size="small" label="Filtrar prioridad" value={priorityFilter} onChange={event => changeFilters({ priority: event.target.value })} fullWidth><MenuItem value="all">Todas</MenuItem><MenuItem value="low">Baja</MenuItem><MenuItem value="normal">Normal</MenuItem><MenuItem value="high">Alta</MenuItem><MenuItem value="urgent">Urgente</MenuItem></TextField>
+                <TextField select size="small" label="Filtrar cola" value={queueFilter ?? ''} onChange={event => changeFilters({ queue: event.target.value ? Number(event.target.value) : undefined })} fullWidth><MenuItem value="">Todas</MenuItem>{queues.data?.map(queue => <MenuItem key={queue.id} value={queue.id}>{queue.name}</MenuItem>)}</TextField>
+              </Stack>
+              <FormControlLabel control={<Switch size="small" checked={!!unanswered} onChange={(event) => changeFilters({ unanswered: event.target.checked })} />} label="Sin responder" />
+              <Typography variant="caption" aria-live="polite">{counts.data ? `${counts.data.total} conversaciones · ${counts.data.count} pendientes · ${counts.data.unread} no leídos` : 'Actualizando contadores…'}</Typography>
+              {counts.data && counts.data.total > 100 && <Typography variant="caption">Se muestran las 100 más recientes. Ajusta los filtros para acotar la lista.</Typography>}
+              {counts.isError && <Alert severity="warning">No fue posible actualizar los contadores.</Alert>}
             </Stack>
             <Box sx={{ flex: 1, overflowY: 'auto' }}>
               {sessions.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
-              {!sessions.isLoading && !sessions.data?.length && <Stack sx={{ alignItems: 'center', p: 4, color: 'text.secondary' }}><Inbox size={32} /><Typography variant="body2">Sin conversaciones</Typography></Stack>}
+              {sessions.isError && <Alert severity="error" action={<Button onClick={() => sessions.refetch()}>Reintentar</Button>}>No fue posible cargar las conversaciones.</Alert>}
+              {selectedId !== null && sessions.isSuccess && !sessions.isFetching && !selected && <Alert severity="info">La conversación ya no está disponible en esta lista. Su borrador se conserva durante esta sesión.</Alert>}
+              {!sessions.isLoading && !sessions.isError && !sessions.data?.length && <Stack sx={{ alignItems: 'center', p: 4, color: 'text.secondary' }}><Inbox size={32} /><Typography variant="body2">Sin conversaciones</Typography></Stack>}
               {sessions.data?.map((session) => (
                 <Box
                   component="button"
                   key={session.id}
-                  onClick={() => setSelectedId(session.id)}
+                  onClick={() => { send.reset(); selectSession(session.id) }}
                   sx={{
                     width: '100%', border: 0, borderBottom: '1px solid #e2e8f0', p: 1.5,
                     textAlign: 'left', cursor: 'pointer', bgcolor: selectedId === session.id ? '#fff7ed' : '#fff',
@@ -406,7 +465,7 @@ export default function ChatPage() {
           ) : (
             <Paper variant="outlined" sx={{ flex: 1, minWidth: 0, height: { xs: 'min(72dvh, 720px)', lg: 'auto' }, minHeight: { xs: 480, lg: 0 }, maxHeight: { xs: '72dvh', lg: 'none' }, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <Stack direction={{ xs: 'column', md: 'row' }} sx={{ position: 'sticky', top: 0, zIndex: 2, bgcolor: '#fff', justifyContent: 'space-between', alignItems: { md: 'center' }, p: 1.5, gap: 1, borderBottom: '1px solid #e2e8f0' }}>
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}><IconButton aria-label="Volver a conversaciones" onClick={() => setSelectedId(null)} sx={{ display: { xs: 'inline-flex', lg: 'none' } }}><ArrowLeft size={19} /></IconButton><Avatar src={selected.avatar_url || undefined} alt={selected.user_name} sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography noWrap variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}><IconButton aria-label="Volver a conversaciones" onClick={() => selectSession(null)} sx={{ display: { xs: 'inline-flex', lg: 'none' } }}><ArrowLeft size={19} /></IconButton><Avatar src={selected.avatar_url || undefined} alt={selected.user_name} sx={{ bgcolor: '#b45309' }}>{selected.user_name.charAt(0).toUpperCase()}</Avatar><Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontWeight: 800 }}>{selected.user_name}</Typography><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><ChannelBadge channel={selected.channel} /><Typography noWrap variant="caption" color="text.secondary">{selected.external_thread_id || selected.user_cedula}</Typography></Stack></Box></Stack>
                 <Stack direction="row" useFlexGap spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                   <TextField
                     select
@@ -427,10 +486,12 @@ export default function ChatPage() {
               </Stack>
               <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
+                {messages.isError && <Alert severity="error">La conversación no está disponible. Actualiza la lista; tu borrador se conserva.</Alert>}
                 {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} avatarUrl={selected.avatar_url} contactName={selected.user_name} onRetry={id => { if (!retry.isPending) retry.mutate(id) }} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
               <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
+                {(take.isError || close.isError || priority.isError || assignQueue.isError) && <Alert severity="error">No fue posible actualizar la conversación. Reintenta la operación.</Alert>}
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
                 {retry.error && <Alert severity="error">{(retry.error as any).response?.data?.error || 'No fue posible reintentar.'}</Alert>}
                 {send.isPending && <><LinearProgress variant="determinate" value={progress} /><Typography variant="caption">{progress < 100 ? `Cargando ${progress}%` : 'Esperando confirmación del canal…'}</Typography></>}
@@ -445,8 +506,8 @@ export default function ChatPage() {
                   <Button size="small" disabled={send.isPending || selected.status === 'closed'} onClick={() => setTemplatesOpen(true)}>Plantillas</Button>
                   <input ref={fileInputRef} hidden type="file" accept={allowedFiles} onChange={(event) => setFile(event.target.files?.[0])} />
                   <Tooltip title="Adjuntar archivo compatible (máximo 25 MB)"><span><IconButton aria-label="Adjuntar archivo" disabled={send.isPending || selected.status === 'closed' || selected.channel === 'whatsapp'} onClick={() => fileInputRef.current?.click()}><Paperclip size={20} /></IconButton></span></Tooltip>
-                  <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim() && !send.isPending && selected.status !== 'closed') send.mutate() } }} />
-                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={(!text.trim() && !file) || send.isPending || selected.status === 'closed'} onClick={() => send.mutate()}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
+                  <TextField fullWidth size="small" multiline maxRows={4} value={text} disabled={selected.status === 'closed'} placeholder={selected.status === 'closed' ? 'Conversación cerrada' : `Responder por ${selected.channel}`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (text.trim()) submit() } }} />
+                  <IconButton aria-label="Enviar mensaje" color="primary" disabled={(!text.trim() && !file) || send.isPending || selected.status === 'closed' || messages.isError} onClick={submit}>{send.isPending ? <CircularProgress size={20} /> : <Send size={20} />}</IconButton>
                 </Stack>
               </Box>
             </Paper>

@@ -384,9 +384,9 @@ class InternalWebhookView(InternalAPIView):
             origin, event_source, 'queued' if bot_allowed else 'skipped',
         )
         if bot_allowed:
-            from crmChat.tasks import generate_omnichannel_bot_reply
+            from crmChat.tasks import enqueue_bot_reply
             ChatMessage.objects.filter(pk=message.pk).update(status='queued')
-            transaction.on_commit(lambda: generate_omnichannel_bot_reply.delay(message.pk))
+            transaction.on_commit(lambda: enqueue_bot_reply(message.pk))
         return Response({'created': True, 'message_id': message.pk}, status=201)
 
 
