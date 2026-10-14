@@ -54,7 +54,8 @@ def send_message(message, payload):
 
     def persist_client_id(value):
         message.client_message_id = value
-        message.metadata = {**(message.metadata or {}), 'client_message_id': value, 'origin': 'crm'}
+        message.metadata = {**(message.metadata or {}), 'client_message_id': value,
+                            'origin': message.metadata.get('origin', 'bot' if message.sender_type == 'bot' else 'crm')}
         message.save(update_fields=['client_message_id', 'metadata'])
 
     if ChatMessage.objects.filter(client_message_id=client_message_id).exclude(pk=message.pk).exists():

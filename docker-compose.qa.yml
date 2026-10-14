@@ -1,0 +1,21 @@
+services:
+  proxy-config-test:
+    image: nginx:alpine
+    command: nginx -t
+    volumes:
+      - ./nginxprod/nginx.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - frontend:127.0.0.1
+    networks:
+      - shared_net
+  chat-ui-test:
+    image: mcr.microsoft.com/playwright:v1.58.2-noble
+    working_dir: /tmp/crm-ui
+    command: sh -c "npm install --no-audit --no-fund --prefix /tmp/crm-ui playwright@1.58.2 && node /tests/chat-upgrade.cjs"
+    volumes:
+      - ./frontend_U/tests:/tests:ro
+    networks:
+      - shared_net
+networks:
+  shared_net:
+    external: true

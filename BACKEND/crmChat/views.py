@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 import uuid
 
 from .models import AssignmentQueue, ChannelIntegration, ChatAttachment, ChatAuditEvent, CRMContact, ChatSession, ChatMessage, QueueMember
-from .attachment_validation import validate_chat_upload
+from .attachment_validation import validate_chat_upload, ensure_channel_media, upload_sha256
 from .ollama_service import ollama_service
 from .apps.meta.services import MetaAPIError, dispatch_outbound_message
 from .realtime import publish_crm_event
@@ -28,6 +28,16 @@ logger = logging.getLogger(__name__)
 
 def _is_agent(user):
     return getattr(user, 'tipo_usuario', 0) in [1, 4]
+
+
+def _owns_web_session(request, session):
+    if request.user.is_authenticated and session.user_id_ref == request.user.pk:
+        return True
+    try:
+        return signing.loads(request.COOKIES.get('crm_bot_session_' + str(session.pk), ''),
+                             salt='crm-web-session', max_age=86400) == session.pk
+    except signing.BadSignature:
+        return False
 
 
 def _resolve_name(user):
@@ -80,6 +90,9 @@ def _serialize_message(m):
         'external_message_id': m.external_message_id,
         'client_message_id': m.client_message_id,
         'origin': origin,
+        'template_id': metadata.get('template_id'),
+        'retry_allowed': m.status == 'failed' and not metadata.get('delivery_uncertain')
+                         and (m.direction == 'outbound' or not hasattr(m, 'bot_reply')),
         'external_timestamp': m.external_timestamp,
         'timestamp': m.external_timestamp or m.created_at,
         'attachments': [
@@ -89,6 +102,8 @@ def _serialize_message(m):
                 'name': attachment.original_name,
                 'mime_type': attachment.mime_type,
                 'size': attachment.size,
+                'sha256': attachment.metadata.get('sha256', ''),
+                'state': m.status if m.direction == 'outbound' else 'stored',
             }
             for attachment in m.attachments.all()
         ],
@@ -308,7 +323,7 @@ class MessageListCreateView(APIView):
         if err:
             return err
 
-        qs = session.messages.annotate(
+        qs = session.messages.prefetch_related('attachments').annotate(
             activity_at=Coalesce('external_timestamp', 'created_at'),
         ).order_by('activity_at', 'id')
         after = request.query_params.get('after')
@@ -367,6 +382,11 @@ class MessageListCreateView(APIView):
             if existing:
                 if existing.session_id != session.id:
                     return Response({'error': 'client_message_id ya pertenece a otra conversación'}, status=409)
+                previous_attachment = existing.attachments.first()
+                if existing.text != text or bool(previous_attachment) != bool(upload) or (
+                    upload and previous_attachment.metadata.get('sha256') != upload_sha256(upload)
+                ):
+                    return Response({'error': 'client_message_id ya corresponde a otro contenido.'}, status=409)
                 return Response(_serialize_message(existing), status=200)
 
         attachment_data = None
@@ -375,9 +395,34 @@ class MessageListCreateView(APIView):
                 return Response({'error': 'La carga de archivos está disponible para agentes autenticados'}, status=403)
             try:
                 attachment_data = validate_chat_upload(upload)
+                ensure_channel_media(session.channel, attachment_data[2])
             except ValueError as exc:
                 return Response({'error': str(exc)}, status=400)
             message_type = attachment_data[2]
+            if text and (session.channel in ('facebook', 'instagram') or message_type == 'audio'):
+                return Response({'error': 'Este tipo de envío no admite texto junto al archivo. Envía el texto y el archivo por separado.'}, status=400)
+        elif is_agent and message_type in {'image', 'audio', 'video', 'document', 'sticker'} and session.channel in ('facebook', 'instagram', 'whatsapp_web'):
+            return Response({'error': 'Adjunta un archivo validado desde el CRM; no se admiten URLs arbitrarias.'}, status=400)
+
+        template = None
+        if request.data.get('template_id'):
+            from .models import QuickReply
+            from .quick_replies import render_template
+            import json
+            template = QuickReply.objects.filter(pk=request.data['template_id'], active=True).first()
+            if not is_agent or not template or session.channel not in template.channels:
+                return Response({'error': 'Plantilla no disponible para este canal.'}, status=400)
+            try:
+                values = request.data.get('template_variables', {})
+                if isinstance(values, str):
+                    values = json.loads(values)
+                if not isinstance(values, dict):
+                    raise ValueError('Variables inválidas')
+                render_template(template, values)
+                if '{{' in text or '}}' in text:
+                    raise ValueError('Completa las variables antes de enviar.')
+            except (ValueError, TypeError) as exc:
+                return Response({'error': str(exc)}, status=400)
 
         sender_type = 'agent' if is_agent else 'user'
         sender_name, _ = _resolve_name(request.user)
@@ -403,6 +448,7 @@ class MessageListCreateView(APIView):
                     client_message_id=client_message_id or None,
                     metadata={
                         'origin': origin,
+                        **({'template_id': template.pk} if template else {}),
                         **({'outbound_payload': payload} if payload else {}),
                     },
                 )
@@ -414,7 +460,8 @@ class MessageListCreateView(APIView):
                         original_name=original_name,
                         mime_type=mime_type,
                         size=upload.size,
-                        metadata={'protected': True, 'uploaded_by': origin},
+                        metadata={'protected': True, 'uploaded_by': origin, 'channel': session.channel,
+                                  'sha256': upload_sha256(upload), 'state': 'stored'},
                     )
                     token = signing.dumps(attachment.id, salt='crm-chat-delivery')
                     public_base = settings.FRONTEND_PUBLIC_URL.rstrip('/')
@@ -431,6 +478,12 @@ class MessageListCreateView(APIView):
                         },
                     }
                     msg.save(update_fields=['metadata'])
+                if template:
+                    from .models import QuickReplyPreference
+                    QuickReplyPreference.objects.update_or_create(template=template, user=request.user,
+                        defaults={'last_used_at': timezone.now()})
+                    ChatAuditEvent.objects.create(actor=request.user, session=session,
+                        action='template.used', details={'template_id': template.pk, 'message_id': msg.pk})
         except IntegrityError:
             if client_message_id:
                 existing = ChatMessage.objects.filter(client_message_id=client_message_id, session=session).first()
@@ -461,6 +514,35 @@ class MessageListCreateView(APIView):
         publish_crm_event('message.created', session_id=session.id, message_id=msg.id)
 
         return Response(_serialize_message(msg), status=201)
+
+
+class RetryMessageView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'crm_upload'
+
+    def post(self, request, pk, message_id):
+        if not _is_agent(request.user):
+            return Response(status=403)
+        message = ChatMessage.objects.select_related('session').filter(pk=message_id, session_id=pk).first()
+        if not message:
+            return Response(status=404)
+        if message.session.status == 'closed':
+            return Response({'error': 'Conversación cerrada'}, status=400)
+        if message.sender_type == 'user' and message.status == 'failed':
+            from .tasks import generate_omnichannel_bot_reply
+            ChatMessage.objects.filter(pk=message.pk).update(status='queued', bot_processing_at=None)
+            transaction.on_commit(lambda: generate_omnichannel_bot_reply.delay(message.pk))
+            return Response({'status': 'queued'}, status=202)
+        if message.direction != 'outbound' or message.status not in ('failed', 'sent', 'delivered', 'read'):
+            return Response({'error': 'El mensaje no admite reintento.'}, status=409)
+        if message.metadata.get('delivery_uncertain'):
+            return Response({'error': 'Entrega no confirmada: verifica el canal antes de repetir para evitar duplicados.'}, status=409)
+        try:
+            dispatch_outbound_message(message)
+        except MetaAPIError as exc:
+            return Response({'error': str(exc), 'message': _serialize_message(message)}, status=502)
+        publish_crm_event('message.updated', session_id=pk, message_id=message.pk)
+        return Response(_serialize_message(message))
 
 
 class ProtectedAttachmentView(APIView):
@@ -611,7 +693,7 @@ class BotChatView(APIView):
 
     def post(self, request):
         """
-        Procesa un mensaje del usuario y retorna la respuesta del bot.
+        Encola un mensaje del usuario. La respuesta se obtiene mediante polling protegido.
         
         Body:
         {
@@ -658,7 +740,9 @@ class BotChatView(APIView):
         session = None
         if session_id:
             try:
-                session = ChatSession.objects.get(pk=session_id)
+                session = ChatSession.objects.get(pk=session_id, channel='ecommerce')
+                if not _owns_web_session(request, session):
+                    return Response({'error': 'Sesión no válida'}, status=403)
                 # Verificar que la sesión pertenezca al usuario (si está autenticado)
                 if user_id_ref and session.user_id_ref and session.user_id_ref != user_id_ref:
                     return Response(
@@ -692,7 +776,7 @@ class BotChatView(APIView):
                 integration=ecommerce_integration,
                 contact=getattr(previous_session, 'contact', None),
             )
-            logger.info(f"Nueva sesión de chat creada: {session.id} para {user_name}")
+            logger.info('Nueva sesión ecommerce session_id=%s', session.id)
 
         # Guardar mensaje del usuario
         user_message = ChatMessage.objects.create(
@@ -701,7 +785,7 @@ class BotChatView(APIView):
             sender_type='user',
             sender_name=user_name,
             direction='inbound',
-            status='received',
+            status='queued' if session.status == 'bot' else 'received',
         )
         session.refresh_from_db()
         session.last_customer_message_at = user_message.created_at
@@ -714,86 +798,30 @@ class BotChatView(APIView):
         if session.integration_id:
             ecommerce_bot_enabled = bool(session.integration.configuration.get('bot_enabled', False))
         if session.status != 'bot' or not ecommerce_bot_enabled:
-            return Response({
+            ChatMessage.objects.filter(pk=user_message.pk).update(status='received')
+            response = Response({
                 'session_id': session.id, 'message': '', 'sender_type': 'bot',
                 'status': session.status, 'needs_agent': session.status == 'waiting',
                 'needs_login': False, 'user_message_id': user_message.id,
                 'bot_message_id': None, 'conversation_state': session.conversation_state,
             }, status=status.HTTP_202_ACCEPTED)
+            response.set_cookie('crm_bot_session_' + str(session.pk),
+                                signing.dumps(session.pk, salt='crm-web-session'),
+                                httponly=True, secure=not settings.DEBUG, samesite='Lax', max_age=86400)
+            return response
 
-        # Obtener historial de conversación para contexto
-        conversation_history = []
-        previous_messages = list(
-            session.messages.exclude(pk=user_message.pk).order_by('-created_at')[:12]
-        )
-        for msg in reversed(previous_messages):
-            conversation_history.append({
-                'role': 'assistant' if msg.sender_type in ('bot', 'agent') else 'user',
-                'content': msg.text,
-            })
-
-        # Obtener respuesta del bot
-        try:
-            conversation_state = dict(session.conversation_state or {})
-            conversation_state['greeting_shown'] = True
-            bot_result = ollama_service.get_bot_response(
-                message_text, conversation_history=conversation_history,
-                conversation_state=conversation_state,
-                summary=session.conversation_summary,
-                channel=ChannelIntegration.CHANNEL_ECOMMERCE,
-            )
-        except Exception:
-            logger.exception('Fallo de Ollama para sesión ecommerce %s, mensaje %s.', session.id, user_message.id)
-            return Response({'error': 'No fue posible procesar el mensaje en este momento.', 'session_id': session.id}, status=503)
-
-        bot_response_text = bot_result.get('response', 'Lo siento, no pude procesar tu mensaje.')
-        next_state = bot_result.get('state', session.conversation_state)
-        next_state['last_response'] = bot_response_text[:2000]
-        needs_agent = bot_result.get('needs_agent', False)
-        with transaction.atomic():
-            session = ChatSession.objects.select_for_update().get(pk=session.pk)
-            if session.status != 'bot':
-                return Response({
-                    'session_id': session.id, 'message': '', 'sender_type': 'bot',
-                    'status': session.status, 'needs_agent': session.status == 'waiting',
-                    'needs_login': False, 'user_message_id': user_message.id,
-                    'bot_message_id': None, 'conversation_state': session.conversation_state,
-                }, status=status.HTTP_202_ACCEPTED)
-            session.conversation_state = next_state
-            session.conversation_summary = bot_result.get('summary', session.conversation_summary)
-            if needs_agent:
-                session.status = 'waiting'
-                session.unread_by_agent += 1
-            session.save(update_fields=[
-                'conversation_state', 'conversation_summary', 'status', 'unread_by_agent', 'updated_at',
-            ])
-            bot_message = ChatMessage.objects.create(
-                session=session, reply_to_message=user_message, text=bot_response_text,
-                sender_type='bot', sender_name='', direction='outbound', status='sent',
-            )
-            session.last_bot_message_at = bot_message.created_at
-            session.inactivity_warning_at = None
-            session.save(update_fields=['last_bot_message_at', 'inactivity_warning_at', 'updated_at'])
-            if needs_agent:
-                publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
-        if needs_agent and session.status == 'waiting' and session.assigned_to_id is None:
-            from .assignment import assign_session_automatically
-            assign_session_automatically(session)
-            session.refresh_from_db()
-        needs_login = False
-
-        return Response({
-            'session_id': session.id,
-            'message': bot_response_text,
-            'sender_type': 'bot',
-            'status': session.status,
-            'needs_agent': needs_agent,
-            'needs_login': needs_login,   # Frontend muestra botón de login
-            'user_message_id': user_message.id,
-            'bot_message_id': bot_message.id,
-            'conversation_state': session.conversation_state,
-        })
-
+        from .tasks import generate_omnichannel_bot_reply
+        ChatMessage.objects.filter(pk=user_message.pk).update(status='queued')
+        transaction.on_commit(lambda: generate_omnichannel_bot_reply.delay(user_message.pk))
+        response = Response({
+            'session_id': session.id, 'message': '', 'sender_type': 'bot',
+            'status': session.status, 'needs_agent': False, 'needs_login': False,
+            'user_message_id': user_message.id, 'bot_message_id': None,
+        }, status=202)
+        response.set_cookie('crm_bot_session_' + str(session.pk),
+                            signing.dumps(session.pk, salt='crm-web-session'),
+                            httponly=True, secure=not settings.DEBUG, samesite='Lax', max_age=86400)
+        return response
 
 class BotSessionMessagesView(APIView):
     """
@@ -809,14 +837,16 @@ class BotSessionMessagesView(APIView):
         - after: id del último mensaje recibido (para polling)
         """
         try:
-            session = ChatSession.objects.get(pk=session_id)
+            session = ChatSession.objects.get(pk=session_id, channel='ecommerce')
         except ChatSession.DoesNotExist:
             return Response(
                 {'error': 'Sesión no encontrada'},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        qs = session.messages.all()
+        if not _owns_web_session(request, session):
+            return Response({'error': 'Sesión no válida'}, status=403)
+        qs = session.messages.prefetch_related('attachments').order_by('pk')
         after = request.query_params.get('after')
         if after:
             try:
@@ -830,5 +860,8 @@ class BotSessionMessagesView(APIView):
             'session_id': session.id,
             'status': session.status,
             'messages': messages,
+            'pending': session.messages.filter(sender_type='user', status__in=['queued', 'processing']).exists(),
+            'bot_error': session.messages.filter(sender_type='user').order_by('-pk').values_list('status', flat=True).first() == 'failed',
+            'needs_login': session.status == 'waiting' and not request.user.is_authenticated,
             'agent_name': session.agent_name if session.status in ['active', 'closed'] else None,
         })

@@ -27,7 +27,9 @@ export interface ChatMessage {
   sender_name: string
   direction: 'inbound' | 'outbound' | 'internal'
   message_type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'template' | 'interactive'
-  status: 'received' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
+  status: 'received' | 'queued' | 'processing' | 'sent' | 'delivered' | 'read' | 'failed'
+  retry_allowed: boolean
+  template_id?: number
   error: string
   external_message_id: string | null
   client_message_id: string | null
@@ -192,13 +194,17 @@ export const adminChatService = {
     return res.data
   },
 
-  sendMessage: async (sessionId: number, text: string, file?: File): Promise<ChatMessage> => {
+  sendMessage: async (sessionId: number, text: string, file?: File, clientId: string = crypto.randomUUID(), template?: { id: number; values: Record<string, string> }, progress?: (value: number) => void): Promise<ChatMessage> => {
     const data = new FormData()
     data.append('text', text)
     data.append('origin', 'crm')
-    data.append('client_message_id', crypto.randomUUID())
+    data.append('client_message_id', clientId)
+    if (template) { data.append('template_id', String(template.id)); data.append('template_variables', JSON.stringify(template.values)) }
     if (file) data.append('file', file)
-    const res = await api.post(`/crm-chat/sessions/${sessionId}/messages/`, data)
+    const res = await api.post(`/crm-chat/sessions/${sessionId}/messages/`, data, {
+      headers: { 'Content-Type': undefined }, timeout: 60000,
+      onUploadProgress: event => progress?.(event.total ? Math.round(event.loaded * 100 / event.total) : 0),
+    })
     return res.data
   },
 
@@ -206,6 +212,10 @@ export const adminChatService = {
     const apiPath = url.replace(/^\/api/, '')
     const res = await api.get(apiPath, { responseType: 'blob' })
     return res.data
+  },
+
+  retryMessage: async (sessionId: number, messageId: number) => {
+    return (await api.post(`/crm-chat/sessions/${sessionId}/messages/${messageId}/retry/`)).data
   },
 
   takeSession: async (sessionId: number): Promise<ChatSession> => {

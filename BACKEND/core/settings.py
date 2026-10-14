@@ -138,6 +138,7 @@ REST_FRAMEWORK = {
         'password_reset_request': config('THROTTLE_PASSWORD_RESET_REQUEST_RATE', default='5/min'),
         'password_reset_confirm': config('THROTTLE_PASSWORD_RESET_CONFIRM_RATE', default='10/min'),
         'chat': config('THROTTLE_CHAT_RATE', default='20/min'),
+        'crm_upload': config('THROTTLE_CRM_UPLOAD_RATE', default='30/min'),
         'reviews': config('THROTTLE_REVIEW_RATE', default='30/min'),
         'payment_status': config('THROTTLE_PAYMENT_RATE', default='30/min'),
         'fcm': config('THROTTLE_FCM_RATE', default='30/min'),
@@ -185,11 +186,14 @@ CHANNEL_LAYERS = {
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://redis:6379/0')
 CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://redis:6379/0')
 CELERY_TASK_TRACK_STARTED = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_ROUTES = {'crmChat.tasks.generate_omnichannel_bot_reply': {'queue': 'chatbot'}}
 CELERY_TASK_TIME_LIMIT = config('CELERY_TASK_TIME_LIMIT', default=120, cast=int)
 CELERY_TASK_SOFT_TIME_LIMIT = config('CELERY_TASK_SOFT_TIME_LIMIT', default=110, cast=int)
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_TIMEZONE = 'America/Bogota'
 CELERY_BEAT_SCHEDULE = {
+    'recover-stalled-chat-tasks': {'task': 'crmChat.tasks.recover_stalled_chat_tasks', 'schedule': timedelta(seconds=60)},
     'close-inactive-bot-sessions': {
         'task': 'crmChat.tasks.close_inactive_bot_sessions',
         'schedule': timedelta(seconds=30),
@@ -244,7 +248,8 @@ if 'test' in sys.argv and os.getenv('CRM_TEST_POSTGRES') != '1':
         'NAME': ':memory:',
     }
 elif 'test' in sys.argv:
-    DATABASES['default']['TEST'] = {'NAME': 'test_crm_simple_main'}
+    # Explicit isolated test database: exercise PostgreSQL row locks in Docker.
+    DATABASES['default']['TEST'] = {'NAME': 'test_crm_upgrade'}
 
 AUTH_USER_MODEL = 'usuarios.Credenciales'
 
@@ -335,9 +340,11 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Ollama Chatbot Configuration
 # En Docker usa 'ollama', en desarrollo local usa 'localhost'
 OLLAMA_API_URL = config('OLLAMA_API_URL', default='http://ollama:11434/api/chat')
-OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen:4b')
-OLLAMA_TIMEOUT = config('OLLAMA_TIMEOUT', default=90, cast=int)
-OLLAMA_NUM_CTX = config('OLLAMA_NUM_CTX', default=4096, cast=int)
+OLLAMA_MODEL = config('OLLAMA_MODEL', default='qwen2.5:1.5b')
+OLLAMA_TIMEOUT = config('OLLAMA_TIMEOUT', default=60, cast=int)
+OLLAMA_NUM_CTX = config('OLLAMA_NUM_CTX', default=2048, cast=int)
+OLLAMA_NUM_PREDICT = config('OLLAMA_NUM_PREDICT', default=180, cast=int)
+CRM_GATEWAY_MEDIA_BASE_URL = config('CRM_GATEWAY_MEDIA_BASE_URL', default='http://backend:8000')
 OLLAMA_ECOMMERCE_ENABLED = config('OLLAMA_ECOMMERCE_ENABLED', default=True, cast=bool)
 CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED = config('CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED', default=False, cast=bool)
 

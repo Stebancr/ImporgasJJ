@@ -6,19 +6,9 @@ The existing recommendation state and summary remain intact for reactivation.
 import json
 import logging
 import re
-import threading
 from copy import deepcopy
-import requests
 
 logger = logging.getLogger(__name__)
-_http = threading.local()
-
-
-def _http_session():
-    if not hasattr(_http, 'session'):
-        _http.session = requests.Session()
-    return _http.session
-
 HANDOFF = ('Con gusto. Voy a comunicarte con uno de nuestros asesores para que te ayude '
            'con la disponibilidad, el precio y el proceso de compra.')
 UNKNOWN = 'No tengo información confirmada sobre esa consulta. Voy a comunicarte con un asesor para que te ayude.'
@@ -50,6 +40,7 @@ def classify(service, message, history, state):
     if re.fullmatch(r'\W*(?:hola|buenas|buenos dias|buenas tardes|buenas noches|saludos|gracias|ok|vale)[\W]*', text):
         return 'greeting' if 'gracias' not in text and text.strip(' .!?') not in ('ok', 'vale') else 'thanks'
     # A bounded classification request; no product query and no generated answer.
+    from .ollama_service import _http_session
     payload = {
         'model': service.model, 'stream': False,
         'format': {'type': 'object', 'properties': {'intent': {'type': 'string', 'enum': list(INTENTS)}}, 'required': ['intent']},

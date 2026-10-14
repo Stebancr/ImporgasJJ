@@ -49,6 +49,7 @@ const AdminVisitsPage = lazy(() => import('./admin/pages/VisitsPage'))
 // Material UI y React Query solo se descargan al entrar al módulo CRM; el
 // ecommerce conserva un bundle inicial más pequeño y sus rutas no cambian.
 const AdminChatPage = lazy(() => import('./admin/pages/ChatPage'))
+const TemplatesPage = lazy(() => import('./admin/pages/TemplatesPage'))
 const MetaIntegrationsPage = lazy(() => import('./admin/pages/MetaIntegrationsPage'))
 
 function CRMPageFallback() {
@@ -109,6 +110,7 @@ function AdminRoutes() {
         <Route path="usuarios" element={<AdminUsersPage />} />
         <Route path="perfil" element={<AdminProfilePage />} />
         <Route path="chat" element={<Suspense fallback={<CRMPageFallback />}><AdminChatPage /></Suspense>} />
+        <Route path="chat/plantillas" element={<Suspense fallback={<CRMPageFallback />}><TemplatesPage /></Suspense>} />
         <Route path="chat/integraciones" element={<Suspense fallback={<CRMPageFallback />}><MetaIntegrationsPage /></Suspense>} />
         <Route path="visitas" element={<AdminVisitsPage />} />
         <Route path="gestion" element={<Navigate to="cotizaciones" replace />} />

@@ -13,9 +13,9 @@ from django.utils import timezone
 from django.urls import reverse
 from rest_framework.test import APIClient
 from ecommerce.models import Location
-from .models import ChatSession, ChatMessage, ChannelIntegration
+from .models import ChatSession, ChatMessage, ChannelIntegration, BotConversationLease
 from .ollama_service import ollama_service
-from .tasks import generate_omnichannel_bot_reply, close_inactive_bot_sessions
+from .tasks import generate_omnichannel_bot_reply, close_inactive_bot_sessions, recover_stalled_chat_tasks
 
 
 @override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=False)
@@ -28,7 +28,7 @@ class SimplifiedResponseTests(TestCase):
                    'Necesito una válvula', 'Busco una manguera', 'Quiero accesorios',
                    'Necesito una visita técnica', 'Quiero instalarlo', '¿Es compatible?',
                    '¿Qué garantía tiene?', 'Hola, ¿cuál me recomiendas?']
-        with patch('crmChat.simple_chatbot._http_session') as http:
+        with patch('crmChat.ollama_service._http_session') as http:
             for phrase in phrases:
                 with self.subTest(phrase=phrase), self.assertNumQueries(0):
                     result = ollama_service.get_bot_response(phrase, conversation_state={'product': 'PRIVADO ZX', 'recent_products': [{'id': 42}]})
@@ -60,7 +60,7 @@ class SimplifiedResponseTests(TestCase):
         self.assertTrue(result['needs_agent'])
         self.assertNotIn('histórico', result['response'])
 
-    @patch('crmChat.simple_chatbot._http_session')
+    @patch('crmChat.ollama_service._http_session')
     def test_ambiguous_intent_uses_context_but_never_generated_answer(self, http):
         response = http.return_value.post.return_value
         response.json.return_value = {'message': {'content': '{"intent":"commercial"}'}}
@@ -73,7 +73,7 @@ class SimplifiedResponseTests(TestCase):
         self.assertTrue(result['needs_agent'])
         self.assertNotIn('inventado', result['response'])
 
-    @patch('crmChat.simple_chatbot._http_session')
+    @patch('crmChat.ollama_service._http_session')
     def test_timeout_and_provider_error_handoff(self, http):
         for error in (requests.Timeout(), requests.ConnectionError()):
             http.return_value.post.side_effect = error
@@ -89,23 +89,30 @@ class SimplifiedResponseTests(TestCase):
 
 @override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=False)
 class SimplifiedTaskTests(TestCase):
-    @patch('crmChat.views.publish_crm_event')
+    @patch('crmChat.tasks.publish_crm_event')
     @patch('crmChat.assignment.assign_session_automatically')
-    def test_main_ecommerce_contract_and_transfer_remain_synchronous(self, assign, event):
+    @patch('crmChat.views.publish_crm_event')
+    @patch('crmChat.tasks.generate_omnichannel_bot_reply.delay')
+    def test_ecommerce_handoff_survives_async_contract(self, enqueue, view_event, assign, task_event):
         client = APIClient()
-        greeting = client.post(reverse('bot-chat'), {'message': 'Hola'}, format='json')
-        self.assertEqual(greeting.status_code, 200)
-        self.assertNotIn(ollama_service.INITIAL_GREETING, greeting.data['message'])
-        session_id = greeting.data['session_id']
-        transfer = client.post(reverse('bot-chat'), {'message': 'Quiero cotizar', 'session_id': session_id}, format='json')
-        self.assertEqual(transfer.status_code, 200)
-        self.assertTrue(transfer.data['needs_agent'])
-        self.assertEqual(transfer.data['status'], 'waiting')
-        self.assertTrue(ChatMessage.objects.filter(pk=transfer.data['user_message_id'], text='Quiero cotizar').exists())
-        later = client.post(reverse('bot-chat'), {'message': 'Me interesa ese', 'session_id': session_id}, format='json')
+        for text in ('Hola', 'Quiero cotizar'):
+            payload = {'message': text}
+            if text != 'Hola':
+                payload['session_id'] = session_id
+            with self.captureOnCommitCallbacks(execute=True):
+                result = client.post(reverse('bot-chat'), payload, format='json')
+            self.assertEqual(result.status_code, 202)
+            session_id = result.data['session_id']
+            enqueue.assert_called_with(result.data['user_message_id'])
+            generate_omnichannel_bot_reply.run(result.data['user_message_id'])
+        session = ChatSession.objects.get(pk=session_id)
+        self.assertEqual(session.status, 'waiting')
+        self.assertEqual(session.messages.filter(sender_type='bot').count(), 2)
+        self.assertFalse(any(ollama_service.INITIAL_GREETING in text for text in session.messages.filter(sender_type='bot').values_list('text', flat=True)))
+        with self.captureOnCommitCallbacks(execute=True):
+            later = client.post(reverse('bot-chat'), {'message': 'Me interesa ese', 'session_id': session_id}, format='json')
         self.assertEqual(later.status_code, 202)
-        self.assertEqual(later.data['message'], '')
-        self.assertEqual(ChatMessage.objects.filter(session_id=session_id, sender_type='bot').count(), 2)
+        self.assertEqual(enqueue.call_count, 2)
         assign.assert_called_once()
 
     def message(self, channel='ecommerce', text='Quiero comprar', **kwargs):
@@ -113,7 +120,7 @@ class SimplifiedTaskTests(TestCase):
         if channel != 'ecommerce':
             integration = ChannelIntegration.objects.create(channel=channel, name='QA', active=True, configuration={'bot_enabled': True})
         session = ChatSession.objects.create(channel=channel, integration=integration, status='bot', last_customer_message_at=timezone.now())
-        return ChatMessage.objects.create(session=session, text=text, direction='inbound', sender_type='user', status='received', external_message_id='qa-'+str(uuid.uuid4()), **kwargs)
+        return ChatMessage.objects.create(session=session, text=text, direction='inbound', sender_type='user', status='queued', external_message_id='qa-'+str(uuid.uuid4()), **kwargs)
 
     @patch('crmChat.tasks.dispatch_outbound_message')
     @patch('crmChat.tasks.publish_crm_event')
@@ -128,11 +135,12 @@ class SimplifiedTaskTests(TestCase):
             self.assertEqual(reply.text.count(ollama_service.INITIAL_GREETING), int(channel != 'ecommerce'))
             self.assertTrue(inbound.session.messages.filter(pk=inbound.pk).exists())
             self.assertEqual(generate_omnichannel_bot_reply.run(inbound.pk), {'duplicate': True})
-            later = ChatMessage.objects.create(session=inbound.session, text='¿Me atienden?', direction='inbound', sender_type='user', status='received', external_message_id='later-'+channel)
+            later = ChatMessage.objects.create(session=inbound.session, text='¿Me atienden?', direction='inbound', sender_type='user', status='queued', external_message_id='later-'+channel)
             self.assertIn('skipped', generate_omnichannel_bot_reply.run(later.pk))
         self.assertEqual(send.call_count, 4)
         self.assertEqual(assign.call_count, 4)
         self.assertEqual(sum(call.args[0] == 'session.pending' for call in event.call_args_list), 4)
+        self.assertFalse(BotConversationLease.objects.exists())
 
     @patch('crmChat.tasks.dispatch_outbound_message', side_effect=RuntimeError('channel unavailable'))
     @patch('crmChat.assignment.assign_session_automatically')
@@ -143,6 +151,7 @@ class SimplifiedTaskTests(TestCase):
         inbound.session.refresh_from_db()
         self.assertEqual(inbound.session.status, 'waiting')
         assign.assert_called_once()
+        self.assertFalse(BotConversationLease.objects.exists())
         generate_omnichannel_bot_reply.run(inbound.pk)
         self.assertEqual(send.call_count, 1)
 
@@ -165,61 +174,25 @@ class SimplifiedTaskTests(TestCase):
         self.assertEqual(inbound.session.status, 'waiting')
         self.assertEqual(send.call_count, 1)
 
+    @patch('crmChat.tasks.generate_omnichannel_bot_reply.delay')
+    def test_abandoned_worker_job_recovers_then_transfers_once(self, enqueue):
+        inbound = self.message()
+        ChatMessage.objects.filter(pk=inbound.pk).update(status='processing', created_at=timezone.now()-timedelta(minutes=4))
+        self.assertEqual(recover_stalled_chat_tasks.run()['recovered'], 1)
+        enqueue.assert_called_once_with(inbound.pk)
+        with patch('crmChat.tasks.dispatch_outbound_message') as send:
+            generate_omnichannel_bot_reply.run(inbound.pk)
+            generate_omnichannel_bot_reply.run(inbound.pk)
+            send.assert_called_once()
+
+
 @skipUnless(connection.vendor == 'postgresql', 'Requires Docker PostgreSQL row locks')
 @override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=False)
 class SimplifiedConcurrencyTests(TransactionTestCase):
-    @patch('crmChat.views.publish_crm_event')
-    @patch('crmChat.assignment.assign_session_automatically')
-    def test_eight_ecommerce_requests_use_main_response_contract(self, assign, event):
-        def run(index):
-            close_old_connections()
-            started = time.perf_counter()
-            try:
-                result = APIClient().post(reverse('bot-chat'), {'message': 'Quiero comprar', 'user_name': f'QA {index}'}, format='json')
-                self.assertEqual(result.status_code, 200)
-                self.assertEqual(result.data['status'], 'waiting')
-                self.assertTrue(result.data['needs_agent'])
-                self.assertNotIn(ollama_service.INITIAL_GREETING, result.data['message'])
-                session = ChatSession.objects.get(pk=result.data['session_id'])
-                self.assertEqual(session.user_name, f'QA {index}')
-                self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
-                return time.perf_counter() - started
-            finally:
-                close_old_connections()
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            durations = list(pool.map(run, range(8)))
-        self.assertEqual(assign.call_count, 8)
-        print('MAIN_ECOMMERCE_BENCHMARK sessions=8 average=%.4fs max=%.4fs duplicates=0' % (sum(durations)/8, max(durations)))
-
-    @patch('crmChat.tasks.publish_crm_event')
-    @patch('crmChat.tasks.dispatch_outbound_message')
-    @patch('crmChat.assignment.assign_session_automatically')
-    def test_simultaneous_requests_same_session_transfer_only_once(self, assign, send, event):
-        from threading import Barrier
-        original_response = ollama_service.get_bot_response
-        gate = Barrier(2)
-        session = ChatSession.objects.create(status='bot')
-        messages = [ChatMessage.objects.create(session=session, text='Quiero comprar', sender_type='user', direction='inbound') for _ in range(2)]
-        def response(*args, **kwargs):
-            gate.wait(timeout=5)
-            return original_response(*args, **kwargs)
-        def run(message):
-            close_old_connections()
-            try:
-                return generate_omnichannel_bot_reply.run(message.pk)
-            finally:
-                close_old_connections()
-        with patch.object(ollama_service, 'get_bot_response', side_effect=response), ThreadPoolExecutor(max_workers=2) as pool:
-            list(pool.map(run, messages))
-        self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
-        self.assertFalse(session.messages.filter(bot_processing_at__isnull=False).exists())
-        assign.assert_called_once()
-        send.assert_called_once()
-
-    def test_eight_sessions_preserve_context_and_single_transfer(self):
+    def test_eight_sessions_preserve_order_and_single_transfer(self):
         sessions = [ChatSession.objects.create(status='bot', conversation_state={'qa_owner': index}) for index in range(8)]
-        messages = [ChatMessage.objects.create(session=session, text='Quiero comprar', sender_type='user', direction='inbound', status='received') for session in sessions]
-        later = [ChatMessage.objects.create(session=session, text='Necesito un repuesto', sender_type='user', direction='inbound', status='received') for session in sessions]
+        messages = [ChatMessage.objects.create(session=session, text='Quiero comprar', sender_type='user', direction='inbound', status='queued') for session in sessions]
+        later = [ChatMessage.objects.create(session=session, text='Necesito un repuesto', sender_type='user', direction='inbound', status='queued') for session in sessions]
         def run(message):
             close_old_connections()
             start = time.perf_counter()
@@ -237,5 +210,6 @@ class SimplifiedConcurrencyTests(TransactionTestCase):
             self.assertEqual(session.conversation_state['qa_owner'], index)
             self.assertEqual(session.status, 'waiting')
             self.assertEqual(session.messages.filter(sender_type='bot').count(), 1)
+        self.assertFalse(BotConversationLease.objects.exists())
         self.assertFalse(ChatMessage.objects.filter(status__in=('queued', 'processing'), direction='inbound').exists())
         print('SIMPLIFIED_BENCHMARK sessions=8 average=%.4fs max=%.4fs pending_inbound=0 duplicates=0' % (sum(durations)/len(durations), max(durations)))

@@ -1,8 +1,11 @@
 """Tareas asíncronas del webhook y del bot omnicanal."""
 
 import ipaddress
+import hashlib
+import mimetypes
 import logging
 import socket
+import time
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -72,6 +75,7 @@ def process_meta_webhook_task(self, event_id):
         integration = message.session.integration
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
+            ChatMessage.objects.filter(pk=message.pk).update(status='queued')
             bot_task = generate_omnichannel_bot_reply.delay(message.id)
             logger.info(
                 'Respuesta bot programada message_id=%s session_id=%s channel=%s task_id=%s.',
@@ -195,11 +199,23 @@ def download_meta_attachment(self, attachment_id):
         if len(content) > maximum:
             raise ValueError('El adjunto supera el tamaño permitido.')
     extension = Path(urlparse(final_url).path).suffix[:12]
-    name = Path(attachment.original_name).name or f'meta-{attachment.id}{extension}'
+    name = Path(attachment.original_name).name or f'meta-{attachment.id}{extension or mimetypes.guess_extension(response_type) or ""}'
     attachment.mime_type = attachment.mime_type or response_type
     attachment.size = len(content)
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from .attachment_validation import validate_chat_upload
+    try:
+        name, attachment.mime_type, _ = validate_chat_upload(
+            SimpleUploadedFile(name, bytes(content), content_type=attachment.mime_type))
+    except ValueError:
+        attachment.metadata = {**attachment.metadata, 'state': 'rejected', 'error': 'Adjunto no verificable o contenido no permitido.'}
+        attachment.save(update_fields=['metadata'])
+        raise
+    attachment.original_name = name
+    attachment.metadata = {**attachment.metadata, 'sha256': hashlib.sha256(content).hexdigest(),
+                           'channel': attachment.message.session.channel, 'state': 'stored'}
     attachment.file.save(name, ContentFile(bytes(content)), save=False)
-    attachment.save(update_fields=['file', 'mime_type', 'size'])
+    attachment.save(update_fields=['file', 'mime_type', 'size', 'metadata', 'original_name'])
     publish_crm_event('attachment.ready', session_id=attachment.message.session_id, message_id=attachment.message_id)
     return {'attachment_id': attachment.id, 'size': attachment.size}
 
@@ -270,8 +286,46 @@ def validate_meta_oauth_connections():
     return {'checked': checked, 'disabled': disabled}
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, max_retries=120, soft_time_limit=110, time_limit=120)
 def generate_omnichannel_bot_reply(self, user_message_id):
+    from .bot_concurrency import conversation_lease, ConversationBusy
+    started = time.monotonic()
+    message = ChatMessage.objects.get(pk=user_message_id)
+    logger.info('Bot stage=dequeue message_id=%s session_id=%s queue_wait_ms=%s', message.pk,
+                message.session_id, round((timezone.now()-message.created_at).total_seconds()*1000))
+    if message.sender_type != 'user' or message.direction != 'inbound':
+        return {'skipped': 'not_a_customer_message'}
+    if hasattr(message, 'bot_reply'):
+        ChatMessage.objects.filter(pk=message.pk).update(status='received', bot_processing_at=None)
+        return {'duplicate': True}
+    try:
+        with conversation_lease(message.session_id):
+            if ChatMessage.objects.filter(
+                session_id=message.session_id, pk__lt=message.pk,
+                sender_type='user', direction='inbound', status__in=['queued', 'processing'],
+                bot_reply__isnull=True,
+            ).exists():
+                raise ConversationBusy()
+            ChatMessage.objects.filter(pk=message.pk).update(status='processing', bot_processing_at=None)
+            publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
+            try:
+                result = _generate_bot_reply(user_message_id)
+            except Exception:
+                ChatMessage.objects.filter(pk=message.pk).update(status='failed', bot_processing_at=None)
+                publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
+                raise
+            ChatMessage.objects.filter(pk=message.pk).update(status='received', bot_processing_at=None)
+            return result
+    except ConversationBusy as exc:
+        if self.request.retries >= self.max_retries:
+            ChatMessage.objects.filter(pk=message.pk).update(status='failed', bot_processing_at=None)
+        raise self.retry(exc=exc, countdown=2)
+    finally:
+        logger.info('Bot stage=complete message_id=%s session_id=%s elapsed_ms=%s',
+                    message.pk, message.session_id, round((time.monotonic() - started) * 1000))
+
+
+def _generate_bot_reply(user_message_id):
     """Genera una sola respuesta reactiva para un mensaje real del cliente."""
 
     logger.info('Iniciando respuesta omnicanal para message_id=%s.', user_message_id)
@@ -304,6 +358,12 @@ def generate_omnichannel_bot_reply(self, user_message_id):
         if session.status != 'bot':
             logger.info('Bot omitido message_id=%s reason=conversation_not_in_bot_mode.', user_message_id)
             return {'skipped': 'conversation_not_in_bot_mode'}
+        if session.channel == 'ecommerce' and (
+            not getattr(settings, 'OLLAMA_ECOMMERCE_ENABLED', True)
+            or (session.integration_id and (not session.integration.active
+                or not session.integration.configuration.get('bot_enabled', False)))
+        ):
+            return {'skipped': 'bot_disabled'}
         if user_message.bot_processing_at and user_message.bot_processing_at > stale_before:
             logger.info('Bot omitido message_id=%s reason=already_processing.', user_message_id)
             return {'skipped': 'already_processing'}
@@ -311,12 +371,9 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             user_message.bot_processing_at = timezone.now()
             user_message.save(update_fields=['bot_processing_at'])
 
-    previous_messages = session.messages.exclude(pk=user_message.pk)
-    if not settings.CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:
-        previous_messages = previous_messages.filter(
-            Q(pk__lt=user_message.pk) | Q(sender_type='bot', reply_to_message_id__lt=user_message.pk),
-        )
-    previous = list(previous_messages.order_by('-created_at')[:12])
+    previous = list(session.messages.filter(
+        Q(pk__lt=user_message.pk) | Q(sender_type='bot', reply_to_message_id__lt=user_message.pk),
+    ).order_by('-pk')[:8])
     is_new_conversation = not previous
     history = [
         {
@@ -330,13 +387,21 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             'Ejecutando Ollama message_id=%s session_id=%s channel=%s history_items=%s.',
             user_message_id, session.id, session.channel, len(history),
         )
+        state = dict(session.conversation_state or {})
+        if session.channel == 'ecommerce':
+            state['greeting_shown'] = True
         result = ollama_service.get_bot_response(
             user_message.text,
             conversation_history=history,
-            conversation_state=session.conversation_state,
+            conversation_state=state,
             summary=session.conversation_summary,
             channel=session.channel,
         )
+        if result.get('error'):
+            ChatMessage.objects.filter(pk=user_message.pk).update(metadata={
+                **user_message.metadata, 'error': 'Asesor virtual no disponible; reintenta o deriva al asesor.',
+            })
+            raise RuntimeError('Ollama unavailable: ' + str(result['error']))
     except Exception:
         logger.exception('Falló Ollama para message_id=%s; no se enviará ni reintentará automáticamente.', user_message_id)
         ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
@@ -349,7 +414,7 @@ def generate_omnichannel_bot_reply(self, user_message_id):
             ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
             return {'skipped': 'conversation_taken_or_replied'}
         reply_text = result.get('response', 'No pude procesar el mensaje.')
-        if is_new_conversation and (session.channel != 'ecommerce' or settings.CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED):
+        if is_new_conversation and session.channel != 'ecommerce':
             reply_text = ollama_service.add_initial_greeting(reply_text)
         next_state = result.get('state', session.conversation_state)
         next_state['last_response'] = reply_text[:2000]
@@ -384,12 +449,48 @@ def generate_omnichannel_bot_reply(self, user_message_id):
 
 
 @shared_task
+def recover_stalled_chat_tasks():
+    """A hard-killed worker cannot strand processing messages indefinitely."""
+    from .models import BotConversationLease
+    cutoff = timezone.now() - timedelta(seconds=180)
+    BotConversationLease.objects.filter(expires_at__lt=timezone.now()).delete()
+    recovered = 0
+    for message in ChatMessage.objects.filter(
+        sender_type='user', direction='inbound', status__in=['processing', 'queued'],
+        created_at__lt=cutoff, bot_reply__isnull=True, session__status='bot',
+    ).order_by('pk')[:100]:
+        if BotConversationLease.objects.filter(session_id=message.session_id, expires_at__gt=timezone.now()).exists():
+            continue
+        count = int(message.metadata.get('recovery_attempts', 0))
+        if count >= 2:
+            ChatMessage.objects.filter(pk=message.pk).update(status='failed', bot_processing_at=None)
+            continue
+        ChatMessage.objects.filter(pk=message.pk).update(status='queued', bot_processing_at=None,
+            metadata={**message.metadata, 'recovery_attempts': count + 1})
+        generate_omnichannel_bot_reply.delay(message.pk)
+        recovered += 1
+    # Sending without confirmation may have reached Meta. Never replay that automatically.
+    for message in ChatMessage.objects.filter(direction='outbound', status='processing', created_at__lt=cutoff):
+        from django.utils.dateparse import parse_datetime
+        started_at = parse_datetime(message.metadata.get('dispatch_started_at', ''))
+        if started_at and started_at > cutoff:
+            continue
+        message.status = 'failed'
+        message.metadata = {**message.metadata, 'delivery_uncertain': message.session.channel != 'whatsapp_web',
+                            'error': 'El envío terminó sin confirmación. Verifica el canal antes de reintentar.'}
+        message.save(update_fields=['status', 'metadata'])
+        publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
+    return {'recovered': recovered}
+
+
+@shared_task
 def close_inactive_bot_sessions():
     """Cierra sesiones Meta localmente; sólo el chat web muestra aviso gratuito."""
     now = timezone.now()
     warned = closed = 0
     candidates = ChatSession.objects.filter(status__in=('bot', 'waiting'), last_bot_message_at__isnull=False)
     for session in candidates.iterator():
+        # A commercial handoff belongs to the advisor; never warn/close it as a bot.
         if (session.conversation_state or {}).get('simple_handoff'):
             continue
         # Una respuesta posterior del cliente cancela cualquier cierre pendiente.

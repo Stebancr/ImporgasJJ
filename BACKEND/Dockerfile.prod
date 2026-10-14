@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY . .
 
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system django \
     && adduser --system --ingroup django --home /app django \
     && mkdir -p /app/media /app/staticfiles \

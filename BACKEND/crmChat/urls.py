@@ -1,7 +1,13 @@
 from django.urls import include, path
 from . import views
+from .quick_replies import QuickReplyView, QuickReplyFileView
 
 urlpatterns = [
+    path('templates/', QuickReplyView.as_view()),
+    path('templates/<int:pk>/', QuickReplyView.as_view()),
+    path('templates/<int:pk>/file/', QuickReplyFileView.as_view()),
+    path('templates/<int:pk>/<str:action>/', QuickReplyView.as_view()),
+    path('sessions/<int:pk>/messages/<int:message_id>/retry/', views.RetryMessageView.as_view()),
     # Endpoints para agentes y usuarios autenticados
     path('sessions/',               views.SessionListCreateView.as_view(), name='crm-session-list'),
     path('sessions/pending-count/', views.PendingCountView.as_view(),      name='crm-pending-count'),

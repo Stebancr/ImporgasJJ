@@ -47,8 +47,9 @@ interface PaginatedResponse {
 // ── Transform API → legacy Product type ────────────────────────────────────
 
 function toProduct(p: ApiProduct): Product {
-  const imageUrls = p.images?.map(i => i.image_url || i.image) ||
-    (p.primary_image ? [p.primary_image] : [])
+  const imageUrls = p.images?.length
+    ? [...p.images].sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || a.order - b.order || a.id - b.id).map(i => i.image_url || i.image)
+    : (p.primary_image ? [p.primary_image] : [])
 
   const specs: Record<string, string> = {}
   p.specifications?.forEach(s => {
