@@ -411,6 +411,7 @@ def _generate_bot_reply(user_message_id):
         user_message = ChatMessage.objects.select_for_update().get(pk=user_message.pk)
         if session.status != 'bot' or hasattr(user_message, 'bot_reply'):
             logger.info('Bot omitido message_id=%s reason=conversation_taken_or_replied.', user_message_id)
+            ChatMessage.objects.filter(pk=user_message.pk).update(bot_processing_at=None)
             return {'skipped': 'conversation_taken_or_replied'}
         reply_text = result.get('response', 'No pude procesar el mensaje.')
         if is_new_conversation and session.channel != 'ecommerce':

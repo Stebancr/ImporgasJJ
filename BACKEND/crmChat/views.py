@@ -519,7 +519,6 @@ class MessageListCreateView(APIView):
 class RetryMessageView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_scope = 'crm_upload'
-    throttle_scope = 'crm_upload'
 
     def post(self, request, pk, message_id):
         if not _is_agent(request.user):

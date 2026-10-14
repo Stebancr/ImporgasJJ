@@ -10,6 +10,8 @@ from django.db import connection, close_old_connections
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from django.urls import reverse
+from rest_framework.test import APIClient
 from ecommerce.models import Location
 from .models import ChatSession, ChatMessage, ChannelIntegration, BotConversationLease
 from .ollama_service import ollama_service
@@ -87,6 +89,32 @@ class SimplifiedResponseTests(TestCase):
 
 @override_settings(CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=False)
 class SimplifiedTaskTests(TestCase):
+    @patch('crmChat.tasks.publish_crm_event')
+    @patch('crmChat.assignment.assign_session_automatically')
+    @patch('crmChat.views.publish_crm_event')
+    @patch('crmChat.tasks.generate_omnichannel_bot_reply.delay')
+    def test_ecommerce_handoff_survives_async_contract(self, enqueue, view_event, assign, task_event):
+        client = APIClient()
+        for text in ('Hola', 'Quiero cotizar'):
+            payload = {'message': text}
+            if text != 'Hola':
+                payload['session_id'] = session_id
+            with self.captureOnCommitCallbacks(execute=True):
+                result = client.post(reverse('bot-chat'), payload, format='json')
+            self.assertEqual(result.status_code, 202)
+            session_id = result.data['session_id']
+            enqueue.assert_called_with(result.data['user_message_id'])
+            generate_omnichannel_bot_reply.run(result.data['user_message_id'])
+        session = ChatSession.objects.get(pk=session_id)
+        self.assertEqual(session.status, 'waiting')
+        self.assertEqual(session.messages.filter(sender_type='bot').count(), 2)
+        self.assertFalse(any(ollama_service.INITIAL_GREETING in text for text in session.messages.filter(sender_type='bot').values_list('text', flat=True)))
+        with self.captureOnCommitCallbacks(execute=True):
+            later = client.post(reverse('bot-chat'), {'message': 'Me interesa ese', 'session_id': session_id}, format='json')
+        self.assertEqual(later.status_code, 202)
+        self.assertEqual(enqueue.call_count, 2)
+        assign.assert_called_once()
+
     def message(self, channel='ecommerce', text='Quiero comprar', **kwargs):
         integration = None
         if channel != 'ecommerce':
