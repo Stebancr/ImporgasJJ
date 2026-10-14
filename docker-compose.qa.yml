@@ -5,7 +5,10 @@ services:
     volumes:
       - ./nginxprod/nginx.conf:/etc/nginx/nginx.conf:ro
     extra_hosts:
-      - frontend:127.0.0.1
+      - imporgas-prod-frontend:127.0.0.1
+      - imporgas-prod-backend:127.0.0.1
+      - imporgas-prod-media:127.0.0.1
+      - imporgas-prod-whatsapp-gateway:127.0.0.1
     networks:
       - shared_net
   chat-ui-test:
