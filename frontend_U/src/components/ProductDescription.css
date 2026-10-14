@@ -1,0 +1,5 @@
+.product-description { min-width: 0; max-width: 75ch; line-height: 1.65; overflow-wrap: anywhere; }
+.product-description p, .product-description ul { margin: 0 0 0.85rem; white-space: pre-wrap; }
+.product-description ul { list-style: disc; padding-left: 1.5rem; }
+.product-description li { padding-left: 0.15rem; margin: 0.25rem 0; }
+.product-description > :last-child { margin-bottom: 0; }

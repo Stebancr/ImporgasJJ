@@ -70,6 +70,11 @@ export const productsService = {
     await api.delete(`/products/${productId}/images/${imageId}`)
   },
 
+  async setPrimaryImage(productId: number, imageId: number): Promise<ProductImage> {
+    const response = await api.patch<ApiResponse<ProductImage>>(`/products/${productId}/images/${imageId}`, { is_primary: true })
+    return response.data.data
+  },
+
   // Product Specs
   async addSpec(productId: number, attributeId: number, value: string): Promise<ProductSpec> {
     const response = await api.post<ApiResponse<ProductSpec>>(`/products/${productId}/specs`, {

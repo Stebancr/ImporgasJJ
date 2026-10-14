@@ -660,9 +660,10 @@ class ProductImageListView(APIView):
         images = ProductImage.objects.filter(product_id=product_id)
         return Response({'data': ProductImageSerializer(images, many=True, context={'request': request}).data})
 
+    @transaction.atomic
     def post(self, request, product_id):
         try:
-            product = Product.objects.get(pk=product_id)
+            product = Product.objects.select_for_update().get(pk=product_id)
         except Product.DoesNotExist:
             return Response({'error': 'Producto no encontrado'}, status=404)
 
@@ -686,7 +687,11 @@ class ProductImageDetailView(APIView):
         except ProductImage.DoesNotExist:
             return None
 
+    @transaction.atomic
     def patch(self, request, product_id, image_id):
+        # Serialize image changes for a product, including concurrent selections.
+        if not Product.objects.select_for_update().filter(pk=product_id).first():
+            return Response({'error': 'Not found'}, status=404)
         obj = self._get(product_id, image_id)
         if not obj:
             return Response({'error': 'Not found'}, status=404)
@@ -696,12 +701,21 @@ class ProductImageDetailView(APIView):
             return Response({'data': ProductImageSerializer(obj, context={'request': request}).data})
         return Response(serializer.errors, status=400)
 
+    @transaction.atomic
     def delete(self, request, product_id, image_id):
+        if not Product.objects.select_for_update().filter(pk=product_id).first():
+            return Response({'error': 'Not found'}, status=404)
         obj = self._get(product_id, image_id)
         if not obj:
             return Response({'error': 'Not found'}, status=404)
         obj.image.delete(save=False)
         obj.delete()
+        remaining = ProductImage.objects.filter(product_id=product_id)
+        if not remaining.filter(is_primary=True).exists():
+            alternative = remaining.order_by('order', 'id').first()
+            if alternative:
+                alternative.is_primary = True
+                alternative.save(update_fields=['is_primary'])
         return Response(status=204)
 
 

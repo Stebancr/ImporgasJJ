@@ -160,6 +160,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
 
 class ProductCreateSerializer(serializers.ModelSerializer):
     """Serializer para crear/editar productos (sin imágenes — se suben aparte)."""
+    description = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
 
     class Meta:
         model = Product

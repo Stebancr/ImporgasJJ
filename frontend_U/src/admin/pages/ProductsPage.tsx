@@ -36,6 +36,7 @@ import { locationsService } from '@/admin/services/admin_locations'
 import api from '@/admin/services/admin_api'
 import { clearProductDraft, productDraftKey, readDraftImages, readProductDraft, saveDraftImages, saveProductDraft } from '@/admin/services/product_draft'
 import type { Product, Brand, Category, ProductSpec, Location } from '@/admin/types'
+import ProductDescription from '@/components/ProductDescription'
 
 interface FormData {
   name: string
@@ -60,6 +61,8 @@ const defaultForm: FormData = {
 }
 
 export default function ProductsPage() {
+  const [imageBusy, setImageBusy] = useState(false)
+  const [imageError, setImageError] = useState('')
   const [products, setProducts] = useState<Product[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -145,6 +148,7 @@ export default function ProductsPage() {
   }
 
   const handleOpenDialog = async (product?: Product) => {
+    setImageError('')
     setDraftReady(false)
     setDraftRestored(false)
     imagePreviews.forEach(URL.revokeObjectURL)
@@ -283,15 +287,28 @@ export default function ProductsPage() {
   }
 
   const handleDeleteExistingImage = async (imageId: number) => {
-    if (!editingProduct) return
+    if (!editingProduct || imageBusy) return
+    setImageBusy(true)
+    setImageError('')
     try {
       await productsService.deleteImage(editingProduct.id, imageId)
-      setEditingProduct(prev =>
-        prev ? { ...prev, images: prev.images?.filter(img => img.id !== imageId) } : null
-      )
+      setEditingProduct(await productsService.getById(editingProduct.id))
     } catch {
-      setError('Error al eliminar la imagen')
-    }
+      setImageError('Error al eliminar o actualizar las imágenes. Vuelve a abrir el producto para comprobar el estado.')
+    } finally { setImageBusy(false) }
+  }
+
+  const handlePrimaryImage = async (imageId: number) => {
+    if (!editingProduct || imageBusy) return
+    setImageBusy(true)
+    setImageError('')
+    try {
+      await productsService.setPrimaryImage(editingProduct.id, imageId)
+      setEditingProduct(prev => prev ? { ...prev, images: prev.images?.map(img => ({ ...img, is_primary: img.id === imageId })) } : null)
+      await fetchProducts()
+    } catch {
+      setImageError('No se pudo cambiar la imagen principal. Inténtalo nuevamente.')
+    } finally { setImageBusy(false) }
   }
 
   const handleDeleteSpec = async (specId: number) => {
@@ -309,6 +326,7 @@ export default function ProductsPage() {
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(price)
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE))
+  const primaryImageId = editingProduct?.images?.find(img => img.is_primary)?.id ?? editingProduct?.images?.[0]?.id
 
   return (
     <div className="space-y-6">
@@ -448,7 +466,7 @@ export default function ProductsPage() {
       </Card>
 
       {/* Product Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!isSaving) setIsDialogOpen(open) }}>
+      <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!isSaving && !imageBusy) setIsDialogOpen(open) }}>
         <DialogContent
           className="max-w-2xl max-h-[90vh] overflow-y-auto"
           aria-describedby={undefined}
@@ -485,7 +503,13 @@ export default function ProductsPage() {
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Descripción del producto..."
                 rows={3}
+                aria-describedby="description-help"
               />
+              <p id="description-help" className="text-xs text-muted-foreground">Escribe cada característica en una línea nueva. Puedes comenzar la línea con * o -.</p>
+              <details className="rounded border p-3 text-sm min-w-0">
+                <summary className="cursor-pointer font-medium">Vista previa de la descripción</summary>
+                <div className="mt-3"><ProductDescription text={formData.description} /></div>
+              </details>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
@@ -662,6 +686,8 @@ export default function ProductsPage() {
 
             {/* Image upload */}
             <div className="grid gap-2">
+              {imageError && <p role="alert" className="text-sm text-destructive">{imageError}</p>}
+              {editingProduct && <p className="text-xs text-muted-foreground">Los cambios de imágenes se guardan inmediatamente.</p>}
               <Label>Imágenes del producto</Label>              <div
                 className="border-2 border-dashed rounded-lg p-4 cursor-pointer hover:bg-muted/30 transition-colors"
                 onClick={() => fileInputRef.current?.click()}
@@ -689,7 +715,7 @@ export default function ProductsPage() {
                         alt={`Preview ${index + 1}`}
                         className="h-20 w-20 object-cover rounded border"
                       />
-                      {index === 0 && (
+                      {index === 0 && !editingProduct?.images?.length && (
                         <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-xs text-center py-0.5 rounded-b">
                           Principal
                         </span>
@@ -710,22 +736,21 @@ export default function ProductsPage() {
                   <p className="text-xs text-muted-foreground mb-1">Imágenes actuales:</p>
                   <div className="flex flex-wrap gap-2">
                     {editingProduct.images.map((img) => (
-                      <div key={img.id} className="relative">
+                      <div key={img.id} className="relative w-28">
+                        <button type="button" disabled={imageBusy || isSaving} onClick={() => handlePrimaryImage(img.id)} aria-pressed={img.id === primaryImageId} aria-label={`Establecer como principal: imagen ${img.id}`} className="w-full rounded focus-visible:ring-2 focus-visible:ring-primary">
                         <img
                           src={img.image_url || img.image}
                           alt={img.alt_text || 'imagen'}
-                          className={`h-16 w-16 object-cover rounded border-2 ${img.is_primary ? 'border-primary' : 'border-muted'}`}
+                          className={`h-24 w-full object-contain rounded border-2 ${img.id === primaryImageId ? 'border-primary' : 'border-muted'}`}
                         />
-                        {img.is_primary && (
-                          <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-xs text-center py-0.5 rounded-b">
-                            Principal
-                          </span>
-                        )}
+                        <span className="block text-xs py-1">{img.id === primaryImageId ? 'Principal' : 'Establecer como principal'}</span>
+                        </button>
                         <button
                           type="button"
+                          disabled={imageBusy || isSaving}
                           onClick={() => handleDeleteExistingImage(img.id)}
                           className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
-                         aria-label="Cerrar">
+                         aria-label={`Eliminar imagen ${img.id}`}>
                           <X className="h-3 w-3" />
                         </button>
                       </div>
@@ -757,10 +782,10 @@ export default function ProductsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving || imageBusy}>
               Cancelar
             </Button>
-            <Button onClick={handleSave} disabled={isSaving}>
+            <Button onClick={handleSave} disabled={isSaving || imageBusy}>
               {isSaving ? 'Guardando...' : editingProduct ? 'Guardar cambios' : 'Crear producto'}
             </Button>
           </DialogFooter>

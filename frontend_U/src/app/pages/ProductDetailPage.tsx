@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ShoppingCart, Heart, Share2, Truck, Shield, Star, ChevronLeft, ChevronRight, Minus, Plus, Check } from 'lucide-react'
+import { ShoppingCart, Heart, Share2, Star, ChevronLeft, ChevronRight, Minus, Plus, Check } from 'lucide-react'
+import ProductDescription from '../../components/ProductDescription'
 import ProductCard from '../../components/ProductCard'
 import ProductReviews from '../../components/ProductReviews'
 import { Product } from '../../types'
@@ -74,6 +75,7 @@ function ProductDetailPage() {
     productsService.getById(id)
       .then(p => {
         setProduct(p)
+        setSelectedImage(0)
         return productsService.getRelated(id)
       })
       .then(related => setRelatedProducts(related.slice(0, 4)))
@@ -157,7 +159,7 @@ function ProductDetailPage() {
         </nav>
 
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="grid lg:grid-cols-2 gap-8 p-4 sm:p-6 lg:p-8">
+          <div className="product-detail-layout p-4 sm:p-6 lg:p-8">
             {/* Image Gallery */}
             <div>
               <div className="relative aspect-square bg-gray-100 rounded-xl overflow-hidden mb-4">
@@ -189,6 +191,8 @@ function ProductDetailPage() {
                   <button
                     key={index}
                     onClick={() => setSelectedImage(index)}
+                    aria-label={`Ver imagen ${index + 1}${index === 0 ? ' (principal)' : ''}`}
+                    aria-pressed={selectedImage === index}
                     className={`flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${
                       selectedImage === index ? 'border-blue-600' : 'border-transparent'
                     }`}
@@ -297,23 +301,6 @@ function ProductDetailPage() {
                 </button>
               </div>
 
-              {/* Benefits */}
-              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <Truck className="w-6 h-6 text-blue-600" />
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">Envío Gratis</p>
-                    <p className="text-xs text-gray-500">En compras +$500.000</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Shield className="w-6 h-6 text-green-600" />
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">Garantía</p>
-                    <p className="text-xs text-gray-500">5 años de garantía</p>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -339,8 +326,8 @@ function ProductDetailPage() {
 
             <div className="p-6 lg:p-8">
               {activeTab === 'description' && (
-                <div className="prose max-w-none">
-                  <p className="text-gray-600 leading-relaxed">{product.description || 'Sin descripción disponible.'}</p>
+                <div className="text-gray-600">
+                  <ProductDescription text={product.description} />
                 </div>
               )}
 
