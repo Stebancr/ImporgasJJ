@@ -55,6 +55,15 @@ export interface SessionFilters {
   channel?: string
   search?: string
   unanswered?: boolean
+  priority?: string
+  queue?: number
+}
+
+export interface SessionCounts { total: number; count: number; unread: number }
+
+function sessionParams(filters: SessionFilters) {
+  return Object.fromEntries(Object.entries(filters).filter(([, value]) =>
+    value !== undefined && value !== '' && value !== 'all' && value !== false))
 }
 
 export interface AssignmentQueue {
@@ -172,25 +181,23 @@ export interface MessagesResponse {
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 export const adminChatService = {
-  getSessions: async (filters: SessionFilters = {}): Promise<ChatSession[]> => {
-    const params = {
-      ...(filters.status && filters.status !== 'all' ? { status: filters.status } : {}),
-      ...(filters.channel && filters.channel !== 'all' ? { channel: filters.channel } : {}),
-      ...(filters.search ? { search: filters.search } : {}),
-      ...(filters.unanswered ? { unanswered: 'true' } : {}),
-    }
-    const res = await api.get('/crm-chat/sessions/', { params })
+  getSessions: async (filters: SessionFilters = {}, signal?: AbortSignal): Promise<ChatSession[]> => {
+    const res = await api.get('/crm-chat/sessions/', { params: sessionParams(filters), signal })
     return res.data
   },
 
-  getPendingCount: async (): Promise<number> => {
-    const res = await api.get('/crm-chat/sessions/pending-count/')
+  getPendingCount: async (filters: SessionFilters = {}, signal?: AbortSignal): Promise<number> => {
+    const res = await api.get('/crm-chat/sessions/pending-count/', { params: sessionParams(filters), signal })
     return res.data.count ?? 0
   },
 
-  getMessages: async (sessionId: number, afterId?: number): Promise<MessagesResponse> => {
+  getSessionCounts: async (filters: SessionFilters, signal?: AbortSignal): Promise<SessionCounts> => {
+    return (await api.get('/crm-chat/sessions/pending-count/', { params: sessionParams(filters), signal })).data
+  },
+
+  getMessages: async (sessionId: number, afterId?: number, signal?: AbortSignal): Promise<MessagesResponse> => {
     const params = afterId != null ? { after: afterId } : {}
-    const res = await api.get(`/crm-chat/sessions/${sessionId}/messages/`, { params })
+    const res = await api.get(`/crm-chat/sessions/${sessionId}/messages/`, { params, signal })
     return res.data
   },
 

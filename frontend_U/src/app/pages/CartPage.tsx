@@ -3,10 +3,18 @@ import { Link } from 'react-router-dom'
 import { Trash2, Minus, Plus, ShoppingBag, ArrowRight, ShieldCheck, Truck, Tag } from 'lucide-react'
 import { useState } from 'react'
 import { useCart } from '../../context/CartContext'
+import ShippingCalculator from '../../components/ShippingCalculator'
+import { useShippingConfig } from '../../hooks/useShippingConfig'
+import type { ShippingCalculation } from '../../services/shipping'
 
 function CartPage() {
   const { items: cartItems, removeFromCart, updateQuantity } = useCart()
   const [couponCode, setCouponCode] = useState('')
+  const {enabled:tccEnabled,error:configError}=useShippingConfig()
+  const [calculation,setCalculation]=useState<{key:string;value:ShippingCalculation}|null>(null)
+  const items=cartItems.map(item=>({product_id:Number(item.product.id),quantity:item.quantity}))
+  const cartKey=JSON.stringify(items)
+  const activeCalculation=calculation?.key===cartKey&&Date.parse(calculation.value.expires_at)>Date.now()?calculation.value:null
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('es-CO', {
@@ -17,8 +25,8 @@ function CartPage() {
   }
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
-  const shipping = subtotal >= 500000 ? 0 : 25000
-  const total = subtotal + shipping
+  const shipping = tccEnabled===false?(subtotal>=500000?0:25000):(activeCalculation?Number(activeCalculation.total):null)
+  const total = activeCalculation?Number(activeCalculation.order_total):(shipping===null?null:subtotal+shipping)
 
   if (cartItems.length === 0) {
     return (
@@ -107,8 +115,9 @@ function CartPage() {
                         <span className="w-12 text-center font-semibold text-[#1A1D21]">{item.quantity}</span>
                         <button
                           onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                          aria-label="Aumentar cantidad"
                           className="w-10 h-10 flex items-center justify-center hover:bg-white rounded-lg transition-colors"
-                         aria-label="Agregar">
+                        >
                           <Plus className="w-4 h-4 text-[#4B5563]" />
                         </button>
                       </div>
@@ -180,20 +189,22 @@ function CartPage() {
                 </div>
               </div>
 
+              {tccEnabled&&<ShippingCalculator cart items={items} onQuote={value=>setCalculation(value?{key:cartKey,value}:null)}/>}
+              {configError&&<p role="alert" className="text-sm text-red-700">{configError}</p>}
               <div className="space-y-4 mb-6">
                 <div className="flex justify-between">
                   <span className="text-[#6B7280]">Subtotal ({cartItems.length} productos)</span>
                   <span className="font-medium text-[#1A1D21]">{formatPrice(subtotal)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#6B7280]">Envio</span>
+                  <span className="text-[#6B7280]">{tccEnabled?'Envío TCC':'Envío'}</span>
                   {shipping === 0 ? (
                     <span className="font-medium text-[#059669]">Gratis</span>
                   ) : (
-                    <span className="font-medium text-[#1A1D21]">{formatPrice(shipping)}</span>
+                    <span className="font-medium text-[#1A1D21]">{shipping===null?'Por cotizar':formatPrice(shipping)}</span>
                   )}
                 </div>
-                {shipping > 0 && (
+                {tccEnabled===false && shipping!==null && shipping > 0 && (
                   <div className="flex items-center gap-2 p-3 bg-[#e8ecff] rounded-xl">
                     <Truck className="w-5 h-5 text-[#001575]" />
                     <p className="text-sm text-[#001575]">
@@ -201,10 +212,12 @@ function CartPage() {
                     </p>
                   </div>
                 )}
+                <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeCalculation?.discounts||0))}</span></div>
+                <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(Number(activeCalculation?.taxes||0))}</span></div>
                 <div className="border-t border-[#E5E7EB] pt-4">
                   <div className="flex justify-between items-center">
                     <span className="text-lg font-semibold text-[#1A1D21]">Total</span>
-                    <span className="text-2xl font-bold text-[#1A1D21]">{formatPrice(total)}</span>
+                    <span className="text-2xl font-bold text-[#1A1D21]">{total===null?'Pendiente de envío':formatPrice(total)}</span>
                   </div>
                 </div>
               </div>

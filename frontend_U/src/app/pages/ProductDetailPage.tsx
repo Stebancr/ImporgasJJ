@@ -4,6 +4,8 @@ import { ShoppingCart, Heart, Share2, Star, ChevronLeft, ChevronRight, Minus, Pl
 import ProductDescription from '../../components/ProductDescription'
 import ProductCard from '../../components/ProductCard'
 import ProductReviews from '../../components/ProductReviews'
+import ShippingCalculator from '../../components/ShippingCalculator'
+import { useShippingConfig } from '../../hooks/useShippingConfig'
 import { Product } from '../../types'
 import { productsService } from '../../services/products'
 import { useAuth } from '../../context/AuthContext'
@@ -31,6 +33,7 @@ function ProductDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
+  const shippingConfig = useShippingConfig()
   const { addToCart } = useCart()
   const { isFavorite, addToFavorites, removeByProduct } = useFavorites()
   const [selectedImage, setSelectedImage] = useState(0)
@@ -303,6 +306,9 @@ function ProductDetailPage() {
 
             </div>
           </div>
+
+          {shippingConfig.enabled && <ShippingCalculator items={[{product_id:Number(product.id),quantity}]}/>}
+          {shippingConfig.error && <p role="alert" className="p-4 text-sm text-red-700">{shippingConfig.error}</p>}
 
           {/* Tabs */}
           <div className="border-t">

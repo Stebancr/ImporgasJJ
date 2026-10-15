@@ -172,6 +172,13 @@ class Product(models.Model):
         verbose_name_plural = 'Productos'
 
     @property
+    def shipping_ready(self):
+        profile = getattr(self, 'shipping_profile', None)
+        return bool(profile and (not profile.requires_shipping or (
+            1 <= profile.packages_per_unit <= 100 and all(getattr(profile, field) is not None and getattr(profile, field) > 0
+                for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')))))
+
+    @property
     def discount_percentage(self):
         if self.original_price and self.original_price > self.price:
             return round((1 - self.price / self.original_price) * 100)
@@ -402,6 +409,9 @@ class Order(models.Model):
     # ── Contabilidad ──────────────────────────────────────────────────────────
     subtotal      = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Subtotal")
     shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Costo de envío")
+    discounts     = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Descuentos adicionales")
+    taxes         = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Impuestos adicionales")
+    paid_total    = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, verbose_name="Total pagado confirmado")
     total         = models.DecimalField(max_digits=14, decimal_places=2, verbose_name="Total")
 
     # ── Pago ──────────────────────────────────────────────────────────────────
@@ -473,6 +483,8 @@ class WompiPaymentIntent(models.Model):
     checkout_data = models.JSONField(default=dict)
     subtotal = models.DecimalField(max_digits=14, decimal_places=2)
     shipping_cost = models.DecimalField(max_digits=10, decimal_places=2)
+    discounts = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    taxes = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3, default='COP')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
@@ -547,6 +559,10 @@ class TrackingEvent(models.Model):
 # ─────────────────────────────────────────────
 
 class UserAddress(models.Model):
+    tcc_city_code = models.CharField(max_length=8, blank=True, default='')
+    complement = models.CharField(max_length=200, blank=True, default='')
+    neighborhood = models.CharField(max_length=100, blank=True, default='')
+    delivery_instructions = models.CharField(max_length=300, blank=True, default='')
     user           = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

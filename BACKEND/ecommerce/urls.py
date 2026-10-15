@@ -1,7 +1,8 @@
-from django.urls import path
+from django.urls import path, include
 from . import views
 
 urlpatterns = [
+    path('shipping/', include('shipping.urls')),
     path('cart', views.CartView.as_view(), name='cart'),
     path('cart/<int:product_id>', views.CartItemView.as_view(), name='cart-item'),
     # ── Brands ────────────────────────────────────────────────────────────────

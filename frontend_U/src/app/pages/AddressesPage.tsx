@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { MapPin, Plus, Edit, Trash2, Check } from 'lucide-react'
 import addressesService, { UserAddress, CreateAddressPayload } from '../../services/addresses'
+import TCCAddressFields from '../../components/TCCAddressFields'
+import { shippingService } from '../../services/shipping'
 
 const departments = [
   'Amazonas', 'Antioquia', 'Arauca', 'Atlántico', 'Bogotá D.C.', 'Bolívar', 'Boyacá',
@@ -11,6 +13,8 @@ const departments = [
 ]
 
 export default function AddressesPage() {
+  const [tccEnabled,setTccEnabled]=useState(false)
+  useEffect(()=>{shippingService.config().then(config=>setTccEnabled(config.enabled)).catch(()=>{})},[])
   const [addresses, setAddresses] = useState<UserAddress[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -83,6 +87,10 @@ export default function AddressesPage() {
       department: address.department,
       postal_code: address.postal_code,
       is_default: address.is_default,
+      tcc_city_code: address.tcc_city_code || '',
+      complement: address.complement || '',
+      neighborhood: address.neighborhood || '',
+      delivery_instructions: address.delivery_instructions || '',
     })
     setEditingId(address.id)
     setShowForm(true)
@@ -205,6 +213,7 @@ export default function AddressesPage() {
                   </label>
                   <input
                     id="address-city"
+                    readOnly={tccEnabled || !!form.tcc_city_code}
                     type="text"
                     required
                     value={form.city}
@@ -218,12 +227,14 @@ export default function AddressesPage() {
                   </label>
                   <select
                     id="address-department"
+                    disabled={tccEnabled || !!form.tcc_city_code}
                     required
                     value={form.department}
                     onChange={(e) => setForm({ ...form, department: e.target.value })}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#001575] focus:border-transparent"
                   >
                     <option value="">Seleccionar...</option>
+                    {form.tcc_city_code&&<option value={form.department}>{form.department}</option>}
                     {departments.map((dept) => (
                       <option key={dept} value={dept}>
                         {dept}
@@ -245,6 +256,7 @@ export default function AddressesPage() {
                 </div>
               </div>
 
+              {(tccEnabled || form.tcc_city_code) && <TCCAddressFields value={{tcc_city_code:form.tcc_city_code||'',complement:form.complement||'',neighborhood:form.neighborhood||'',delivery_instructions:form.delivery_instructions||''}} onChange={patch=>setForm({...form,...patch})}/>}
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"

@@ -7,14 +7,14 @@ export interface CRMRealtimeEvent {
   message_id?: number
 }
 
-export function useCRMWebSocket(onEvent: (event: CRMRealtimeEvent) => void) {
+export function useCRMWebSocket(onEvent: (event: CRMRealtimeEvent) => void, onConnected?: () => void) {
   const callback = useRef(onEvent)
+  const connectedCallback = useRef(onConnected)
   const [connected, setConnected] = useState(false)
   callback.current = onEvent
+  connectedCallback.current = onConnected
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) return
     let socket: WebSocket | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let stopped = false
@@ -22,13 +22,17 @@ export function useCRMWebSocket(onEvent: (event: CRMRealtimeEvent) => void) {
 
     const connect = () => {
       if (stopped) return
+      const token = localStorage.getItem('token')
+      if (!token) return
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(`${protocol}//${window.location.host}/ws/crm-chat/`, ['crm-chat', `jwt.${token}`])
       socket.onopen = () => {
         attempts = 0
         setConnected(true)
+        connectedCallback.current?.()
       }
       socket.onmessage = (message) => {
+        if (stopped) return
         try { callback.current(JSON.parse(message.data) as CRMRealtimeEvent) } catch { /* payload ajeno */ }
       }
       socket.onclose = () => {

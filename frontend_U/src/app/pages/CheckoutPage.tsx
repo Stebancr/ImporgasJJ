@@ -7,13 +7,16 @@ import { useAuth } from '../../context/AuthContext'
 import ordersService from '../../services/orders'
 import { getWompiOptions, loadWompiWidget } from '../../services/wompiCheckout'
 import addressesService, { UserAddress } from '../../services/addresses'
+import { shippingService, type ShippingQuote, type TCCAddress } from '../../services/shipping'
+import TCCAddressFields from '../../components/TCCAddressFields'
+import { shippingDestinationKey } from '../../services/shipping'
 
 // La llave pública puede incluirse en el bundle; los secretos permanecen sólo
 // en Django. El backend también devuelve esta llave con la intención de pago.
 const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? ''
 const CASH_ON_DELIVERY_ENABLED = false
 
-interface CheckoutForm {
+interface CheckoutForm extends TCCAddress {
   email: string
   name: string
   phone: string
@@ -33,7 +36,13 @@ function CheckoutPage() {
   const paymentLock = useRef(false)
   const [addresses, setAddresses] = useState<UserAddress[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
+  const [tccEnabled,setTccEnabled]=useState<boolean|null>(null)
+  const [shippingError,setShippingError]=useState('')
+  const [quoting,setQuoting]=useState(false)
+  const [quoted,setQuoted]=useState<{key:string;value:ShippingQuote}|null>(null)
+  const [quoteVersion,setQuoteVersion]=useState(0)
   const [form, setForm] = useState<CheckoutForm>({
+    tcc_city_code:'',complement:'',neighborhood:'',delivery_instructions:'',
     email: '',
     name: '',
     phone: '',
@@ -43,6 +52,32 @@ function CheckoutPage() {
     postalCode: '',
     paymentMethod: 'wompi',
   })
+  useEffect(()=>{shippingService.config().then(config=>setTccEnabled(config.enabled)).catch(()=>setShippingError('No fue posible verificar el transporte. Actualiza la página antes de pagar.'))},[])
+  const quoteKey=JSON.stringify({items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),form,address_id:selectedAddressId})
+  const activeQuote=quoted?.key===quoteKey && Date.parse(quoted.value.expires_at)>Date.now()?quoted.value:null
+  useEffect(()=>{
+    let active=true
+    setQuoted(null)
+    if(tccEnabled!==true)return
+    setShippingError('')
+    if(!form.email||!form.name||!form.phone||!form.address||!form.tcc_city_code){setQuoting(false);return}
+    setQuoting(true)
+    const timer=setTimeout(()=>{
+      shippingService.quote({force:quoteVersion>0,items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),
+        address_id:selectedAddressId,customer_name:form.name,customer_email:form.email,customer_phone:form.phone,
+        shipping_address:form.address,city:form.city,department:form.department,postal_code:form.postalCode,
+        tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions})
+        .then(value=>{if(active)setQuoted({key:quoteKey,value})})
+        .catch((e:unknown)=>{if(active)setShippingError(e instanceof Error?e.message:'No fue posible cotizar el transporte.')})
+        .finally(()=>{if(active)setQuoting(false)})
+    },500)
+    return()=>{active=false;clearTimeout(timer)}
+  },[quoteKey,tccEnabled,quoteVersion])
+  useEffect(()=>{
+    if(!quoted)return
+    const timer=setTimeout(()=>setQuoteVersion(value=>value+1),Math.max(0,Date.parse(quoted.value.expires_at)-Date.now()))
+    return()=>clearTimeout(timer)
+  },[quoted])
 
   // Load user data and addresses if authenticated
   useEffect(() => {
@@ -64,12 +99,28 @@ function CheckoutPage() {
       const data = await addressesService.getAll()
       setAddresses(data)
       // Auto-select default address
-      const defaultAddr = data.find((addr) => addr.is_default)
+      let defaultAddr = data.find((addr) => addr.is_default)
+      try {
+        const draft = user?.id ? JSON.parse(sessionStorage.getItem(shippingDestinationKey(user.id)) || 'null') : null
+        if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
+          if (draft.address_id) defaultAddr = data.find(addr => addr.id === draft.address_id) || defaultAddr
+          else if (typeof draft.tcc_city_code === 'string') {
+            const text = (key:string) => typeof draft[key] === 'string' ? draft[key] : ''
+            setSelectedAddressId(null)
+            setForm(previous => ({...previous, name:text('customer_name')||previous.name, phone:text('customer_phone')||previous.phone,
+              address:text('shipping_address'), city:text('city'), department:text('department'), postalCode:text('postal_code'),
+              tcc_city_code:text('tcc_city_code'), complement:text('complement'), neighborhood:text('neighborhood'),
+              delivery_instructions:text('delivery_instructions')}))
+            return
+          }
+        }
+      } catch { /* Invalid or unavailable browser storage never replaces a saved address. */ }
       if (defaultAddr) {
         setSelectedAddressId(defaultAddr.id)
         setForm(prev => ({ ...prev, name: defaultAddr.recipient_name, phone: defaultAddr.phone,
           address: defaultAddr.address, city: defaultAddr.city, department: defaultAddr.department,
           postalCode: defaultAddr.postal_code || '' }))
+        setForm(prev=>({...prev,tcc_city_code:defaultAddr.tcc_city_code||'',complement:defaultAddr.complement||'',neighborhood:defaultAddr.neighborhood||'',delivery_instructions:defaultAddr.delivery_instructions||''}))
       }
     } catch (error) {
       console.error('Error loading addresses:', error)
@@ -88,6 +139,7 @@ function CheckoutPage() {
         city: addr.city,
         department: addr.department,
         postalCode: addr.postal_code || '',
+        tcc_city_code:addr.tcc_city_code||'',complement:addr.complement||'',neighborhood:addr.neighborhood||'',delivery_instructions:addr.delivery_instructions||'',
       }))
     }
   }
@@ -96,14 +148,14 @@ function CheckoutPage() {
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
     [items]
   )
-  const shipping = subtotal >= 500000 ? 0 : 25000
-  const total = subtotal + shipping
+  const shipping = tccEnabled ? (activeQuote?Number(activeQuote.total):null) : (subtotal >= 500000 ? 0 : 25000)
+  const total = activeQuote?Number(activeQuote.order_total):subtotal+(shipping??0)
 
 
   // Unique reference per session
   const reference = useMemo(
     () => `GS-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-    []
+    [activeQuote?.id]
   )
 
   const formatPrice = (price: number) =>
@@ -114,11 +166,15 @@ function CheckoutPage() {
     }).format(price)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    if(!['email','paymentMethod'].includes(e.target.name))setSelectedAddressId(null)
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
   const handleSubmitInfo = (e: React.FormEvent) => {
     e.preventDefault()
+    if(tccEnabled===null || (tccEnabled && !activeQuote)){
+      setShippingError('Completa la dirección y espera una cotización vigente antes de pagar.');return
+    }
     if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
       alert('El carrito contiene una cantidad inválida. Regresa al carrito y vuelve a agregar el producto.')
       return
@@ -133,6 +189,8 @@ function CheckoutPage() {
     setSubmitting(true)
     try {
       const order = await ordersService.create({
+        shipping_quote_id:activeQuote?.id,address_id:selectedAddressId,
+        tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions,
         customer_name: form.name,
         customer_email: form.email,
         customer_phone: form.phone,
@@ -157,11 +215,14 @@ function CheckoutPage() {
   }
 
   const handleWompiConfirm = async () => {
+    if(tccEnabled===null || (tccEnabled && !activeQuote)){setShippingError('Actualiza la cotización antes de pagar.');return null}
     if (paymentLock.current) return
     paymentLock.current = true
     setSubmitting(true)
     try {
       const paymentIntent = await ordersService.createWompiIntent({
+        shipping_quote_id:activeQuote?.id,address_id:selectedAddressId,
+        tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions,
         customer_name: form.name,
         customer_email: form.email,
         customer_phone: form.phone,
@@ -194,6 +255,7 @@ function CheckoutPage() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
       alert(message)
+      if(tccEnabled)setQuoteVersion(value=>value+1)
       setSubmitting(false)
       paymentLock.current = false
       return null
@@ -362,12 +424,14 @@ function CheckoutPage() {
                       placeholder="Calle 123 #45-67, Apto 101" />
                   </div>
 
+                  {tccEnabled && <TCCAddressFields value={form} onChange={patch=>{setSelectedAddressId(null);setForm(prev=>({...prev,...patch}))}}/>}
                   <div className="grid md:grid-cols-3 gap-4">
                     <div>
                       <label htmlFor="checkout-city" className="block text-sm font-medium text-gray-700 mb-1">Ciudad</label>
                       <input
                         type="text"
                         name="city" id="checkout-city" autoComplete="address-level2"
+                        readOnly={!!tccEnabled}
                         value={form.city}
                         onChange={handleInputChange}
                         required
@@ -378,12 +442,14 @@ function CheckoutPage() {
                       <label htmlFor="checkout-department" className="block text-sm font-medium text-gray-700 mb-1">Departamento</label>
                       <select
                         name="department" id="checkout-department" autoComplete="address-level1"
+                        disabled={!!tccEnabled}
                         value={form.department}
                         onChange={handleInputChange}
                         required
                         className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">Seleccionar</option>
+                        {tccEnabled && form.department && <option value={form.department}>{form.department}</option>}
                         {departments.map((dept) => (
                           <option key={dept} value={dept}>{dept}</option>
                         ))}
@@ -404,6 +470,7 @@ function CheckoutPage() {
 
                 <button
                   type="submit"
+                  disabled={tccEnabled===null || (tccEnabled && (!activeQuote||quoting))}
                   className="w-full mt-6 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
                 >
                   Continuar al Pago
@@ -487,7 +554,7 @@ function CheckoutPage() {
                     <button
                       type="button"
                       onClick={handleCashConfirm as unknown as React.MouseEventHandler}
-                      disabled={submitting}
+                      disabled={submitting||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
                       className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60"
                     >
                       {submitting ? 'Procesando...' : 'Confirmar Pedido'}
@@ -496,7 +563,7 @@ function CheckoutPage() {
                     <button
                       type="button"
                       onClick={handleWompiConfirm}
-                      disabled={submitting}
+                      disabled={submitting||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
                       className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition-all disabled:opacity-60 flex items-center justify-center gap-2"
                     >
                       {submitting ? (
@@ -548,26 +615,35 @@ function CheckoutPage() {
                   <span className="text-gray-600">Subtotal</span>
                   <span className="font-medium">{formatPrice(subtotal)}</span>
                 </div>
+                <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeQuote?.discounts||0))}</span></div>
+                <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(Number(activeQuote?.taxes||0))}</span></div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Envío</span>
                   {shipping === 0 ? (
                     <span className="text-green-600 font-medium">Gratis</span>
                   ) : (
-                    <span className="font-medium">{formatPrice(shipping)}</span>
+                    <span className="font-medium">{shipping===null?'Pendiente de cotización':formatPrice(shipping)}</span>
                   )}
                 </div>
                 <div className="border-t pt-3">
                   <div className="flex justify-between">
                     <span className="text-lg font-semibold text-gray-900">Total</span>
-                    <span className="text-lg font-bold text-gray-900">{formatPrice(total)}</span>
+                    <span className="text-lg font-bold text-gray-900">{tccEnabled&&!activeQuote?'Pendiente de cotización':formatPrice(total)}</span>
                   </div>
                 </div>
               </div>
 
+              {tccEnabled && <div className="mt-4 space-y-2 text-sm" aria-live="polite">
+                {quoting&&<p>Cotizando transporte con TCC…</p>}
+                {activeQuote&&<><p>Tarifa TCC: {formatPrice(Number(activeQuote.tcc_rate))}</p><p>Recargo y manipulación: {formatPrice(Number(activeQuote.surcharge))}</p><p>{activeQuote.package_count} paquetes · Cotización válida hasta {new Date(activeQuote.expires_at).toLocaleTimeString('es-CO')}</p></>}
+                <button type="button" className="text-blue-700 underline" disabled={quoting} onClick={()=>setQuoteVersion(value=>value+1)}>Volver a cotizar</button>
+              </div>}
+              {shippingError&&<p role="alert" className="mt-3 text-sm text-red-700">{shippingError}</p>}
+
               <div className="mt-6 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Truck className="w-4 h-4 text-blue-600" />
-                  <span>Envío gratis en compras +$500.000</span>
+                  <span>{tccEnabled?'Transporte cotizado con TCC antes del pago':'Envío gratis en compras +$500.000'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Shield className="w-4 h-4 text-green-600" />

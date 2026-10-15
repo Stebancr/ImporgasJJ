@@ -23,6 +23,7 @@ export interface BackendTrackingEvent {
 }
 
 export interface BackendOrder {
+  shipment?: import('./shipping').ShipmentInfo | null
   id: number
   order_number: string
   tracking_code: string
@@ -36,6 +37,9 @@ export interface BackendOrder {
   postal_code: string
   subtotal: string
   shipping_cost: string
+  taxes?: string
+  discounts?: string
+  paid_total?: string | null
   total: string
   payment_method: 'wompi' | 'cash'
   wompi_reference: string
@@ -58,6 +62,12 @@ export interface WompiCheckoutIntent {
 }
 
 export interface CreateOrderPayload {
+  shipping_quote_id?: string
+  address_id?: number | null
+  tcc_city_code?: string
+  complement?: string
+  neighborhood?: string
+  delivery_instructions?: string
   customer_name: string
   customer_email: string
   customer_phone?: string

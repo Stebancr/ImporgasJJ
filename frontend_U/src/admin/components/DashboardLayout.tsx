@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom'
 import { useAuth } from '@/admin/context/AuthContext'
 import { adminChatService } from '@/admin/services/admin_chat'
+import { useInboxFilters } from '@/admin/hooks/useInboxFilters'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
@@ -71,6 +72,7 @@ export default function DashboardLayout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
   const [pendingChats, setPendingChats] = useState(0)
+  const [inboxFilters] = useInboxFilters(user?.id)
   const [desktopCollapsed, setDesktopCollapsed] = useState(() =>
     typeof window !== 'undefined' && window.localStorage.getItem('admin-sidebar-collapsed') === 'true'
   )
@@ -80,11 +82,12 @@ export default function DashboardLayout() {
   // Poll for pending chat sessions every 5 s
   useEffect(() => {
     if (!user || user.role !== 'admin') return
-    const fetchCount = () => adminChatService.getPendingCount().then(setPendingChats).catch(() => {})
+    const controller = new AbortController()
+    const fetchCount = () => adminChatService.getPendingCount(location.pathname === '/admin/chat' ? inboxFilters : {}, controller.signal).then(value => { if (!controller.signal.aborted) setPendingChats(value) }).catch(() => {})
     fetchCount()
     const id = setInterval(fetchCount, 5000)
-    return () => clearInterval(id)
-  }, [user])
+    return () => { controller.abort(); clearInterval(id) }
+  }, [user, inboxFilters, location.pathname])
 
   // Auto-open groups whose children match the current path
   useEffect(() => {

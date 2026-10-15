@@ -126,9 +126,10 @@ class SimplifiedTaskTests(TestCase):
     @patch('crmChat.tasks.publish_crm_event')
     @patch('crmChat.assignment.assign_session_automatically')
     def test_all_channels_transfer_once_and_keep_customer_message(self, assign, event, send):
-        for channel in ('ecommerce', 'facebook', 'instagram', 'whatsapp_web'):
+        for channel in ('ecommerce', 'facebook', 'instagram', 'whatsapp_web', 'whatsapp'):
             inbound = self.message(channel)
-            result = generate_omnichannel_bot_reply.run(inbound.pk)
+            with self.captureOnCommitCallbacks(execute=True):
+                result = generate_omnichannel_bot_reply.run(inbound.pk)
             reply = ChatMessage.objects.get(pk=result['message_id'])
             inbound.session.refresh_from_db()
             self.assertEqual(inbound.session.status, 'waiting')
@@ -137,10 +138,24 @@ class SimplifiedTaskTests(TestCase):
             self.assertEqual(generate_omnichannel_bot_reply.run(inbound.pk), {'duplicate': True})
             later = ChatMessage.objects.create(session=inbound.session, text='¿Me atienden?', direction='inbound', sender_type='user', status='queued', external_message_id='later-'+channel)
             self.assertIn('skipped', generate_omnichannel_bot_reply.run(later.pk))
-        self.assertEqual(send.call_count, 4)
-        self.assertEqual(assign.call_count, 4)
-        self.assertEqual(sum(call.args[0] == 'session.pending' for call in event.call_args_list), 4)
+        self.assertEqual(send.call_count, 5)
+        self.assertEqual(assign.call_count, 5)
+        self.assertEqual(sum(call.args[0] == 'session.pending' for call in event.call_args_list), 5)
         self.assertFalse(BotConversationLease.objects.exists())
+
+    @patch('crmChat.tasks.dispatch_outbound_message')
+    def test_all_channels_greet_once_without_recommendations(self, send):
+        for channel in ('ecommerce', 'whatsapp_web', 'whatsapp', 'facebook', 'instagram'):
+            inbound = self.message(channel, text='Hola')
+            generate_omnichannel_bot_reply.run(inbound.pk)
+            again = ChatMessage.objects.create(session=inbound.session, text='Hola', sender_type='user',
+                direction='inbound', status='queued', external_message_id='qa-repeat-'+channel)
+            generate_omnichannel_bot_reply.run(again.pk)
+            replies = list(inbound.session.messages.filter(sender_type='bot').values_list('text', flat=True))
+            self.assertEqual(sum(text.count(ollama_service.INITIAL_GREETING) for text in replies), int(channel != 'ecommerce'))
+            self.assertFalse(any('producto/' in text for text in replies))
+            self.assertEqual(len(replies), 2)
+            print('BOT channel=%s greeting_once=PASS recommendations=disabled' % channel)
 
     @patch('crmChat.tasks.dispatch_outbound_message', side_effect=RuntimeError('channel unavailable'))
     @patch('crmChat.assignment.assign_session_automatically')

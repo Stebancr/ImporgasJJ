@@ -19,6 +19,7 @@ whatsapp-gateway/dist/
 whatsapp-gateway/auth/
 whatsapp-gateway/media/
 backups/
+.artifacts/
 .codex-pre-fix-*/
 docs/
 **/docs/

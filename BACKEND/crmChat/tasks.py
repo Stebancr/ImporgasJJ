@@ -43,6 +43,21 @@ logger = logging.getLogger(__name__)
 INACTIVITY_WARNING_TEXT = 'Este chat se cerrará por inactividad en 1 minuto. Si necesitas continuar, envía un mensaje.'
 
 
+def enqueue_bot_reply(message_id):
+    """Persist the pending job if the broker is unavailable; Beat can recover it."""
+    try:
+        return generate_omnichannel_bot_reply.delay(message_id)
+    except Exception as exc:
+        message = ChatMessage.objects.filter(pk=message_id).first()
+        if message is not None:
+            ChatMessage.objects.filter(pk=message_id).update(metadata={
+                **message.metadata, 'error': 'Respuesta pendiente: el procesador no está disponible temporalmente.',
+            })
+            publish_crm_event('message.updated', session_id=message.session_id, message_id=message_id)
+        logger.warning('Bot enqueue unavailable message_id=%s reason=%s', message_id, type(exc).__name__)
+        return None
+
+
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=5)
 def process_meta_webhook_task(self, event_id):
     """Procesa un envelope Meta una sola vez y programa respuestas del bot."""
@@ -64,22 +79,14 @@ def process_meta_webhook_task(self, event_id):
         raise
     for message in messages:
         publish_crm_event('message.created', session_id=message.session_id, message_id=message.id)
-        for attachment in message.attachments.all():
-            download_meta_attachment.delay(attachment.id)
-        if message.direction == 'inbound':
-            receipt_task = send_meta_read_receipt.delay(message.id)
-            logger.info(
-                'Confirmación de lectura encolada: message_id=%s channel=%s task_id=%s.',
-                message.id, message.session.channel, receipt_task.id,
-            )
         integration = message.session.integration
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
             ChatMessage.objects.filter(pk=message.pk).update(status='queued')
-            bot_task = generate_omnichannel_bot_reply.delay(message.id)
+            bot_task = enqueue_bot_reply(message.id)
             logger.info(
                 'Respuesta bot programada message_id=%s session_id=%s channel=%s task_id=%s.',
-                message.id, message.session_id, message.session.channel, bot_task.id,
+                message.id, message.session_id, message.session.channel, getattr(bot_task, 'id', None),
             )
         else:
             reason = (
@@ -91,6 +98,14 @@ def process_meta_webhook_task(self, event_id):
                 'Respuesta bot omitida message_id=%s session_id=%s channel=%s reason=%s.',
                 message.id, message.session_id, message.session.channel, reason,
             )
+        try:
+            for attachment in message.attachments.all():
+                download_meta_attachment.delay(attachment.id)
+            if message.direction == 'inbound':
+                send_meta_read_receipt.delay(message.id)
+        except Exception as exc:
+            logger.warning('Meta auxiliary enqueue unavailable message_id=%s reason=%s',
+                           message.id, type(exc).__name__)
     logger.info(
         'Tarea webhook Meta completada: event_id=%s channel=%s messages=%s.',
         event_id, event.channel, len(messages),
@@ -436,7 +451,7 @@ def _generate_bot_reply(user_message_id):
             from .assignment import assign_session_automatically
             if session.assigned_to_id is None:
                 assign_session_automatically(session)
-            publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
+            transaction.on_commit(lambda: publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id))
     try:
         dispatch_outbound_message(reply)
     except Exception:
@@ -464,10 +479,11 @@ def recover_stalled_chat_tasks():
         count = int(message.metadata.get('recovery_attempts', 0))
         if count >= 2:
             ChatMessage.objects.filter(pk=message.pk).update(status='failed', bot_processing_at=None)
+            publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
             continue
         ChatMessage.objects.filter(pk=message.pk).update(status='queued', bot_processing_at=None,
             metadata={**message.metadata, 'recovery_attempts': count + 1})
-        generate_omnichannel_bot_reply.delay(message.pk)
+        enqueue_bot_reply(message.pk)
         recovered += 1
     # Sending without confirmation may have reached Meta. Never replay that automatically.
     for message in ChatMessage.objects.filter(direction='outbound', status='processing', created_at__lt=cutoff):

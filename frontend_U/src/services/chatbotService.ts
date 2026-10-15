@@ -42,7 +42,8 @@ export const sendMessage = async (
   message: string,
   sessionId?: number | null,
   userName?: string,
-  userEmail?: string
+  userEmail?: string,
+  clientMessageId: string = crypto.randomUUID()
 ): Promise<ChatResponse> => {
   try {
     return await api.post<ChatResponse>('/crm-chat/bot/chat/', {
@@ -50,6 +51,7 @@ export const sendMessage = async (
         session_id: sessionId,
         user_name: userName,
         user_email: userEmail,
+        client_message_id: clientMessageId,
     });
   } catch (error) {
     console.error('Error en sendMessage:', error);

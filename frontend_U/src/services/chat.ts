@@ -44,8 +44,8 @@ export const chatService = {
       `/crm-chat/sessions/${sessionId}/messages/${afterId != null ? `?after=${afterId}` : ''}`
     ),
 
-  sendMessage: (sessionId: number, text: string): Promise<ChatMessageData> =>
-    api.post<ChatMessageData>(`/crm-chat/sessions/${sessionId}/messages/`, { text }),
+  sendMessage: (sessionId: number, text: string, clientMessageId: string = crypto.randomUUID()): Promise<ChatMessageData> =>
+    api.post<ChatMessageData>(`/crm-chat/sessions/${sessionId}/messages/`, { text, client_message_id: clientMessageId }),
 
   closeSession: (sessionId: number): Promise<ChatSession> =>
     api.patch<ChatSession>(`/crm-chat/sessions/${sessionId}/`, { status: 'closed' }),
