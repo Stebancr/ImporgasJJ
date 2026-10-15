@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/label'
 import { Search, Eye, ShoppingCart, RefreshCw } from 'lucide-react'
 import type { Order, OrderStatus } from '@/admin/types'
 import { ordersService } from '@/admin/services/admin_orders'
+import ShipmentDetails from '@/components/ShipmentDetails'
 
 const statusConfig: Record<OrderStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' }> = {
   pending:   { label: 'Pendiente',     variant: 'secondary' },
@@ -60,6 +61,25 @@ export default function OrdersPage() {
   useEffect(() => {
     fetchOrders()
   }, [])
+
+  useEffect(() => {
+    if (!isDetailOpen || !selectedOrder?.shipment || !['pending', 'creating'].includes(selectedOrder.shipment.state)) return
+    let active = true
+    let running = false
+    const timer = setInterval(async () => {
+      if (running) return
+      running = true
+      try {
+        const updated = await ordersService.getById(selectedOrder.id)
+        if (active) {
+          setSelectedOrder(updated)
+          setOrders(previous => previous.map(order => order.id === updated.id ? updated : order))
+        }
+      } catch { /* Keep the existing detail until a confirmed response arrives. */ }
+      finally { running = false }
+    }, 5000)
+    return () => { active = false; clearInterval(timer) }
+  }, [isDetailOpen, selectedOrder?.id, selectedOrder?.shipment?.state])
 
   const filteredOrders = orders.filter((order) => {
     const matchesSearch =
@@ -247,6 +267,8 @@ export default function OrdersPage() {
           </DialogHeader>
           {selectedOrder && (
             <div className="space-y-6">
+              <p>Estado de pago: {selectedOrder.wompi_status || selectedOrder.status}</p>
+              <ShipmentDetails shipment={selectedOrder.shipment} orderId={selectedOrder.id} admin onUpdated={()=>{ordersService.getById(selectedOrder.id).then(setSelectedOrder).catch(()=>{})}}/>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Cliente</p>

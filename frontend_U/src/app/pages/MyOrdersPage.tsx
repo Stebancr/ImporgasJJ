@@ -148,6 +148,7 @@ export default function MyOrdersPage() {
                     </span>
                   </div>
 
+                  {order.shipment&&<p className="mb-3 text-sm text-blue-800">TCC · {order.shipment.state_label} · Guía: {order.shipment.waybill||'Pendiente'}</p>}
                   <div className="space-y-3 mb-4">
                     {order.items.map((item) => (
                       <div key={item.id} className="flex items-center gap-4">

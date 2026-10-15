@@ -37,8 +37,11 @@ import api from '@/admin/services/admin_api'
 import { clearProductDraft, productDraftKey, readDraftImages, readProductDraft, saveDraftImages, saveProductDraft } from '@/admin/services/product_draft'
 import type { Product, Brand, Category, ProductSpec, Location } from '@/admin/types'
 import ProductDescription from '@/components/ProductDescription'
+import ShippingProfileFields from '@/components/ShippingProfileFields'
+import { emptyShippingProfile, type ShippingProfile } from '@/services/shipping'
 
 interface FormData {
+  shipping_profile?: ShippingProfile
   name: string
   description: string
   price: string
@@ -50,6 +53,7 @@ interface FormData {
 }
 
 const defaultForm: FormData = {
+  shipping_profile: emptyShippingProfile,
   name: '',
   description: '',
   price: '',
@@ -172,6 +176,7 @@ export default function ProductsPage() {
         setFormData({
           name: full.name,
           description: full.description ?? '',
+          shipping_profile: full.shipping_profile ?? emptyShippingProfile,
           price: full.price.toString(),
           original_price: full.original_price?.toString() ?? '',
           category: full.category_id.toString(),
@@ -211,6 +216,17 @@ export default function ProductsPage() {
       setError('Completa los campos obligatorios: nombre, precio, categoría y marca')
       return
     }
+    const shipping = formData.shipping_profile ?? emptyShippingProfile
+    if (!Number.isInteger(shipping.packages_per_unit) || Number(shipping.packages_per_unit) < 1 || Number(shipping.packages_per_unit) > 100) {
+      setError('Indica entre 1 y 100 paquetes por unidad vendida')
+      return
+    }
+    if (formData.is_available && shipping.requires_shipping &&
+        [shipping.weight_kg, shipping.height_cm, shipping.width_cm, shipping.length_cm, shipping.declared_value]
+          .some(value => value === null || !Number.isFinite(Number(value)) || Number(value) <= 0)) {
+      setError('Para publicar un producto físico completa peso, dimensiones y valor declarado con valores mayores a cero')
+      return
+    }
     setIsSaving(true)
     setError(null)
     try {
@@ -223,6 +239,7 @@ export default function ProductsPage() {
         brand: parseInt(formData.brand),
         is_available: formData.is_available,
         is_featured: formData.is_featured,
+        shipping_profile: formData.shipping_profile ?? emptyShippingProfile,
       }
 
       let savedProduct: Product
@@ -571,6 +588,8 @@ export default function ProductsPage() {
                 </Select>
               </div>
             </div>
+
+            <ShippingProfileFields value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>setFormData({...formData,shipping_profile})}/>
 
             {/* Specifications */}
             <div className="grid gap-2">

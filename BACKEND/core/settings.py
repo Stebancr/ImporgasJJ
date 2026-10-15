@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'usuarios',
     'ecommerce',
+    'shipping',
     'gestion',
     'crmChat',
     'AppVisits',
@@ -145,6 +146,8 @@ REST_FRAMEWORK = {
         'wompi_webhook': config('THROTTLE_WOMPI_WEBHOOK_RATE', default='240/min'),
         'meta_webhook': config('THROTTLE_META_WEBHOOK_RATE', default='600/min'),
         'meta_admin': config('THROTTLE_META_ADMIN_RATE', default='20/min'),
+        'shipping_quote': config('THROTTLE_SHIPPING_QUOTE_RATE', default='10/min'),
+        'shipping_admin': config('THROTTLE_SHIPPING_ADMIN_RATE', default='10/min'),
     },
 }
 
@@ -193,6 +196,7 @@ CELERY_TASK_SOFT_TIME_LIMIT = config('CELERY_TASK_SOFT_TIME_LIMIT', default=110,
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_TIMEZONE = 'America/Bogota'
 CELERY_BEAT_SCHEDULE = {
+    'recover-pending-tcc-shipments': {'task': 'shipping.tasks.recover_pending_shipments', 'schedule': timedelta(minutes=5)},
     'recover-stalled-chat-tasks': {'task': 'crmChat.tasks.recover_stalled_chat_tasks', 'schedule': timedelta(seconds=60)},
     'close-inactive-bot-sessions': {
         'task': 'crmChat.tasks.close_inactive_bot_sessions',
@@ -558,3 +562,20 @@ INSTAGRAM_OAUTH_SCOPES = config(
     default='instagram_business_basic,instagram_business_manage_messages',
 )
 INSTAGRAM_OAUTH_STATE_MAX_AGE = config('INSTAGRAM_OAUTH_STATE_MAX_AGE', default=600, cast=int)
+
+# TCC secrets are backend-only. Production requires a separately supplied token
+# and a deliberate approval flag; development credentials never cross over.
+TCC_SHIPPING_ENABLED = config('TCC_SHIPPING_ENABLED', default=False, cast=bool)
+TCC_API_ENVIRONMENT = config('TCC_API_ENVIRONMENT', default='development')
+TCC_API_TOKEN = config('TCC_API_TOKEN', default='')
+TCC_PRODUCTION_API_TOKEN = config('TCC_PRODUCTION_API_TOKEN', default='')
+TCC_PRODUCTION_APPROVED = config('TCC_PRODUCTION_APPROVED', default=False, cast=bool)
+TCC_DISPATCH_ENABLED = config('TCC_DISPATCH_ENABLED', default=False, cast=bool)
+TCC_PQT_ACCOUNT = config('TCC_PQT_ACCOUNT', default='1485100')
+TCC_MSJ_ACCOUNT = config('TCC_MSJ_ACCOUNT', default='5625200')
+TCC_SHIPPING_MARKUP_PERCENT = config('TCC_SHIPPING_MARKUP_PERCENT', default='0')
+TCC_SHIPPING_HANDLING_FEE = config('TCC_SHIPPING_HANDLING_FEE', default='0')
+TCC_QUOTE_TTL_SECONDS = config('TCC_QUOTE_TTL_SECONDS', default=600, cast=int)
+TCC_ORIGIN_CITY_CODE = config('TCC_ORIGIN_CITY_CODE', default='')
+TCC_SENDER = {key: config('TCC_SENDER_' + key.upper(), default='') for key in
+              ('name', 'company', 'document_type', 'document', 'address', 'phone', 'email')}

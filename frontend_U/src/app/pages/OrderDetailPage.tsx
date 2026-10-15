@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import ShipmentDetails from '../../components/ShipmentDetails'
 import { useParams, Link } from 'react-router-dom'
 import {
   Package, Truck, Home, Wrench, CheckCircle, Clock, XCircle,
@@ -196,6 +197,7 @@ export default function OrderDetailPage() {
         )}
 
         {/* ── Tracking history ───────────────────────────────────────────── */}
+        <ShipmentDetails shipment={order.shipment} orderId={order.id}/>
         {order.tracking_history.length > 0 && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
             <h2 className="font-semibold text-gray-900 mb-4">Historial de actualizaciones</h2>

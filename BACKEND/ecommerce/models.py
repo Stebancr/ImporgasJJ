@@ -547,6 +547,10 @@ class TrackingEvent(models.Model):
 # ─────────────────────────────────────────────
 
 class UserAddress(models.Model):
+    tcc_city_code = models.CharField(max_length=8, blank=True, default='')
+    complement = models.CharField(max_length=200, blank=True, default='')
+    neighborhood = models.CharField(max_length=100, blank=True, default='')
+    delivery_instructions = models.CharField(max_length=300, blank=True, default='')
     user           = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
