@@ -7,6 +7,7 @@ from datetime import timedelta
 from collections import Counter
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction, connection
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -60,12 +61,12 @@ def address_snapshot(user, data):
     return result
 
 
-def shipping_snapshot(user, items, data):
+def shipping_snapshot(user, items, data, *, estimate=False):
     counts = Counter()
     for item in items:
         counts[item['product_id']] += item['quantity']
-    cart = dict(CartItem.objects.filter(user=user).values_list('product_id', 'quantity'))
-    if dict(counts) != cart or not counts:
+    cart = dict(CartItem.objects.filter(user=user).values_list('product_id', 'quantity')) if not estimate else None
+    if not counts or (not estimate and dict(counts) != cart):
         raise ValidationError({'items': 'El carrito cambió. Actualízalo antes de cotizar.'})
     products = {p.pk: p for p in Product.objects.filter(pk__in=counts, is_available=True).select_related('shipping_profile')}
     if len(products) != len(counts):
@@ -99,11 +100,19 @@ def shipping_snapshot(user, items, data):
     business = 'PQT' if real > 5 or volume > 5 else 'MSJ'
     snapshot = {'items': lines, 'packages': packages, 'subtotal': str(money(subtotal)),
         'real_kg': str(real), 'volumetric_kg': str(volume), 'billable_kg': str(max(real, volume, Decimal('1')) if packages else Decimal('0')),
-        'address': address_snapshot(user, data), 'origin': origin() if packages else {},
+        'address': estimate_address(data) if estimate else address_snapshot(user, data), 'origin': origin() if packages else {},
         'environment': settings.TCC_API_ENVIRONMENT, 'account_type': business,
         'account': settings.TCC_PQT_ACCOUNT if business == 'PQT' else settings.TCC_MSJ_ACCOUNT,
         'markup_percent': str(settings.TCC_SHIPPING_MARKUP_PERCENT), 'handling_fee': str(settings.TCC_SHIPPING_HANDLING_FEE)}
     return snapshot
+
+
+def estimate_address(data):
+    destination = city(data.get('tcc_city_code'))
+    if not destination:
+        raise ValidationError({'tcc_city_code': 'Selecciona un municipio del catálogo TCC; el código postal no reemplaza el municipio.'})
+    # Rate-only preview never stores names, phones or a customer address.
+    return {'tcc_city_code': destination['code'], 'city': destination['city'], 'department': destination['department']}
 
 
 def fingerprint(snapshot):
@@ -145,7 +154,23 @@ def quote_shipping(user, items, data):
     return ShippingQuote.objects.create(user=user, fingerprint=key, snapshot=snapshot,
         environment=settings.TCC_API_ENVIRONMENT, account_type=snapshot['account_type'],
         tcc_rate=rate, surcharge=surcharge, total=total,
+        provider_summary={'codigoResultado': '0', 'totaldespacho': str(rate)} if snapshot['packages'] else {'transport_required': False},
         expires_at=timezone.now()+timedelta(seconds=settings.TCC_QUOTE_TTL_SECONDS))
+
+
+def estimate_shipping(items, data):
+    from .serializers import calculation_data
+    snapshot = shipping_snapshot(None, items, data, estimate=True)
+    key = 'tcc-estimate:' + fingerprint(snapshot)
+    cached = cache.get(key)
+    if cached and not data.get('force'):
+        return cached
+    rate, surcharge, shipping = fresh_rate(snapshot)
+    now = timezone.now()
+    ttl = max(1, min(settings.TCC_QUOTE_TTL_SECONDS, 3600))
+    response = {**calculation_data(snapshot, rate, surcharge, shipping, now, now+timedelta(seconds=ttl)), 'approximate': True}
+    cache.set(key, response, timeout=ttl)
+    return response
 
 
 def validate_checkout_quote(user, quote_id, items, data):
@@ -179,6 +204,7 @@ def create_draft_order(intent, quote):
         customer_phone=data['customer_phone'], shipping_address=data['shipping_address'], city=data['city'],
         department=data['department'], postal_code=data.get('postal_code', ''), notes=data.get('notes', ''),
         subtotal=intent.subtotal, shipping_cost=intent.shipping_cost, total=intent.total,
+        taxes=intent.taxes, discounts=intent.discounts,
         payment_method='wompi', wompi_reference=intent.reference, status='pending', wompi_status='PENDING')
     for item in data['items']:
         OrderItem.objects.create(order=order, product_id=item['product_id'], quantity=item['quantity'], unit_price=item['unit_price'])

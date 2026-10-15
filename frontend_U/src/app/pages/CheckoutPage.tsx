@@ -9,6 +9,7 @@ import { getWompiOptions, loadWompiWidget } from '../../services/wompiCheckout'
 import addressesService, { UserAddress } from '../../services/addresses'
 import { shippingService, type ShippingQuote, type TCCAddress } from '../../services/shipping'
 import TCCAddressFields from '../../components/TCCAddressFields'
+import { shippingDestinationKey } from '../../services/shipping'
 
 // La llave pública puede incluirse en el bundle; los secretos permanecen sólo
 // en Django. El backend también devuelve esta llave con la intención de pago.
@@ -98,7 +99,22 @@ function CheckoutPage() {
       const data = await addressesService.getAll()
       setAddresses(data)
       // Auto-select default address
-      const defaultAddr = data.find((addr) => addr.is_default)
+      let defaultAddr = data.find((addr) => addr.is_default)
+      try {
+        const draft = user?.id ? JSON.parse(sessionStorage.getItem(shippingDestinationKey(user.id)) || 'null') : null
+        if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
+          if (draft.address_id) defaultAddr = data.find(addr => addr.id === draft.address_id) || defaultAddr
+          else if (typeof draft.tcc_city_code === 'string') {
+            const text = (key:string) => typeof draft[key] === 'string' ? draft[key] : ''
+            setSelectedAddressId(null)
+            setForm(previous => ({...previous, name:text('customer_name')||previous.name, phone:text('customer_phone')||previous.phone,
+              address:text('shipping_address'), city:text('city'), department:text('department'), postalCode:text('postal_code'),
+              tcc_city_code:text('tcc_city_code'), complement:text('complement'), neighborhood:text('neighborhood'),
+              delivery_instructions:text('delivery_instructions')}))
+            return
+          }
+        }
+      } catch { /* Invalid or unavailable browser storage never replaces a saved address. */ }
       if (defaultAddr) {
         setSelectedAddressId(defaultAddr.id)
         setForm(prev => ({ ...prev, name: defaultAddr.recipient_name, phone: defaultAddr.phone,
@@ -599,6 +615,8 @@ function CheckoutPage() {
                   <span className="text-gray-600">Subtotal</span>
                   <span className="font-medium">{formatPrice(subtotal)}</span>
                 </div>
+                <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeQuote?.discounts||0))}</span></div>
+                <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(Number(activeQuote?.taxes||0))}</span></div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Envío</span>
                   {shipping === 0 ? (

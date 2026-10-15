@@ -39,11 +39,15 @@ class TCCClient:
     def __init__(self):
         env = settings.TCC_API_ENVIRONMENT
         if env == 'development':
-            self.base, self.token = 'https://testsomos.tcc.com.co', settings.TCC_API_TOKEN
+            self.base, self.token = settings.TCC_DEVELOPMENT_BASE_URL.rstrip('/'), settings.TCC_API_TOKEN
+            expected = 'https://testsomos.tcc.com.co'
         elif env == 'production' and settings.TCC_PRODUCTION_APPROVED:
-            self.base, self.token = 'https://somos.tcc.com.co', settings.TCC_PRODUCTION_API_TOKEN
+            self.base, self.token = settings.TCC_PRODUCTION_BASE_URL.rstrip('/'), settings.TCC_PRODUCTION_API_TOKEN
+            expected = 'https://somos.tcc.com.co'
         else:
             raise TCCError('El ambiente TCC no está autorizado.', code='configuration')
+        if self.base != expected:
+            raise TCCError('La URL TCC no corresponde al dominio oficial del entorno seleccionado.', code='configuration')
         self.token = self.token.strip()
         if not self.token:
             raise TCCError('Falta configurar la credencial TCC en el backend.', code='configuration')
@@ -62,6 +66,8 @@ class TCCClient:
                            uncertain=dispatch, retryable=not dispatch) from None
         if response.status_code != 200:
             logger.warning('TCC operation=%s http_status=%s', 'dispatch' if dispatch else 'quote', response.status_code)
+            if response.status_code in (401, 403):
+                raise TCCError('TCC rechazó la credencial o los permisos de la cuenta. Contacta al asesor.', code='carrier_authentication')
             raise TCCError('TCC no pudo procesar la solicitud.', code='http_' + str(response.status_code),
                            uncertain=dispatch and response.status_code >= 500,
                            retryable=response.status_code == 429 or (not dispatch and response.status_code >= 500))

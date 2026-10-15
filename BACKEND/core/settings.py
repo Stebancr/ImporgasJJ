@@ -567,6 +567,8 @@ INSTAGRAM_OAUTH_STATE_MAX_AGE = config('INSTAGRAM_OAUTH_STATE_MAX_AGE', default=
 # and a deliberate approval flag; development credentials never cross over.
 TCC_SHIPPING_ENABLED = config('TCC_SHIPPING_ENABLED', default=False, cast=bool)
 TCC_API_ENVIRONMENT = config('TCC_API_ENVIRONMENT', default='development')
+TCC_DEVELOPMENT_BASE_URL = config('TCC_DEVELOPMENT_BASE_URL', default='https://testsomos.tcc.com.co')
+TCC_PRODUCTION_BASE_URL = config('TCC_PRODUCTION_BASE_URL', default='https://somos.tcc.com.co')
 TCC_API_TOKEN = config('TCC_API_TOKEN', default='')
 TCC_PRODUCTION_API_TOKEN = config('TCC_PRODUCTION_API_TOKEN', default='')
 TCC_PRODUCTION_APPROVED = config('TCC_PRODUCTION_APPROVED', default=False, cast=bool)

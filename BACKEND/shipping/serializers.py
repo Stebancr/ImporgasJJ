@@ -1,7 +1,7 @@
-from decimal import Decimal
 from django.conf import settings
 from rest_framework import serializers
 from .models import ProductShippingProfile, Shipment
+from ecommerce.pricing import totals
 
 
 PROFILE_FIELDS = ['requires_shipping', 'weight_kg', 'height_cm', 'width_cm', 'length_cm',
@@ -15,12 +15,19 @@ class ProductShippingSerializer(serializers.ModelSerializer):
 
 
 def quote_data(quote):
-    return {'id': str(quote.pk), 'carrier': 'TCC', 'tcc_rate': str(quote.tcc_rate),
-            'surcharge': str(quote.surcharge), 'total': str(quote.total),
-            'subtotal': quote.snapshot['subtotal'], 'order_total': str(quote.total + Decimal(quote.snapshot['subtotal'])),
-            'expires_at': quote.expires_at, 'package_count': len(quote.snapshot['packages']),
-            'real_kg': quote.snapshot['real_kg'], 'volumetric_kg': quote.snapshot['volumetric_kg'],
-            'billable_kg': quote.snapshot['billable_kg']}
+    return {'id': str(quote.pk), **calculation_data(quote.snapshot, quote.tcc_rate, quote.surcharge, quote.total,
+            quote.created_at, quote.expires_at), 'approximate': False}
+
+
+def calculation_data(snapshot, rate, surcharge, shipping, created_at, expires_at):
+    breakdown = totals(snapshot['subtotal'], shipping)
+    return {'carrier': 'TCC', 'tcc_rate': str(rate), 'surcharge': str(surcharge), 'total': str(shipping),
+            'subtotal': str(breakdown['subtotal']), 'discounts': str(breakdown['discounts']), 'taxes': str(breakdown['taxes']),
+            'order_total': str(breakdown['total']), 'expires_at': expires_at, 'quoted_at': created_at,
+            'estimated_delivery': None, 'carrier_quote_id': None,
+            'destination': {key: snapshot['address'][key] for key in ('city', 'department')},
+            'package_count': len(snapshot['packages']), 'real_kg': snapshot['real_kg'],
+            'volumetric_kg': snapshot['volumetric_kg'], 'billable_kg': snapshot['billable_kg']}
 
 
 def shipment_data(order, admin=False):

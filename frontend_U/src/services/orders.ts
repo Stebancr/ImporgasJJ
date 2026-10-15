@@ -37,6 +37,9 @@ export interface BackendOrder {
   postal_code: string
   subtotal: string
   shipping_cost: string
+  taxes?: string
+  discounts?: string
+  paid_total?: string | null
   total: string
   payment_method: 'wompi' | 'cash'
   wompi_reference: string

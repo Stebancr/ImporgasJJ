@@ -57,9 +57,15 @@ exteriores antes de formar el encabezado. Rotar la credencial compartida antes d
 habilitar producción. Producción exige `TCC_PRODUCTION_API_TOKEN` separado y
 `TCC_PRODUCTION_APPROVED=True`; un token de desarrollo no se utiliza como respaldo.
 Ninguna variable TCC se incorpora a `VITE_*` o al frontend.
+Los servicios gateway de Node anulan explícitamente ambos tokens TCC heredables
+del archivo privado compartido: las credenciales quedan en Django/Celery.
+`TCC_DEVELOPMENT_BASE_URL` y `TCC_PRODUCTION_BASE_URL` son configurables, pero se
+validan contra los hosts HTTPS oficiales del entorno para evitar fugas de tokens.
 
-`TCC_SHIPPING_ENABLED=False` mantiene el checkout anterior. No activarlo hasta
-completar perfiles de productos y confirmar tarifas/cuentas. Las pantallas de
+`TCC_SHIPPING_ENABLED=False` mantiene el checkout anterior. En producción no
+activarlo hasta completar perfiles de productos y confirmar tarifas/cuentas. En
+el entorno local de desarrollo se activó para mostrar y verificar el cotizador;
+los productos incompletos bloquean la cotización con un error explícito. Las pantallas de
 administración permiten completar los perfiles sin habilitar TCC para compradores.
 `TCC_DISPATCH_ENABLED=False` permite consultar tarifas sin crear remesas. No se
 ha autorizado activar despachos reales ni producción durante esta implementación.
@@ -71,8 +77,10 @@ privado local sin alterar registros de sedes existentes.
 
 `TCC_SENDER_NAME`, `TCC_SENDER_COMPANY`, `TCC_SENDER_DOCUMENT_TYPE` (CC/NIT),
 `TCC_SENDER_DOCUMENT`, `TCC_SENDER_ADDRESS`, `TCC_SENDER_PHONE` corresponden al
-remitente de la empresa. Correo opcional. La razón social/documento deben ser
-confirmados; no inventar el NIT ni utilizar la cédula del comprador. Con creación
+remitente de la empresa. Correo opcional. Razón social **ImporGas JJ S.A.S.** y
+documento NIT configurados en `.envdev` según los datos suministrados por el
+usuario. Se conserva el documento proporcionado, sin inventar reglas de dígito
+de verificación no documentadas por TCC ni utilizar la cédula del comprador. Con creación
 de despachos habilitada se valida el remitente completo antes de cotizar/pagar.
 Para cotización de desarrollo con despachos apagados basta el código de origen.
 
@@ -117,6 +125,11 @@ datos privados); los logs solo incluyen operación, IDs locales y códigos segur
 
 ## Comprobaciones realizadas el 15-10-2026
 
+La segunda entrega añade el cotizador público de producto, cotización del carrito,
+traslado del destino al checkout y desglose contable. Informe vigente con pruebas,
+ejemplos y limitaciones: **[TCC_COMPLETION_VALIDATION.md](TCC_COMPLETION_VALIDATION.md)**.
+Las cifras de la primera ronda siguientes se conservan como antecedente.
+
 - 225 pruebas backend en PostgreSQL de prueba: shipping, ecommerce, crmChat y
   usuarios.test_account. HTTP TCC/Wompi simulado; ninguna remesa real.
 - Dos workers concurrentes con PostgreSQL: un solo POST de despacho simulado.
@@ -157,10 +170,12 @@ docker compose -f docker-compose.qa.yml run --rm --no-deps -T chat-ui-test sh -c
 
 ### Activación posterior y rollback
 
-No se despliega ni fusiona main en esta tarea. Antes de activar: confirmar NIT y
-razón social remitente, rutas MSJ, todos los perfiles físicos, credencial apropiada,
+No se despliega ni fusiona main en esta tarea. Antes de activar producción: validar
+la identidad del remitente con TCC, rutas MSJ, todos los perfiles físicos, credencial apropiada,
 tarifas y pruebas autorizadas de extremo a extremo. El checkout mantiene su envío
-anterior mientras `TCC_SHIPPING_ENABLED=False`.
+anterior mientras `TCC_SHIPPING_ENABLED=False`. Desarrollo quedó con cotización
+habilitada y despachos apagados; la guía se verificó únicamente con mocks y una
+base PostgreSQL temporal independiente.
 
 Producción necesita su respaldo verificable y revisión de migraciones antes de
 aplicar las dos migraciones, reconstruir backend/Celery/frontend y habilitar flags.

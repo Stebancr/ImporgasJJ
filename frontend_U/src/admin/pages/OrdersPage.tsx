@@ -338,6 +338,14 @@ export default function OrdersPage() {
                         </TableRow>
                       )}
                       <TableRow>
+                        <TableCell colSpan={3} className="text-right text-muted-foreground">Descuentos adicionales</TableCell>
+                        <TableCell className="text-right">{formatPrice(Number(selectedOrder.discounts||0))}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-right text-muted-foreground">Impuestos adicionales</TableCell>
+                        <TableCell className="text-right">{formatPrice(Number(selectedOrder.taxes||0))}</TableCell>
+                      </TableRow>
+                      <TableRow>
                         <TableCell colSpan={3} className="text-right font-bold">Total</TableCell>
                         <TableCell className="text-right font-bold">{formatPrice(Number(selectedOrder.total))}</TableCell>
                       </TableRow>

@@ -412,6 +412,7 @@ export default function ProductsPage() {
                       <TableRow key={product.id}>
                         <TableCell>
                           <p className="font-medium">{product.name}</p>
+                          {product.shipping_ready === false && <Badge variant="warning" className="mt-1">Datos de envío pendientes</Badge>}
                           {product.is_featured && (
                             <Badge variant="secondary" className="mt-1">Destacado</Badge>
                           )}

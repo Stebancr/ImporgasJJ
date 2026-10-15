@@ -30,7 +30,7 @@ const STATUS_LABEL: Record<BackendOrder['status'], string> = {
 }
 
 const fmt = (val: string | number) =>
-  Number(val).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })
+  Number(val).toLocaleString('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleString('es-CO', {
@@ -256,7 +256,10 @@ export default function OrderDetailPage() {
               <span>Envío</span>
               <span>{Number(order.shipping_cost) === 0 ? 'Gratis' : fmt(order.shipping_cost)}</span>
             </div>
-            <div className="flex justify-between font-bold text-gray-900 text-base border-t border-gray-100 pt-2">
+              <div className="flex justify-between text-gray-600"><span>Descuentos adicionales</span><span>{fmt(order.discounts||0)}</span></div>
+              <div className="flex justify-between text-gray-600"><span>Impuestos adicionales</span><span>{fmt(order.taxes||0)}</span></div>
+              {order.paid_total!=null&&<div className="flex justify-between text-gray-600"><span>Total pagado confirmado</span><span>{fmt(order.paid_total)}</span></div>}
+              <div className="flex justify-between font-bold text-gray-900 text-base border-t border-gray-100 pt-2">
               <span>Total</span><span>{fmt(order.total)}</span>
             </div>
           </div>

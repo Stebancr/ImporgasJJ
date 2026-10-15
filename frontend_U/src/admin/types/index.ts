@@ -81,6 +81,7 @@ export interface SpecAttribute {
 // Product Types
 export interface Product {
   shipping_profile?: import('../../services/shipping').ShippingProfile | null
+  shipping_ready?: boolean
   id: number
   name: string
   slug: string
@@ -166,6 +167,9 @@ export interface Order {
   postal_code: string
   subtotal: number
   shipping_cost: number
+  taxes?: number | string
+  discounts?: number | string
+  paid_total?: number | string | null
   total: number
   status: OrderStatus
   payment_method: 'wompi' | 'cash'

@@ -1,4 +1,5 @@
 import api from './api'
+export const shippingDestinationKey = (userId:string) => `tcc-checkout-destination:${userId}`
 
 export interface ShippingProfile {
   requires_shipping: boolean
@@ -15,10 +16,13 @@ export const emptyShippingProfile: ShippingProfile = { requires_shipping: true, 
   width_cm: null, length_cm: null, packages_per_unit: 1, declared_value: null, packaging_code: 'CLEM_CAJA', fragile: false }
 
 export interface TCCCity { code: string; city: string; department: string }
-export interface ShippingQuote {
-  id: string; carrier: string; tcc_rate: string; surcharge: string; total: string; subtotal: string; order_total: string
+export interface ShippingCalculation {
+  id?: string; carrier: string; tcc_rate: string; surcharge: string; total: string; subtotal: string; order_total: string
+  discounts?: string; taxes?: string; approximate?: boolean; quoted_at?: string
+  destination?: {city:string;department:string}; estimated_delivery?: string | null
   expires_at: string; package_count: number; real_kg: string; volumetric_kg: string; billable_kg: string
 }
+export interface ShippingQuote extends ShippingCalculation {id:string}
 export interface ShipmentInfo {
   id: number; carrier: string; state: string; state_label: string; waybill: string | null; last_update: string
   last_sync_at: string | null; tracking_url: string; tracking_api_available: boolean
@@ -35,4 +39,5 @@ export const shippingService = {
   config: () => api.get<{enabled:boolean; tracking_api_available:boolean}>('/shipping/config'),
   cities: () => api.get<TCCCity[]>('/shipping/cities'),
   quote: (payload: unknown) => api.post<ShippingQuote>('/shipping/quote',payload),
+  estimate: (payload: unknown) => api.post<ShippingCalculation>('/shipping/estimate',payload),
 }

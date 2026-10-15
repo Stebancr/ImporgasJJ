@@ -490,7 +490,7 @@ class ProductListView(APIView):
         return [IsAdminUser()]
 
     def get(self, request):
-        qs = Product.objects.select_related('category', 'brand').prefetch_related('images')
+        qs = Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related('images')
 
         # Filtros
         if request.query_params.get('category_id'):
@@ -592,7 +592,7 @@ class ProductDetailView(APIView):
 
     def _get(self, pk):
         try:
-            return Product.objects.select_related('category', 'brand').prefetch_related(
+            return Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related(
                 'images', 'specifications__attribute', 'stock_entries__location'
             ).get(pk=pk)
         except Product.DoesNotExist:
@@ -638,7 +638,7 @@ class ProductSlugView(APIView):
 
     def get(self, request, slug):
         try:
-            product = Product.objects.select_related('category', 'brand').prefetch_related(
+            product = Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related(
                 'images', 'specifications__attribute', 'stock_entries__location'
             ).get(slug=slug, is_available=True)
         except Product.DoesNotExist:
@@ -974,7 +974,12 @@ class OrderListView(APIView):
                         postal_code=destination['postal_code'])
         elif data.get('shipping_quote_id'):
             return Response({'error': 'La configuración de transporte cambió. Actualiza el checkout.'}, status=409)
-        total    = subtotal + shipping
+        from .pricing import totals
+        # Existing product.price is the actual sale price. No coupon or extra
+        # tax engine exists: do not deduct advertised original-price savings
+        # twice, or invent a tax rate. Both extra adjustments are server-owned.
+        breakdown = totals(subtotal, shipping)
+        total = breakdown['total']
 
         # Wompi recibe una intención de pago, no una orden. La orden y el
         # descuento de inventario ocurren únicamente tras la aprobación oficial.
@@ -1002,7 +1007,7 @@ class OrderListView(APIView):
                             'unit_price': str(products[item['product_id']].price),
                         } for item in items_data],
                     },
-                    'subtotal': subtotal, 'shipping_cost': shipping, 'total': total,
+                    **breakdown,
                 },
             )
             if not created and intent.user_id != request.user.id:
@@ -1024,6 +1029,8 @@ class OrderListView(APIView):
                 'wompi_public_key': settings.WOMPI_PUBLIC_KEY,
                 'wompi_signature': hashlib.sha256(signature_string.encode()).hexdigest(),
                 'total': str(intent.total),
+                'subtotal': str(intent.subtotal), 'shipping_cost': str(intent.shipping_cost),
+                'taxes': str(intent.taxes), 'discounts': str(intent.discounts),
                 'payment_status': intent.wompi_status,
             }}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -1041,6 +1048,8 @@ class OrderListView(APIView):
             department       = data.get('department', ''),
             postal_code      = data.get('postal_code', ''),
             subtotal         = subtotal,
+            discounts        = breakdown['discounts'],
+            taxes            = breakdown['taxes'],
             shipping_cost    = shipping,
             total            = total,
             payment_method   = data['payment_method'],
@@ -1235,6 +1244,12 @@ def _valid_wompi_event(payload, header_checksum=''):
 
 
 def _validate_wompi_intent(intent, transaction_data):
+    from .pricing import valid_breakdown
+    if not valid_breakdown(intent):
+        return False
+    if intent.order_id and intent.checkout_data.get('tcc_quote_id'):
+        if not valid_breakdown(intent.order) or intent.order.total != intent.total:
+            return False
     try:
         amount_matches = int(transaction_data.get('amount_in_cents', -1)) == int(intent.total * 100)
     except (TypeError, ValueError):
@@ -1260,6 +1275,7 @@ def _create_approved_order(intent):
         city=data.get('city', ''), department=data.get('department', ''),
         postal_code=data.get('postal_code', ''), notes=data.get('notes', ''),
         subtotal=intent.subtotal, shipping_cost=intent.shipping_cost, total=intent.total,
+        taxes=intent.taxes, discounts=intent.discounts, paid_total=intent.total,
         payment_method=Order.PaymentMethod.WOMPI, wompi_reference=intent.reference,
         wompi_transaction_id=intent.transaction_id or '', wompi_status=Order.WompiStatus.APPROVED,
         status=Order.Status.PAID,
@@ -1268,8 +1284,9 @@ def _create_approved_order(intent):
         if order.status != Order.Status.CANCELLED:
             order.status = Order.Status.PAID
         order.wompi_status = Order.WompiStatus.APPROVED
+        order.paid_total = intent.total
         order.wompi_transaction_id = intent.transaction_id or ''
-        order.save(update_fields=['status', 'wompi_status', 'wompi_transaction_id', 'updated_at'])
+        order.save(update_fields=['status', 'wompi_status', 'wompi_transaction_id', 'paid_total', 'updated_at'])
     needs_assignment = False
     for item in data['items']:
         product = Product.objects.select_for_update().get(pk=item['product_id'])

@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from ecommerce.serializers import OrderItemInputSerializer
 from .catalog import cities
-from .services import quote_shipping, enqueue_shipment
+from .services import quote_shipping, estimate_shipping, enqueue_shipment
 from .serializers import quote_data, shipment_data
 from .models import Shipment, ShipmentEvent
 from .tcc import TCCError
@@ -59,6 +59,29 @@ class QuoteView(APIView):
         except TCCError as exc:
             return Response({'error': str(exc), 'code': exc.code}, status=503)
         return Response(quote_data(quote))
+
+
+class EstimateInput(serializers.Serializer):
+    items = OrderItemInputSerializer(many=True, allow_empty=False)
+    tcc_city_code = serializers.CharField(max_length=8)
+    force = serializers.BooleanField(required=False, default=False)
+
+
+class EstimateView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_scope = 'shipping_quote'
+
+    def post(self, request):
+        if not settings.TCC_SHIPPING_ENABLED:
+            return Response({'error': 'El transporte TCC aún no está habilitado.'}, status=503)
+        data = EstimateInput(data=request.data)
+        data.is_valid(raise_exception=True)
+        try:
+            result = estimate_shipping(data.validated_data['items'], data.validated_data)
+        except TCCError as exc:
+            return Response({'error': str(exc), 'code': exc.code}, status=503)
+        return Response(result)
 
 
 class ShipmentActionView(APIView):

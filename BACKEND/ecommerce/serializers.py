@@ -100,6 +100,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     brand_name    = serializers.CharField(source='brand.name', read_only=True)
     primary_image = serializers.SerializerMethodField()
     discount_percentage = serializers.ReadOnlyField()
+    shipping_ready = serializers.ReadOnlyField()
 
     class Meta:
         model = Product
@@ -107,7 +108,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'price', 'original_price', 'discount_percentage',
             'category_id', 'category_name', 'brand_id', 'brand_name',
             'total_stock', 'is_available', 'is_featured',
-            'rating', 'reviews_count', 'primary_image',
+            'rating', 'reviews_count', 'primary_image', 'shipping_ready',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
@@ -135,6 +136,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     specifications = ProductSpecSerializer(many=True, read_only=True)
     stock_entries  = ProductStockSerializer(many=True, read_only=True)
     discount_percentage = serializers.ReadOnlyField()
+    shipping_ready = serializers.ReadOnlyField()
     from shipping.serializers import ProductShippingSerializer
     shipping_profile = ProductShippingSerializer(read_only=True)
 
@@ -145,7 +147,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'category_id', 'category', 'brand_id', 'brand',
             'total_stock', 'is_available', 'is_featured',
             'rating', 'reviews_count',
-            'images', 'specifications', 'stock_entries', 'shipping_profile',
+            'images', 'specifications', 'stock_entries', 'shipping_profile', 'shipping_ready',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
@@ -285,7 +287,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'user_id',
             'customer_name', 'customer_email', 'customer_phone',
             'shipping_address', 'city', 'department', 'postal_code',
-            'subtotal', 'shipping_cost', 'total',
+            'subtotal', 'shipping_cost', 'discounts', 'taxes', 'total', 'paid_total',
             'status', 'payment_method',
             'wompi_transaction_id', 'wompi_reference',
             'wompi_status',
@@ -295,15 +297,16 @@ class OrderSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'order_number', 'tracking_code',
-            'user_id', 'subtotal', 'shipping_cost', 'total',
+            'user_id', 'subtotal', 'shipping_cost', 'discounts', 'taxes', 'total', 'paid_total',
             'created_at', 'updated_at',
         ]
 
 
 class OrderItemInputSerializer(serializers.Serializer):
-    product_id = serializers.IntegerField()
+    product_id = serializers.IntegerField(min_value=1)
     quantity = serializers.IntegerField(
         min_value=1,
+        max_value=999,
         error_messages={
             'min_value': 'La cantidad debe ser mayor o igual a 1.',
             'invalid': 'La cantidad debe ser un número entero.',

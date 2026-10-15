@@ -31,6 +31,7 @@ class ShippingQuote(models.Model):
     tcc_rate = models.DecimalField(max_digits=12, decimal_places=2)
     surcharge = models.DecimalField(max_digits=12, decimal_places=2)
     total = models.DecimalField(max_digits=12, decimal_places=2)
+    provider_summary = models.JSONField(default=dict, blank=True)
     reference = models.CharField(max_length=200, blank=True)
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
