@@ -180,7 +180,9 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         incoming = data.get('shipping_profile')
         profile = getattr(self.instance, 'shipping_profile', None) if self.instance else None
         available = data.get('is_available', getattr(self.instance, 'is_available', True))
-        if available and (settings.TCC_SHIPPING_ENABLED or incoming is not None):
+        publishing = self.instance is None or (not self.instance.is_available and available)
+        changes_shipping = 'shipping_profile' in data
+        if available and (changes_shipping or (settings.TCC_SHIPPING_ENABLED and publishing)):
             values = {field: getattr(profile, field) for field in ('requires_shipping', 'weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')} if profile else {'requires_shipping': True}
             values.update(incoming or {})
             if values.get('requires_shipping', True) and any(not values.get(field) for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')):

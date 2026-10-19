@@ -62,6 +62,7 @@ class ProductPresentationTests(APITestCase):
         self.assertEqual(self.client.patch(self.url(self.images[1]), {'is_primary': True}, format='json').status_code, 403)
         self.assertEqual(self.product.images.filter(is_primary=True).get().id, self.images[0].id)
 
+    @override_settings(TCC_SHIPPING_ENABLED=True)
     def test_description_preserved_verbatim(self):
         for text in ['', '  Título\r\n* Uno\n- Dos\n• Tres\n\nPárrafo  ', '<script>alert(1)</script> & <b>texto</b>']:
             with self.subTest(text=text):
@@ -70,6 +71,18 @@ class ProductPresentationTests(APITestCase):
                 serializer.save()
                 self.product.refresh_from_db()
                 self.assertEqual(self.product.description, text)
+
+    @override_settings(TCC_SHIPPING_ENABLED=True)
+    def test_publication_and_transport_changes_still_require_complete_shipping(self):
+        self.product.is_available = False
+        self.product.save(update_fields=['is_available'])
+        publishing = ProductCreateSerializer(self.product, data={'is_available': True}, partial=True)
+        self.assertFalse(publishing.is_valid())
+        self.assertIn('shipping_profile', publishing.errors)
+        self.product.is_available = True
+        changed = ProductCreateSerializer(self.product, data={'shipping_profile': {'requires_shipping': True}}, partial=True)
+        self.assertFalse(changed.is_valid())
+        self.assertIn('shipping_profile', changed.errors)
 
     def test_primary_in_catalog_search_favorites_and_cart_product(self):
         self.client.patch(self.url(self.images[1]), {'is_primary': True}, format='json')

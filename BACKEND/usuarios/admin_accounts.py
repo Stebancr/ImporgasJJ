@@ -112,15 +112,16 @@ class AccountView(APIView):
                          'usuario_rel_id': profile.pk}, status=201)
 
     @transaction.atomic
-    def put(self, request, usuario_id):
+    def put(self, request, usuario_id, payload=None):
         lock_accounts([usuario_id])
         profile = get_object_or_404(Usuario.objects.select_for_update(), pk=usuario_id)
         credentials = getattr(profile, 'credenciales', None)
         authorize(request.user, credentials)
         # Passwords have a separate endpoint; blank legacy fields are harmless.
-        if request.data.get('password') or request.data.get('new_password'):
+        payload = request.data if payload is None else payload
+        if payload.get('password') or payload.get('new_password'):
             raise serializers.ValidationError({'password': 'Utiliza la acción Cambiar contraseña.'})
-        data = AccountInput(data=request.data, context={'profile': profile})
+        data = AccountInput(data=payload, context={'profile': profile})
         data.is_valid(raise_exception=True)
         values = dict(data.validated_data)
         role = values.pop('tipo_usuario', credentials.tipo_usuario if credentials else 0)
@@ -187,6 +188,13 @@ class AccountList(APIView):
 
 class AccountState(AccountView):
     http_method_names = ['patch', 'post', 'options']
+
+    @transaction.atomic
+    def toggle(self, request, usuario_id):
+        authorize(request.user, None, sensitive=True)
+        lock_accounts([usuario_id])
+        profile = get_object_or_404(Usuario.objects.select_for_update(), pk=usuario_id)
+        return self.put(request, usuario_id, {'estado': 0 if profile.estado == 1 else 1})
     def patch(self, request, usuario_id):
         if set(request.data) != {'estado'}:
             raise serializers.ValidationError({'estado': 'Indica únicamente el nuevo estado.'})
@@ -198,6 +206,8 @@ class AccountState(AccountView):
         authorize(request.user, None, sensitive=True)
         if set(request.data) - {'usuario_ids', 'cedulas', 'estado'}:
             raise serializers.ValidationError({'estado': 'La operación masiva solo modifica el estado.'})
+        if 'estado' not in request.data or request.data['estado'] not in (0, 1):
+            raise serializers.ValidationError({'estado': 'Indica el estado 0 o 1.'})
         ids, documents = request.data.get('usuario_ids', []), request.data.get('cedulas', [])
         if not isinstance(ids, list) or not isinstance(documents, list) or not (ids or documents):
             raise serializers.ValidationError({'usuario_ids': 'Selecciona las cuentas que deseas actualizar.'})

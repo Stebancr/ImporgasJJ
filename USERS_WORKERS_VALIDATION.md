@@ -46,7 +46,7 @@ Todo se ejecutó en Docker. Las pruebas usan una base PostgreSQL temporal `test_
 4. Suite completa del commit base: **366 pruebas, 56 fallos de aserción y 40 errores**.
 5. Suite completa con los seis primeros tests de esta tarea: **372 pruebas, los mismos 56 fallos y 40 errores**. La comparación de los nombres de los tests fallidos coincide exactamente; los nuevos tests pasan. La prueba adicional de revocación WebSocket forma parte de las 230 regresiones aprobadas.
 
-Los fallos preexistentes incluyen tests de `usuarios.tests` que todavía usan modelos/rutas antiguos, importación de `test_ecommerce_api`, generación PDF de visitas y expectativas anteriores de presentación/checkout/Wompi. Están presentes también al ejecutar el código original de #7: no se declaran aprobadas estas áreas ni la suite completa. Deben resolverse en el PR base o en una tarea específica antes de dar por cumplido el criterio de suite íntegramente verde.
+Los fallos preexistentes incluían tests de `usuarios.tests` con modelos/rutas antiguos, importación de `test_ecommerce_api`, conexión de pruebas de PDF y expectativas anteriores de presentación/checkout/Wompi. El usuario autorizó su corrección en una solicitud posterior. El diagnóstico y las correcciones están en `REGRESSION_SUITE_FIXES.md`: **la verificación final de toda la suite aprueba 374 pruebas, sin fallos ni errores**.
 
 Evidencia local privada (fuera del commit): `.artifacts/users-base-tests.log`, `users-final-all-tests.log`, `users-passing-regressions.log`, `users-ui-tests.log`, `users-final-frontend-build.log`.
 
@@ -56,4 +56,4 @@ Los numerosos cambios locales anteriores de chat, productos, TCC y correo se con
 
 Se volvió a ejecutar `fetch`: la rama base permanece en el SHA indicado. GitHub informa que #7 es fusionable sin conflictos; no tiene check-runs ni contextos de CI publicados, por lo que su estado combinado `pending` no significa que existan pruebas de CI aprobadas.
 
-Este PR debe permanecer en revisión/borrador mientras se resuelven los fallos preexistentes de la suite completa. Después de fusionar #7, actualizar desde la rama vigente sin reescribir historial, cambiar la base del nuevo PR a `main` y repetir las pruebas. No desplegar ni fusionar automáticamente.
+Los fallos preexistentes de la suite completa quedaron resueltos y el PR puede revisarse con la evidencia final de 374 pruebas aprobadas. Después de fusionar #7, actualizar desde la rama vigente sin reescribir historial, cambiar la base del nuevo PR a `main` y repetir las pruebas. No desplegar ni fusionar automáticamente.
