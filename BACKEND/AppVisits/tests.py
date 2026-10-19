@@ -282,7 +282,10 @@ class VisitCompletionTests(APITestCase):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.get(reverse('visitas-pdf', args=[self.visit.pk]))
         self.assertEqual(response.status_code, 200)
-        response.close()
+        # Close the stream only: response.close() emits request_finished and closes
+        # the outer PostgreSQL TestCase transaction when called manually.
+        for closer in response._resource_closers:
+            closer()
         self.visit.refresh_from_db()
         self.assertTrue(self.visit.pdf_final)
         self.assertEqual(len(mail.outbox), 0)

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useAuth } from '@/admin/context/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -37,6 +38,7 @@ const TIPO_USUARIO: Record<number, { label: string; icon: typeof Shield }> = {
 const blankForm = () => ({
   usuario: '',
   password: '',
+  confirm_password: '',
   cedula: '',
   nombre_completo: '',
   correo: '',
@@ -51,6 +53,25 @@ type FormState = ReturnType<typeof blankForm>
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
+  const { user: actor } = useAuth()
+  const canManageSecurity = actor?.tipo_usuario === 4
+  const operationLock = useRef(false)
+  const loadSequence = useRef(0)
+  const [estado, setEstado] = useState('todos')
+  const [listError, setListError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [securityError, setSecurityError] = useState('')
+  const [securityBusy, setSecurityBusy] = useState(false)
+  const [passwordTarget, setPasswordTarget] = useState<ColaboradorData | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [stateTarget, setStateTarget] = useState<ColaboradorData | null>(null)
+  const parseError = (error: unknown) => {
+    const data = (error as {response?: {data?: Record<string, unknown>}})?.response?.data || {}
+    const fields = Object.fromEntries(Object.entries(data).map(([key,value]) => [key, Array.isArray(value) ? value.join(' ') : String(value)]))
+    return { fields, message: Object.values(fields).join(' ') || 'No fue posible guardar. Revisa tu conexión e inténtalo nuevamente.' }
+  }
+  const fieldError = (name: string) => fieldErrors[name] ? <p role="alert" className="text-xs text-destructive mt-1">{fieldErrors[name]}</p> : null
   // Tab
   const [activeTab, setActiveTab] = useState<'trabajadores' | 'usuarios' | 'cargos'>('trabajadores')
 
@@ -99,23 +120,27 @@ export default function UsersPage() {
 
   // Load users
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current
     setLoading(true)
+    setListError('')
     try {
       const res = await usersService.listarColaboradores({
         search: search || undefined,
         page,
         page_size: pageSize,
         tipo: activeTab === 'trabajadores' ? 'trabajador' : 'normal',
+        estado,
       })
+      if (sequence !== loadSequence.current) return
       setUsers(res.results)
       setTotal(res.count)
       setTotalPages(Math.ceil(res.count / pageSize))
     } catch {
-      setUsers([])
+      if (sequence === loadSequence.current) setListError('No fue posible cargar las cuentas. Intenta actualizar la lista.')
     } finally {
-      setLoading(false)
+      if (sequence === loadSequence.current) setLoading(false)
     }
-  }, [search, page, pageSize, activeTab])
+  }, [search, page, pageSize, activeTab, estado])
 
   useEffect(() => { if (activeTab !== 'cargos') load() }, [load, activeTab])
 
@@ -134,8 +159,9 @@ export default function UsersPage() {
 
   const openCreate = () => {
     setEditingId(null)
-    setForm({ ...blankForm(), tipo_usuario: activeTab === 'trabajadores' ? '1' : '0' })
+    setForm({ ...blankForm(), tipo_usuario: activeTab === 'trabajadores' ? (canManageSecurity ? '1' : '3') : '0' })
     setFormError('')
+    setFieldErrors({})
     setDialogOpen(true)
   }
 
@@ -144,6 +170,7 @@ export default function UsersPage() {
     setForm({
       usuario: '',
       password: '',
+      confirm_password: '',
       cedula: u.cedula,
       nombre_completo: u.nombre_completo,
       correo: u.correo ?? '',
@@ -157,26 +184,30 @@ export default function UsersPage() {
   }
 
   const handleSave = async () => {
+    if (operationLock.current) return
     setFormError('')
+    setFieldErrors({})
     if (!form.nombre_completo.trim()) { setFormError('El nombre completo es requerido'); return }
     if (!form.cedula.trim()) { setFormError('La cedula es requerida'); return }
     if (!editingId && !form.usuario.trim()) { setFormError('El nombre de usuario es requerido'); return }
-    if (!editingId && form.password.length < 4) { setFormError('La contrasena debe tener al menos 4 caracteres'); return }
+    if (!editingId && form.password !== form.confirm_password) { setFormError('Las contraseñas no coinciden'); return }
 
+    operationLock.current = true
     setSaving(true)
     try {
       if (editingId) {
         await usersService.actualizarColaborador(editingId, {
+          cedula: form.cedula.trim(),
           nombre_completo: form.nombre_completo.trim(),
           correo: form.correo.trim() || null,
           telefono: form.telefono.trim() || null,
-          cargo: isTrabajadores && form.cargo ? Number(form.cargo) : null,
-          location_id: isTrabajadores && form.location_id ? Number(form.location_id) : null,
+          ...(isTrabajadores ? {cargo: form.cargo ? Number(form.cargo) : null, location_id: form.location_id ? Number(form.location_id) : null} : {}),
         })
       } else {
         await usersService.crearColaborador({
           usuario: form.usuario.trim(),
           password: form.password,
+          confirm_password: form.confirm_password,
           cedula: form.cedula.trim(),
           nombre_completo: form.nombre_completo.trim(),
           correo: form.correo.trim() || null,
@@ -189,21 +220,26 @@ export default function UsersPage() {
       setDialogOpen(false)
       load()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      setFormError(msg || 'Error al guardar el usuario')
+      const error = parseError(err)
+      setFormError(error.message)
+      setFieldErrors(error.fields)
     } finally {
+      operationLock.current = false
       setSaving(false)
     }
   }
 
   const handleToggleEstado = async (u: ColaboradorData) => {
+    if (operationLock.current) return
+    operationLock.current = true
+    setSecurityBusy(true); setSecurityError('')
     const nuevoEstado: 0 | 1 = u.estado === 1 ? 0 : 1
     try {
       await usersService.cambiarEstado(u.id, nuevoEstado)
+      setStateTarget(null)
       load()
-    } catch {
-      alert('Error al cambiar el estado')
-    }
+    } catch (error) { setSecurityError(parseError(error).message) }
+    finally { operationLock.current = false; setSecurityBusy(false) }
   }
 
   const openRoleDialog = (u: ColaboradorData) => {
@@ -213,14 +249,14 @@ export default function UsersPage() {
   }
 
   const handleChangeRole = async () => {
-    if (!roleTarget) return
+    if (!roleTarget || operationLock.current) return
+    operationLock.current = true; setSecurityBusy(true); setSecurityError('')
     try {
       await usersService.actualizarRol(roleTarget.id, Number(newRole))
       setRoleDialogOpen(false)
       load()
-    } catch {
-      alert('Error al cambiar el rol')
-    }
+    } catch (error) { setSecurityError(parseError(error).message) }
+    finally { operationLock.current = false; setSecurityBusy(false) }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -397,6 +433,7 @@ export default function UsersPage() {
       {/* Table — hidden on cargos tab */}
       {!isCargos && (
       <Card>
+        {listError && <p role="alert" className="p-4 text-destructive">{listError}</p>}
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -404,6 +441,7 @@ export default function UsersPage() {
               {isTrabajadores ? 'Lista de trabajadores' : 'Lista de usuarios'} <span className="text-muted-foreground font-normal">({total})</span>
             </CardTitle>
             <div className="flex gap-2">
+              <Select value={estado} onValueChange={value => { setEstado(value); setPage(1) }}><SelectTrigger aria-label="Estado de las cuentas" className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="todos">Todos</SelectItem><SelectItem value="1">Activos</SelectItem><SelectItem value="0">Inactivos</SelectItem></SelectContent></Select>
               <div className="relative flex-1 sm:w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -497,7 +535,8 @@ export default function UsersPage() {
 
                     <TableCell className="text-center">
                       <button
-                        onClick={() => handleToggleEstado(u)}
+                        disabled={!canManageSecurity || securityBusy}
+                        onClick={() => { setSecurityError(''); setStateTarget(u) }}
                         title="Clic para cambiar estado"
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
                           u.estado === 1
@@ -513,11 +552,12 @@ export default function UsersPage() {
 
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
+                        <Button disabled={!canManageSecurity} variant="ghost" size="sm" onClick={() => { setPasswordTarget(u); setNewPassword(''); setConfirmPassword(''); setSecurityError('') }}>Contraseña</Button>
                         <Button variant="ghost" size="icon" title="Editar datos" onClick={() => openEdit(u)}>
                           <Edit className="h-4 w-4" />
                         </Button>
                         {isTrabajadores && (
-                          <Button variant="ghost" size="icon" title="Cambiar rol" onClick={() => openRoleDialog(u)}>
+                          <Button disabled={!canManageSecurity} variant="ghost" size="icon" title="Cambiar rol" onClick={() => { setSecurityError(''); openRoleDialog(u) }}>
                             <Shield className="h-4 w-4 text-blue-500" />
                           </Button>
                         )}
@@ -546,7 +586,7 @@ export default function UsersPage() {
       )}
 
       {/* ── Create / Edit Dialog ─────────────────────────────────────────── */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={value => { if (!saving) setDialogOpen(value) }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
@@ -557,7 +597,7 @@ export default function UsersPage() {
           </DialogHeader>
 
           {formError && (
-            <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{formError}</div>
+            <div role="alert" className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{formError}</div>
           )}
 
           <div className="space-y-4">
@@ -570,11 +610,15 @@ export default function UsersPage() {
                     <Label className="text-xs">Usuario *</Label>
                     <Input className="mt-1 h-8 text-sm" placeholder="nombre.usuario"
                       value={form.usuario} onChange={(e) => setForm((f) => ({ ...f, usuario: e.target.value }))}  aria-label="nombre.usuario" />
+                    {fieldError('usuario')}
                   </div>
                   <div>
                     <Label className="text-xs">Contrasena *</Label>
                     <Input className="mt-1 h-8 text-sm" type="password" placeholder="••••••••"
                       value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}  aria-label="••••••••" />
+                    {fieldError('new_password')}
+                    <Label className="text-xs">Confirmar contraseña</Label><Input type="password" autoComplete="new-password" aria-label="Confirmar contraseña inicial" value={form.confirm_password} onChange={e => setForm(f => ({...f, confirm_password:e.target.value}))} />
+                    {fieldError('confirm_password')}
                   </div>
                 </div>
                 <div>
@@ -584,10 +628,10 @@ export default function UsersPage() {
                     <SelectContent>
                       {isTrabajadores ? (
                         <>
-                          <SelectItem value="1">1 — Admin de Sede</SelectItem>
+                          {canManageSecurity && <SelectItem value="1">1 — Admin de Sede</SelectItem>}
                           <SelectItem value="2">2 — Lectura Admin</SelectItem>
                           <SelectItem value="3">3 — Especial</SelectItem>
-                          <SelectItem value="4">4 — Super Admin</SelectItem>
+                          {canManageSecurity && <SelectItem value="4">4 — Super Admin</SelectItem>}
                         </>
                       ) : (
                         <SelectItem value="0">0 — Usuario normal</SelectItem>
@@ -606,22 +650,26 @@ export default function UsersPage() {
                   <Label className="text-xs">Nombre completo *</Label>
                   <Input className="mt-1 h-8 text-sm" placeholder="Juan Perez"
                     value={form.nombre_completo} onChange={(e) => setForm((f) => ({ ...f, nombre_completo: e.target.value }))}  aria-label="Juan Perez" />
+                  {fieldError('nombre_completo')}
                 </div>
                 <div>
                   <Label className="text-xs">Cedula *</Label>
                   <Input className="mt-1 h-8 text-sm" placeholder="12345678"
                     value={form.cedula} onChange={(e) => setForm((f) => ({ ...f, cedula: e.target.value }))}
-                    disabled={!!editingId}  aria-label="12345678" />
+                    aria-label="12345678" />
+                  {fieldError('cedula')}
                 </div>
                 <div>
                   <Label className="text-xs">Correo electronico</Label>
                   <Input type="email" className="mt-1 h-8 text-sm" placeholder="juan@empresa.com"
                     value={form.correo} onChange={(e) => setForm((f) => ({ ...f, correo: e.target.value }))}  aria-label="juan@empresa.com" />
+                  {fieldError('correo')}
                 </div>
                 <div>
                   <Label className="text-xs">Telefono</Label>
                   <Input className="mt-1 h-8 text-sm" placeholder="+57 300 123 4567"
                     value={form.telefono} onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))}  aria-label="+57 300 123 4567" />
+                  {fieldError('telefono')}
                 </div>
               </div>
             </div>
@@ -640,6 +688,7 @@ export default function UsersPage() {
                         {cargos.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {fieldError('cargo')}
                   </div>
                   <div>
                     <Label className="text-xs">Sede</Label>
@@ -650,6 +699,7 @@ export default function UsersPage() {
                         {locations.map((l) => <SelectItem key={l.id} value={String(l.id)}>{l.name} — {l.city}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {fieldError('location_id')}
                   </div>
                 </div>
               </div>
@@ -667,12 +717,13 @@ export default function UsersPage() {
       </Dialog>
 
       {/* ── Role Dialog ──────────────────────────────────────────────────── */}
-      <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
+      <Dialog open={roleDialogOpen} onOpenChange={value => { if (!securityBusy) setRoleDialogOpen(value) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Cambiar rol — {roleTarget?.nombre_completo}</DialogTitle>
           </DialogHeader>
           <div className="py-2 space-y-3">
+            {securityError && <p role="alert" className="text-destructive">{securityError}</p>}
             <p className="text-sm text-muted-foreground">
               Selecciona el nuevo tipo de usuario. Esto afecta el acceso al sistema.
             </p>
@@ -697,10 +748,12 @@ export default function UsersPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRoleDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleChangeRole}>Aplicar</Button>
+            <Button disabled={securityBusy} onClick={handleChangeRole}>{securityBusy ? 'Guardando…' : 'Aplicar'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={!!stateTarget} onOpenChange={value => { if (!value && !securityBusy) setStateTarget(null) }}><DialogContent><DialogHeader><DialogTitle>{stateTarget?.estado === 1 ? 'Inactivar cuenta' : 'Reactivar cuenta'}</DialogTitle></DialogHeader><p>{stateTarget?.nombre_completo}. Los registros históricos se conservarán.</p>{securityError && <p role="alert" className="text-destructive">{securityError}</p>}<DialogFooter><Button disabled={securityBusy} variant="outline" onClick={() => setStateTarget(null)}>Cancelar</Button><Button disabled={securityBusy} onClick={() => stateTarget && handleToggleEstado(stateTarget)}>{securityBusy ? 'Guardando…' : 'Confirmar estado'}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={!!passwordTarget} onOpenChange={value => { if (!value && !securityBusy) { setPasswordTarget(null); setNewPassword(''); setConfirmPassword('') } }}><DialogContent><DialogHeader><DialogTitle>Cambiar contraseña — {passwordTarget?.nombre_completo}</DialogTitle></DialogHeader><p className="text-sm">Las sesiones anteriores se invalidarán. Usa una contraseña que cumpla las políticas de seguridad.</p><Label htmlFor="new-account-password">Nueva contraseña</Label><Input id="new-account-password" type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} /><Label htmlFor="confirm-account-password">Confirmar contraseña</Label><Input id="confirm-account-password" type="password" autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />{securityError && <p role="alert" className="text-destructive">{securityError}</p>}<DialogFooter><Button disabled={securityBusy} variant="outline" onClick={() => { setPasswordTarget(null); setNewPassword(''); setConfirmPassword('') }}>Cancelar</Button><Button disabled={securityBusy || !newPassword || !confirmPassword} onClick={async () => { if (!passwordTarget || operationLock.current) return; if (newPassword !== confirmPassword) { setSecurityError('Las contraseñas no coinciden.'); return } operationLock.current = true; setSecurityBusy(true); setSecurityError(''); try { await usersService.cambiarContrasena(passwordTarget.id, newPassword, confirmPassword); setPasswordTarget(null); setNewPassword(''); setConfirmPassword(''); await load() } catch (error) { setSecurityError(parseError(error).message) } finally { operationLock.current = false; setSecurityBusy(false) } }}>{securityBusy ? 'Guardando…' : 'Actualizar contraseña'}</Button></DialogFooter></DialogContent></Dialog>
     </div>
   )
 }

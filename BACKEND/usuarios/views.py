@@ -100,23 +100,9 @@ class Perfil(APIView):
         if int(getattr(request.user, 'tipo_usuario', 0) or 0) not in (1, 4):
             return Response({'error': 'No autorizado.'}, status=403)
 
-        usuario = Usuario.objects.filter(id=id).first()
-        if not usuario:
-            return Response({"error": "Usuario no encontrado"}, status=404)
+        from .admin_accounts import AccountState
+        return AccountState().toggle(request, id)
 
-        nuevo_estado = 0 if usuario.estado == 1 else 1
-        usuario.estado = nuevo_estado
-        usuario.save()
-
-        credencial = getattr(usuario, 'credenciales', None)
-        if credencial:
-            credencial.estado = nuevo_estado
-            credencial.save()
-
-        return Response({
-            "id": usuario.id,
-            "nuevo_estado": nuevo_estado,
-        })
 
 class registerUsers(APIView):
     permission_classes = []

@@ -2,12 +2,12 @@
 
 from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from auth.authentication import PasswordVersionJWTAuthentication
 
 
 @database_sync_to_async
 def _resolve_user(raw_token):
-    authentication = JWTAuthentication()
+    authentication = PasswordVersionJWTAuthentication()
     try:
         validated = authentication.get_validated_token(raw_token)
         return authentication.get_user(validated)

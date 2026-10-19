@@ -12,6 +12,7 @@ export interface UserFilters {
 export interface CreateUserData {
   usuario: string
   password: string
+  confirm_password: string
   cedula: string
   nombre_completo: string
   correo?: string | null
@@ -22,6 +23,7 @@ export interface CreateUserData {
 }
 
 export interface UpdateUserData {
+  cedula?: string
   nombre_completo?: string
   correo?: string | null
   telefono?: string | null
@@ -105,7 +107,7 @@ export const usersService = {
   // ── Real backend endpoints ────────────────────────────────────────────────
 
   /** GET /user/lista-usuarios — list colaboradores (admin only) */
-  async listarColaboradores(params?: { search?: string; page?: number; page_size?: number; tipo?: 'normal' | 'trabajador' }): Promise<ColaboradorListResponse> {
+  async listarColaboradores(params?: { estado?: string; search?: string; page?: number; page_size?: number; tipo?: 'normal' | 'trabajador' }): Promise<ColaboradorListResponse> {
     const response = await api.get('/user/lista-usuarios', { params })
     return response.data
   },
@@ -126,6 +128,9 @@ export const usersService = {
   async actualizarColaborador(usuarioRelId: number, data: UpdateUserData): Promise<ColaboradorData> {
     const response = await api.put(`/user/register/${usuarioRelId}`, data)
     return response.data
+  },
+  async cambiarContrasena(id: number, new_password: string, confirm_password: string): Promise<void> {
+    await api.post(`/user/register/${id}/password`, { new_password, confirm_password })
   },
 
   /** PATCH /user/cambiar-estado-usuario/<id> — toggle active/inactive */
