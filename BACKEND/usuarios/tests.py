@@ -4,17 +4,17 @@ Protocolo de pruebas - API Usuarios
 Cubre todos los endpoints definidos en usuarios/urls.py:
 
   POST/GET/PUT  /user/register/<id>/
-  POST          /user/registerTemporal/
+  POST          /user/register-temporal
   POST          /user/registrar-masivo/
   GET/PATCH     /user/perfil/  y  /user/perfil/<id>/
   GET           /user/lista-usuarios/
-  GET           /user/cargo-Nivel-Regional/
+  GET           /user/cargo-nivel-regional
   GET           /user/filtrar-usuarios/
   POST/PATCH    /user/cambiar-estado-usuario/  y  /user/cambiar-estado-usuario/<id>/
   PATCH         /user/actualizar-rol-usuario/<id>/
-  GET/POST/PUT/DELETE  /user/Cargo/
-  GET/POST/PUT/DELETE  /user/Nivel/
-  GET/POST/PUT/DELETE  /user/Region/
+  GET/POST/PUT/DELETE  /user/cargo
+  GET/POST/PUT/DELETE  /user/nivel
+  GET/POST/PUT/DELETE  /user/region
   GET           /user/reporte-usuarios/
 
 Tipos de usuario:
@@ -32,7 +32,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 
-from usuarios.models import Usuarios, Colaboradores, Cargo, Niveles, Regional
+from usuarios.models import Credenciales, Usuario, Cargo, Niveles, Regional
 
 
 # ──────────────────────────────────────────────
@@ -53,30 +53,16 @@ def _crear_regional(nombre="Bogotá"):
 
 def _crear_colaborador(cc="11111111", nombre="Test", apellido="Colab",
                         cargo=None, nivel=None, regional=None):
-    return Colaboradores.objects.create(
-        cccolaborador=cc,
-        nombrecolaborador=nombre,
-        apellidocolaborador=apellido,
-        correocolaborador=f"{cc}@test.com",
-        telefocolaborador="3000000000",
-        cargocolaborador=cargo,
-        nivelcolaborador=nivel,
-        regionalcolab=regional,
-        estadocolaborador=1,
-    )
+    return Usuario.objects.create(
+        cedula=cc, nombre_completo=f"{nombre} {apellido}", correo=f"{cc}@test.com",
+        telefono="3000000000", cargo=cargo, nivel=nivel, regional=regional, estado=1)
 
 
-def _crear_usuario(usuario="admin_test", tipousuario=4, colaborador=None):
-    u = Usuarios(
-        usuario=usuario,
-        tipousuario=tipousuario,
-        estadousuario=1,
-        idcolaboradoru=colaborador,
-    )
+def _crear_usuario(usuario="admin_test", tipo_usuario=4, colaborador=None):
+    u = Credenciales(usuario=usuario, tipo_usuario=tipo_usuario, estado=1, usuario_rel=colaborador)
     u.set_password("TestPass@1234")
     u.save()
     return u
-
 
 # ──────────────────────────────────────────────
 #  PERFIL
@@ -108,17 +94,17 @@ class PerfilTests(APITestCase):
     def test_get_perfil_propio_retorna_200(self):
         resp = self.client.get(reverse("perfil"))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.data["id_colaborador"], self.colab.idcolaborador)
+        self.assertEqual(resp.data["id"], self.colab.id)
 
     def test_get_perfil_propio_incluye_campos(self):
         resp = self.client.get(reverse("perfil"))
-        for campo in ["nombre_colaborador", "apellido_colaborador",
+        for campo in ["nombre_completo",
                       "nombre_cargo", "nombre_nivel", "nombre_regional"]:
             self.assertIn(campo, resp.data)
 
     def test_get_perfil_usuario_sin_colaborador_retorna_400(self):
         """Usuario sin colaborador asociado debe recibir 400."""
-        user_sin_colab = _crear_usuario("sin_colab", tipousuario=2)
+        user_sin_colab = _crear_usuario("sin_colab", tipo_usuario=2)
         self.client.force_authenticate(user=user_sin_colab)
         resp = self.client.get(reverse("perfil"))
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -127,10 +113,10 @@ class PerfilTests(APITestCase):
 
     def test_get_perfil_por_id_existente(self):
         resp = self.client.get(
-            reverse("perfil-especifico", kwargs={"id": self.colab.idcolaborador})
+            reverse("perfil-especifico", kwargs={"id": self.colab.id})
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.data["id_colaborador"], self.colab.idcolaborador)
+        self.assertEqual(resp.data["id"], self.colab.id)
 
     def test_get_perfil_por_id_inexistente_retorna_400(self):
         resp = self.client.get(
@@ -140,14 +126,24 @@ class PerfilTests(APITestCase):
 
     # ── PATCH ──────────────────────────────────
 
-    def test_patch_alterna_estado_colaborador(self):
-        """PATCH alterna estado del colaborador: 1 → 0."""
+    def test_patch_no_permite_autoinactivacion(self):
+        """La ruta histórica también protege la cuenta autenticada."""
         resp = self.client.patch(
-            reverse("perfil-especifico", kwargs={"id": self.colab.idcolaborador})
+            reverse("perfil-especifico", kwargs={"id": self.colab.id})
         )
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.colab.refresh_from_db()
-        self.assertEqual(self.colab.estadocolaborador, 0)
+        self.assertEqual(self.colab.estado, 1)
+
+    def test_patch_alterna_otra_cuenta_y_revoca_sesiones(self):
+        profile = _crear_colaborador('profile-target')
+        account = _crear_usuario('profile-target', tipo_usuario=0, colaborador=profile)
+        response = self.client.patch(reverse('perfil-especifico', kwargs={'id':profile.pk}))
+        self.assertEqual(response.status_code, 200)
+        profile.refresh_from_db(); account.refresh_from_db()
+        self.assertEqual(profile.estado, 0)
+        self.assertEqual(account.estado, 0)
+        self.assertEqual(account.password_version, 1)
 
     def test_patch_sin_id_retorna_400(self):
         resp = self.client.patch(reverse("perfil"))
@@ -172,28 +168,18 @@ class RegisterTests(APITestCase):
         self.cargo = _crear_cargo()
         self.nivel = _crear_nivel()
         self.regional = _crear_regional()
-        # El endpoint requiere IsSuperAdmin + IsAdminUser → tipousuario 4
-        self.admin = _crear_usuario("superadm", tipousuario=4)
+        # El endpoint requiere IsSuperAdmin + IsAdminUser → tipo_usuario 4
+        self.admin = _crear_usuario("superadm", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url_post = reverse("register")
 
     def _payload_valido(self, usuario="nuevo_usr", cc="22222222"):
         return {
-            "usuario": usuario,
-            "password": "Clave@5678",
-            "is_staff": 0,
-            "idcolaborador": {
-                "cc_colaborador": cc,
-                "nombre_colaborador": "Nuevo",
-                "apellido_colaborador": "Usuario",
-                "cargo_colaborador": self.cargo.idcargo,
-                "correo_colaborador": f"{cc}@test.com",
-                "telefo_colaborador": "3101234567",
-                "nivel_colaborador": self.nivel.idnivel,
-                "regional_colab": self.regional.idregional,
-            }
+            "usuario": usuario, "password": "Clave@5678", "confirm_password": "Clave@5678",
+            "cedula": cc, "nombre_completo": "Nuevo Usuario", "cargo": self.cargo.pk,
+            "correo": f"{cc}@test.com", "telefono": "3101234567", "nivel": self.nivel.pk,
+            "regional": self.regional.pk, "tipo_usuario": 0,
         }
-
     # ── Autenticación ──────────────────────────
 
     def test_post_sin_autenticacion_retorna_401(self):
@@ -206,7 +192,7 @@ class RegisterTests(APITestCase):
         resp = self.client.post(self.url_post, self._payload_valido(), format="json")
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         self.assertIn("usuario_id", resp.json())
-        self.assertIn("colaborador_id", resp.json())
+        self.assertIn("usuario_rel_id", resp.json())
 
     def test_post_usuario_duplicado_retorna_400(self):
         self.client.post(self.url_post, self._payload_valido(), format="json")
@@ -231,46 +217,46 @@ class RegisterTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_post_sin_datos_colaborador_retorna_400(self):
-        payload = {"usuario": "x2", "password": "p", "idcolaborador": {}}
+        payload = {"usuario": "x2", "password": "p", "id": {}}
         resp = self.client.post(self.url_post, payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    # ── GET por colaborador_id ──────────────────
+    # ── GET por usuario_id ──────────────────
 
     def test_get_colaborador_existente(self):
         colab = _crear_colaborador(
             "55555555", cargo=self.cargo, nivel=self.nivel, regional=self.regional
         )
         resp = self.client.get(
-            reverse("register", kwargs={"colaborador_id": colab.idcolaborador})
+            reverse("register-detail", kwargs={"usuario_id": colab.id})
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.data["nombre"], "Test")
+        self.assertEqual(resp.data["nombre_completo"], "Test Colab")
 
     def test_get_colaborador_inexistente_retorna_404(self):
         resp = self.client.get(
-            reverse("register", kwargs={"colaborador_id": 99999})
+            reverse("register-detail", kwargs={"usuario_id": 99999})
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
-    # ── PUT por colaborador_id ──────────────────
+    # ── PUT por usuario_id ──────────────────
 
     def test_put_actualiza_colaborador(self):
         colab = _crear_colaborador(
             "66666666", cargo=self.cargo, nivel=self.nivel, regional=self.regional
         )
         resp = self.client.put(
-            reverse("register", kwargs={"colaborador_id": colab.idcolaborador}),
+            reverse("register-detail", kwargs={"usuario_id": colab.id}),
             {"correo": "nuevo@correo.com"},
             format="json"
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         colab.refresh_from_db()
-        self.assertEqual(colab.correocolaborador, "nuevo@correo.com")
+        self.assertEqual(colab.correo, "nuevo@correo.com")
 
     def test_put_colaborador_inexistente_retorna_404(self):
         resp = self.client.put(
-            reverse("register", kwargs={"colaborador_id": 99999}),
+            reverse("register-detail", kwargs={"usuario_id": 99999}),
             {"correo": "x@x.com"},
             format="json"
         )
@@ -287,20 +273,12 @@ class RegisterTemporalTests(APITestCase):
     def setUp(self):
         self.client = APIClient()
         # IsSuperAdmin + IsUsuarioEspecial → tipo 4 cumple ambas
-        self.admin = _crear_usuario("superadm_tmp", tipousuario=4)
+        self.admin = _crear_usuario("superadm_tmp", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
-        self.url = reverse("register_temporal")
+        self.url = reverse("register-temporal")
 
     def _payload(self, usuario="tmp_usr", cc="77777777"):
-        return {
-            "usuario": usuario,
-            "password": "Temporal@1",
-            "idcolaborador": {
-                "cc_colaborador": cc,
-                "nombre_colaborador": "Temp",
-                "apellido_colaborador": "User",
-            }
-        }
+        return {'usuario': usuario, 'password': 'Temporal@1', 'cedula': cc, 'nombre_completo': 'Temp User'}
 
     def test_post_crea_usuario_temporal(self):
         resp = self.client.post(self.url, self._payload(), format="json")
@@ -317,7 +295,7 @@ class RegisterTemporalTests(APITestCase):
     def test_post_sin_campos_minimos_retorna_400(self):
         resp = self.client.post(
             self.url,
-            {"usuario": "x3", "password": "p", "idcolaborador": {}},
+            {"usuario": "x3", "password": "p", "id": {}},
             format="json"
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -336,9 +314,9 @@ class ListaUsuariosTests(APITestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_lista", tipousuario=4)
+        self.admin = _crear_usuario("admin_lista", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
-        self.url = reverse("lista_usuarios")
+        self.url = reverse("lista-usuarios")
 
     def test_get_sin_autenticacion_retorna_401(self):
         resp = APIClient().get(self.url)
@@ -366,7 +344,7 @@ class ListaUsuariosTests(APITestCase):
         colab = _crear_colaborador("10002001", nombre="Zara", apellido="Ruiz", cargo=cargo)
         resp = self.client.get(self.url, {"search": "Zara"})
         self.assertEqual(resp.data["count"], 1)
-        self.assertEqual(resp.data["results"][0]["nombre_colaborador"], "Zara")
+        self.assertEqual(resp.data["results"][0]["nombre_completo"], "Zara Ruiz")
 
     def test_get_paginacion_page_size(self):
         cargo = _crear_cargo("Tecnico")
@@ -382,11 +360,11 @@ class ListaUsuariosTests(APITestCase):
 # ──────────────────────────────────────────────
 
 class DatosCargoTests(APITestCase):
-    """Pruebas de GET/POST/PUT/DELETE /user/Cargo/"""
+    """Pruebas de GET/POST/PUT/DELETE /user/cargo"""
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_cargo", tipousuario=4)
+        self.admin = _crear_usuario("admin_cargo", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("datos-cargo")
 
@@ -465,11 +443,11 @@ class DatosCargoTests(APITestCase):
 
 
 class DatosNivelTests(APITestCase):
-    """Pruebas de GET/POST/PUT/DELETE /user/Nivel/"""
+    """Pruebas de GET/POST/PUT/DELETE /user/nivel"""
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_nivel", tipousuario=4)
+        self.admin = _crear_usuario("admin_nivel", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("datos-nivel")
 
@@ -522,11 +500,11 @@ class DatosNivelTests(APITestCase):
 
 
 class DatosRegionTests(APITestCase):
-    """Pruebas de GET/POST/PUT/DELETE /user/Region/"""
+    """Pruebas de GET/POST/PUT/DELETE /user/region"""
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_region", tipousuario=4)
+        self.admin = _crear_usuario("admin_region", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("datos-region")
 
@@ -585,11 +563,11 @@ class DatosRegionTests(APITestCase):
 # ──────────────────────────────────────────────
 
 class CargoNivelRegionalViewTests(APITestCase):
-    """Pruebas de GET /user/cargo-Nivel-Regional/"""
+    """Pruebas de GET /user/cargo-nivel-regional"""
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_cnr", tipousuario=4)
+        self.admin = _crear_usuario("admin_cnr", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("cargo-nivel-regional")
 
@@ -622,7 +600,7 @@ class FiltrarUsuariosTests(APITestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_filtrar", tipousuario=4)
+        self.admin = _crear_usuario("admin_filtrar", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("filtrar-usuarios")
         cargo = _crear_cargo("Bombero")
@@ -640,7 +618,7 @@ class FiltrarUsuariosTests(APITestCase):
     def test_get_filtra_por_nombre(self):
         resp = self.client.get(self.url, {"q": "Felipe"})
         self.assertEqual(resp.data["count"], 1)
-        self.assertEqual(resp.data["results"][0]["nombre_colaborador"], "Felipe")
+        self.assertEqual(resp.data["results"][0]["nombre_completo"], "Felipe Mora")
 
     def test_get_filtra_por_cedula(self):
         resp = self.client.get(self.url, {"q": "30001001"})
@@ -668,56 +646,56 @@ class CambiarEstadoUsuarioTests(APITestCase):
     def setUp(self):
         self.client = APIClient()
         # IsSuperAdmin → tipo 1,2,3,4; para superadmin puro usamos 4
-        self.admin = _crear_usuario("admin_estado", tipousuario=4)
+        self.admin = _crear_usuario("admin_estado", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
 
         cargo = _crear_cargo("Logística")
         self.colab = _crear_colaborador("50001001", cargo=cargo)
-        self.usuario_colab = _crear_usuario("user_colab1", tipousuario=0, colaborador=self.colab)
+        self.usuario_colab = _crear_usuario("user_colab1", tipo_usuario=0, colaborador=self.colab)
 
     def test_patch_sin_autenticacion_retorna_401(self):
-        url = reverse("cambiar-estado-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
+        url = reverse("cambiar-estado-usuario", kwargs={"usuario_id": self.colab.id})
         resp = APIClient().patch(url, {"estado": 0}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_patch_desactiva_usuario(self):
-        url = reverse("cambiar-estado-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
+        url = reverse("cambiar-estado-usuario", kwargs={"usuario_id": self.colab.id})
         resp = self.client.patch(url, {"estado": 0}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.usuario_colab.refresh_from_db()
-        self.assertEqual(self.usuario_colab.estadousuario, 0)
+        self.assertEqual(self.usuario_colab.estado, 0)
 
     def test_patch_activa_usuario(self):
-        self.usuario_colab.estadousuario = 0
+        self.usuario_colab.estado = 0
         self.usuario_colab.save()
-        url = reverse("cambiar-estado-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
+        url = reverse("cambiar-estado-usuario", kwargs={"usuario_id": self.colab.id})
         resp = self.client.patch(url, {"estado": 1}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.usuario_colab.refresh_from_db()
-        self.assertEqual(self.usuario_colab.estadousuario, 1)
+        self.assertEqual(self.usuario_colab.estado, 1)
 
     def test_patch_estado_invalido_retorna_400(self):
-        url = reverse("cambiar-estado-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
+        url = reverse("cambiar-estado-usuario", kwargs={"usuario_id": self.colab.id})
         resp = self.client.patch(url, {"estado": 99}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_patch_sin_campo_estado_retorna_400(self):
-        url = reverse("cambiar-estado-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
+        url = reverse("cambiar-estado-usuario", kwargs={"usuario_id": self.colab.id})
         resp = self.client.patch(url, {}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_patch_colaborador_inexistente_retorna_404(self):
-        url = reverse("cambiar-estado-usuario", kwargs={"colaborador_id": 99999})
+        url = reverse("cambiar-estado-usuario", kwargs={"usuario_id": 99999})
         resp = self.client.patch(url, {"estado": 0}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     # ── POST masivo ────────────────────────────
 
-    def test_post_masivo_por_colaborador_ids(self):
+    def test_post_masivo_por_usuario_ids(self):
         url = reverse("cambiar-estado-usuario-post")
         resp = self.client.post(
             url,
-            {"colaborador_ids": [self.colab.idcolaborador], "estado": 0},
+            {"usuario_ids": [self.colab.id], "estado": 0},
             format="json"
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
@@ -728,7 +706,7 @@ class CambiarEstadoUsuarioTests(APITestCase):
         url = reverse("cambiar-estado-usuario-post")
         resp = self.client.post(
             url,
-            {"cedulas": [self.colab.cccolaborador], "estado": 1},
+            {"cedulas": [self.colab.cedula], "estado": 1},
             format="json"
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
@@ -743,20 +721,21 @@ class CambiarEstadoUsuarioTests(APITestCase):
         url = reverse("cambiar-estado-usuario-post")
         resp = self.client.post(
             url,
-            {"colaborador_ids": [self.colab.idcolaborador]},
+            {"usuario_ids": [self.colab.id]},
             format="json"
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_post_masivo_id_inexistente_registrado_en_no_encontrados(self):
+    def test_post_masivo_id_inexistente_rechaza_operacion(self):
         url = reverse("cambiar-estado-usuario-post")
         resp = self.client.post(
             url,
-            {"colaborador_ids": [99999], "estado": 0},
+            {"usuario_ids": [99999], "estado": 0},
             format="json"
         )
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertGreater(resp.data["no_encontrados"], 0)
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.colab.refresh_from_db()
+        self.assertEqual(self.colab.estado, 1)
 
 
 # ──────────────────────────────────────────────
@@ -768,46 +747,47 @@ class ActualizarRolUsuarioTests(APITestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.superadmin = _crear_usuario("superadm_rol", tipousuario=4)
+        self.superadmin = _crear_usuario("superadm_rol", tipo_usuario=4)
         self.client.force_authenticate(user=self.superadmin)
         cargo = _crear_cargo("Operaciones")
         self.colab = _crear_colaborador("60001001", cargo=cargo)
-        self.usuario = _crear_usuario("user_rol_test", tipousuario=0, colaborador=self.colab)
+        self.usuario = _crear_usuario("user_rol_test", tipo_usuario=0, colaborador=self.colab)
 
     def test_patch_sin_autenticacion_retorna_401(self):
-        url = reverse("actualizar-rol-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
-        resp = APIClient().patch(url, {"tipousuario": 1}, format="json")
+        url = reverse("actualizar-rol-usuario", kwargs={"usuario_id": self.colab.id})
+        resp = APIClient().patch(url, {"tipo_usuario": 1}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_patch_actualiza_rol(self):
-        url = reverse("actualizar-rol-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
-        resp = self.client.patch(url, {"tipousuario": 1}, format="json")
+        url = reverse("actualizar-rol-usuario", kwargs={"usuario_id": self.colab.id})
+        resp = self.client.patch(url, {"tipo_usuario": 1}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.usuario.refresh_from_db()
-        self.assertEqual(self.usuario.tipousuario, 1)
+        self.assertEqual(self.usuario.tipo_usuario, 1)
 
     def test_patch_rol_invalido_retorna_400(self):
-        url = reverse("actualizar-rol-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
-        resp = self.client.patch(url, {"tipousuario": 99}, format="json")
+        url = reverse("actualizar-rol-usuario", kwargs={"usuario_id": self.colab.id})
+        resp = self.client.patch(url, {"tipo_usuario": 99}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_patch_sin_campo_tipousuario_retorna_400(self):
-        url = reverse("actualizar-rol-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
+    def test_patch_sin_campo_tipo_usuario_retorna_400(self):
+        url = reverse("actualizar-rol-usuario", kwargs={"usuario_id": self.colab.id})
         resp = self.client.patch(url, {}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_patch_colaborador_inexistente_retorna_404(self):
-        url = reverse("actualizar-rol-usuario", kwargs={"colaborador_id": 99999})
-        resp = self.client.patch(url, {"tipousuario": 1}, format="json")
+        url = reverse("actualizar-rol-usuario", kwargs={"usuario_id": 99999})
+        resp = self.client.patch(url, {"tipo_usuario": 1}, format="json")
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_patch_respuesta_incluye_rol_anterior_y_nuevo(self):
-        url = reverse("actualizar-rol-usuario", kwargs={"colaborador_id": self.colab.idcolaborador})
-        resp = self.client.patch(url, {"tipousuario": 2}, format="json")
-        self.assertIn("rol_anterior", resp.data)
-        self.assertIn("nuevo_rol", resp.data)
-        self.assertEqual(resp.data["rol_anterior"], 0)
-        self.assertEqual(resp.data["nuevo_rol"], 2)
+    def test_patch_respuesta_refleja_rol_guardado_sin_contrasena(self):
+        url = reverse("actualizar-rol-usuario", kwargs={"usuario_id": self.colab.id})
+        resp = self.client.patch(url, {"tipo_usuario": 2}, format="json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['tipo_usuario'], 2)
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.tipo_usuario, 2)
+        self.assertNotIn('password', resp.data)
 
 
 # ──────────────────────────────────────────────
@@ -819,7 +799,7 @@ class RegistrarMasivoTests(APITestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_masivo", tipousuario=4)
+        self.admin = _crear_usuario("admin_masivo", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("registrar-masivo")
         self.cargo = _crear_cargo("Socorrista")
@@ -857,7 +837,7 @@ class RegistrarMasivoTests(APITestCase):
         f = self._csv_file(self._csv_valido("80001001"))
         resp = self.client.post(self.url, {"archivo": f}, format="multipart")
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(Colaboradores.objects.filter(cccolaborador="80001001").exists())
+        self.assertTrue(Usuario.objects.filter(cedula="80001001").exists())
 
     def test_post_csv_cedula_duplicada_reporta_error(self):
         _crear_colaborador("80002001")
@@ -878,7 +858,7 @@ class ReporteUsuariosTests(APITestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.admin = _crear_usuario("admin_reporte", tipousuario=4)
+        self.admin = _crear_usuario("admin_reporte", tipo_usuario=4)
         self.client.force_authenticate(user=self.admin)
         self.url = reverse("reporte-usuarios")
 

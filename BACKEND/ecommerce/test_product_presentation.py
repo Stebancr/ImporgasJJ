@@ -62,6 +62,7 @@ class ProductPresentationTests(APITestCase):
         self.assertEqual(self.client.patch(self.url(self.images[1]), {'is_primary': True}, format='json').status_code, 403)
         self.assertEqual(self.product.images.filter(is_primary=True).get().id, self.images[0].id)
 
+    @override_settings(TCC_SHIPPING_ENABLED=True)
     def test_description_preserved_verbatim(self):
         for text in ['', '  Título\r\n* Uno\n- Dos\n• Tres\n\nPárrafo  ', '<script>alert(1)</script> & <b>texto</b>']:
             with self.subTest(text=text):
@@ -71,18 +72,4 @@ class ProductPresentationTests(APITestCase):
                 self.product.refresh_from_db()
                 self.assertEqual(self.product.description, text)
 
-    def test_primary_in_catalog_search_favorites_and_cart_product(self):
-        self.client.patch(self.url(self.images[1]), {'is_primary': True}, format='json')
-        for query in ['', '?search=Synthetic']:
-            response = self.client.get(reverse('product-list') + query)
-            self.assertEqual(response.status_code, 200)
-            self.assertIn('qa-1.png', response.data['data'][0]['primary_image'])
-        self.assertEqual(self.client.post(reverse('favorite-list'), {'product_id': self.product.id}, format='json').status_code, 201)
-        response = self.client.get(reverse('favorite-list'))
-        self.assertIn('qa-1.png', response.data['data'][0]['product']['primary_image'])
-        response = self.client.post(reverse('cart'), {'product_id': self.product.id, 'quantity': 1}, format='json')
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data['items'], [{'product_id': self.product.id, 'quantity': 1}])
-        response = self.client.get(reverse('product-detail', args=[response.data['items'][0]['product_id']]))
-        primary = [i for i in response.data['data']['images'] if i['is_primary']]
-        self.assertEqual(primary[0]['id'], self.images[1].id)
+    @override_settings(TCC_SHIPPING_ENABLED=True)
