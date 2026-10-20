@@ -7,6 +7,8 @@ from .settings import *  # noqa: F401,F403
 
 
 DEBUG = False
+TCC_ADMIN_ONLY = config('TCC_ADMIN_ONLY', default=True, cast=bool)
+TCC_REQUIRE_CONFIRMED_SHIPPING = config('TCC_REQUIRE_CONFIRMED_SHIPPING', default=True, cast=bool)
 ROOT_URLCONF = 'core.urls_production'
 
 ALLOWED_HOSTS = [

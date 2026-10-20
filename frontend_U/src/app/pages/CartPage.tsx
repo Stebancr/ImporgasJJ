@@ -10,7 +10,7 @@ import type { ShippingCalculation } from '../../services/shipping'
 function CartPage() {
   const { items: cartItems, removeFromCart, updateQuantity } = useCart()
   const [couponCode, setCouponCode] = useState('')
-  const {enabled:tccEnabled,error:configError}=useShippingConfig()
+  const {enabled:tccEnabled,error:configError,requiresConfirmation}=useShippingConfig()
   const [calculation,setCalculation]=useState<{key:string;value:ShippingCalculation}|null>(null)
   const items=cartItems.map(item=>({product_id:Number(item.product.id),quantity:item.quantity}))
   const cartKey=JSON.stringify(items)
@@ -25,7 +25,7 @@ function CartPage() {
   }
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
-  const shipping = tccEnabled===false?(subtotal>=500000?0:25000):(activeCalculation?Number(activeCalculation.total):null)
+  const shipping = tccEnabled===false&&!requiresConfirmation?(subtotal>=500000?0:25000):(activeCalculation?Number(activeCalculation.total):null)
   const total = activeCalculation?Number(activeCalculation.order_total):(shipping===null?null:subtotal+shipping)
 
   if (cartItems.length === 0) {
@@ -156,8 +156,8 @@ function CartPage() {
                     <Truck className="w-5 h-5 text-[#001575]" />
                   </div>
                   <div>
-                    <p className="font-medium text-[#1A1D21] text-sm">Envio Gratis</p>
-                    <p className="text-xs text-[#6B7280]">En compras +$500K</p>
+                    <p className="font-medium text-[#1A1D21] text-sm">Envío según destino</p>
+                    <p className="text-xs text-[#6B7280]">Se confirma antes del pago</p>
                   </div>
                 </div>
               </div>

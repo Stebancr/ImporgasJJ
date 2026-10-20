@@ -2,6 +2,7 @@ import api from './admin_api'
 import type { Product, ProductImage, ProductSpec, ProductStock, ApiResponse, PaginatedResponse } from '@/admin/types'
 
 export interface ProductFilters {
+  shipping_status?: string
   category_id?: number
   brand_id?: number
   is_available?: boolean

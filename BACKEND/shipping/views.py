@@ -34,7 +34,9 @@ class ShippingConfigView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response({'enabled': settings.TCC_SHIPPING_ENABLED, 'carrier': 'TCC',
+        from .rollout import enabled_for
+        return Response({'enabled': enabled_for(request.user), 'carrier': 'TCC',
+                         'requires_shipping_confirmation': settings.TCC_REQUIRE_CONFIRMED_SHIPPING,
                          'tracking_api_available': False, 'units': {'weight': 'kg', 'dimensions': 'cm'}})
 
 
@@ -50,7 +52,8 @@ class QuoteView(APIView):
     throttle_scope = 'shipping_quote'
 
     def post(self, request):
-        if not settings.TCC_SHIPPING_ENABLED:
+        from .rollout import enabled_for
+        if not enabled_for(request.user):
             return Response({'error': 'El transporte TCC aún no está habilitado.'}, status=503)
         data = QuoteInput(data=request.data)
         data.is_valid(raise_exception=True)
@@ -69,11 +72,11 @@ class EstimateInput(serializers.Serializer):
 
 class EstimateView(APIView):
     permission_classes = [AllowAny]
-    authentication_classes = []
     throttle_scope = 'shipping_quote'
 
     def post(self, request):
-        if not settings.TCC_SHIPPING_ENABLED:
+        from .rollout import enabled_for
+        if not enabled_for(request.user):
             return Response({'error': 'El transporte TCC aún no está habilitado.'}, status=503)
         data = EstimateInput(data=request.data)
         data.is_valid(raise_exception=True)

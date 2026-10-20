@@ -95,6 +95,8 @@ class ProductSpecSerializer(serializers.ModelSerializer):
 # ─── Product ──────────────────────────────────────────────────────────────────
 
 class ProductListSerializer(serializers.ModelSerializer):
+    shipping_status = serializers.ReadOnlyField()
+    shipping_missing_fields = serializers.ReadOnlyField()
     """Serializer ligero para listados."""
     category_name = serializers.CharField(source='category.name', read_only=True)
     brand_name    = serializers.CharField(source='brand.name', read_only=True)
@@ -108,7 +110,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'price', 'original_price', 'discount_percentage',
             'category_id', 'category_name', 'brand_id', 'brand_name',
             'total_stock', 'is_available', 'is_featured',
-            'rating', 'reviews_count', 'primary_image', 'shipping_ready',
+            'rating', 'reviews_count', 'primary_image', 'shipping_ready', 'shipping_status', 'shipping_missing_fields',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
@@ -129,6 +131,8 @@ class ProductListSerializer(serializers.ModelSerializer):
 
 
 class ProductDetailSerializer(serializers.ModelSerializer):
+    shipping_status = serializers.ReadOnlyField()
+    shipping_missing_fields = serializers.ReadOnlyField()
     """Serializer completo con imágenes, specs y stock."""
     category    = CategorySerializer(read_only=True)
     brand       = BrandSerializer(read_only=True)
@@ -147,7 +151,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'category_id', 'category', 'brand_id', 'brand',
             'total_stock', 'is_available', 'is_featured',
             'rating', 'reviews_count',
-            'images', 'specifications', 'stock_entries', 'shipping_profile', 'shipping_ready',
+            'images', 'specifications', 'stock_entries', 'shipping_profile', 'shipping_ready', 'shipping_status', 'shipping_missing_fields',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
