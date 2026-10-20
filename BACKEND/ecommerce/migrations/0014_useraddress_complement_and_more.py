@@ -25,9 +25,4 @@ class Migration(migrations.Migration):
             name='neighborhood',
             field=models.CharField(blank=True, default='', max_length=100),
         ),
-        migrations.AddField(
-            model_name='useraddress',
-            name='tcc_city_code',
-            field=models.CharField(blank=True, default='', max_length=8),
-        ),
     ]

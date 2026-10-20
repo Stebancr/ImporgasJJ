@@ -172,15 +172,6 @@ class Product(models.Model):
         verbose_name_plural = 'Productos'
 
     @property
-    def shipping_ready(self):
-        profile = getattr(self, 'shipping_profile', None)
-        return bool(profile and (not profile.requires_shipping or (
-            1 <= profile.packages_per_unit <= 100 and all(getattr(profile, field) is not None and getattr(profile, field) > 0
-                for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm')) and
-            (self.price * 100 >= profile.packages_per_unit if profile.declared_value_from_price else
-             profile.declared_value is not None and profile.declared_value > 0))))
-
-    @property
     def discount_percentage(self):
         if self.original_price and self.original_price > self.price:
             return round((1 - self.price / self.original_price) * 100)
@@ -570,7 +561,6 @@ class TrackingEvent(models.Model):
 # ─────────────────────────────────────────────
 
 class UserAddress(models.Model):
-    tcc_city_code = models.CharField(max_length=8, blank=True, default='')
     complement = models.CharField(max_length=200, blank=True, default='')
     neighborhood = models.CharField(max_length=100, blank=True, default='')
     delivery_instructions = models.CharField(max_length=300, blank=True, default='')

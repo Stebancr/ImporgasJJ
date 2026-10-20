@@ -14,7 +14,6 @@ export interface ProductFilters {
 }
 
 export interface CreateProductData {
-  shipping_profile?: import('../../services/shipping').ShippingProfile
   name: string
   description: string
   price: number

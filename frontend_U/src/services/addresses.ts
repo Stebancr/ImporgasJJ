@@ -1,7 +1,7 @@
 import api from './api'
-import type { TCCAddress } from './shipping'
+interface DeliveryDetails { complement?:string; neighborhood?:string; delivery_instructions?:string }
 
-export interface UserAddress extends Partial<TCCAddress> {
+export interface UserAddress extends DeliveryDetails {
   id: number
   label: string
   recipient_name: string
@@ -15,7 +15,7 @@ export interface UserAddress extends Partial<TCCAddress> {
   updated_at: string
 }
 
-export interface CreateAddressPayload extends Partial<TCCAddress> {
+export interface CreateAddressPayload extends DeliveryDetails {
   label: string
   recipient_name: string
   phone: string

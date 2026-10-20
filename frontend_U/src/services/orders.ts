@@ -23,7 +23,6 @@ export interface BackendTrackingEvent {
 }
 
 export interface BackendOrder {
-  shipment?: import('./shipping').ShipmentInfo | null
   id: number
   order_number: string
   tracking_code: string
@@ -62,9 +61,7 @@ export interface WompiCheckoutIntent {
 }
 
 export interface CreateOrderPayload {
-  shipping_quote_id?: string
   address_id?: number | null
-  tcc_city_code?: string
   complement?: string
   neighborhood?: string
   delivery_instructions?: string

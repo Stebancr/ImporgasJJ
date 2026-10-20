@@ -37,11 +37,8 @@ import { locationsService } from '@/admin/services/admin_locations'
 import { clearProductDraft, productDraftKey, readDraftImages, readProductDraft, saveDraftImages, saveProductDraft } from '@/admin/services/product_draft'
 import type { Product, Brand, Category, ProductSpec, Location } from '@/admin/types'
 import ProductDescription from '@/components/ProductDescription'
-import ShippingProfileFields from '@/components/ShippingProfileFields'
-import { emptyShippingProfile, type ShippingProfile } from '@/services/shipping'
 
 interface FormData {
-  shipping_profile?: ShippingProfile
   name: string
   description: string
   price: string
@@ -53,7 +50,6 @@ interface FormData {
 }
 
 const defaultForm: FormData = {
-  shipping_profile: { ...emptyShippingProfile, declared_value_from_price: true },
   name: '',
   description: '',
   price: '',
@@ -212,7 +208,6 @@ export default function ProductsPage() {
         setFormData({
           name: full.name,
           description: full.description ?? '',
-          shipping_profile: full.shipping_profile ?? emptyShippingProfile,
           price: full.price.toString(),
           original_price: full.original_price?.toString() ?? '',
           category: full.category_id.toString(),
@@ -261,9 +256,6 @@ export default function ProductsPage() {
     if(!formData.brand) errors.brand='Selecciona una marca.'
     if(!Number.isFinite(Number(formData.price)) || Number(formData.price)<=0) errors.price='El precio debe ser mayor que cero.'
     if(formData.original_price && Number(formData.original_price)<Number(formData.price)) errors.original_price='Debe ser mayor o igual al precio de venta.'
-    const shipping=formData.shipping_profile??emptyShippingProfile
-    if(!Number.isInteger(shipping.packages_per_unit)||Number(shipping.packages_per_unit)<1||Number(shipping.packages_per_unit)>100) errors.shipping_profile='Indica entre 1 y 100 paquetes.'
-    if(formData.is_available && shipping.requires_shipping && [shipping.weight_kg,shipping.height_cm,shipping.width_cm,shipping.length_cm,...(shipping.declared_value_from_price?[]:[shipping.declared_value])].some(value=>!value||!Number.isFinite(Number(value))||Number(value)<=0)) errors.shipping_profile='Completa el peso, las dimensiones y el valor manual con números positivos.'
     if(Object.values(stockValues).some(value=>value!==''&&(!/^\d+$/.test(value)||Number(value)>2147483647))) errors.stocks='Las existencias deben ser números enteros no negativos.'
     if(newSpecRows.some(row=>!row.name.trim()||!row.value.trim())) errors.specs='Completa o elimina las características vacías.'
     if(Object.keys(errors).length){showErrors(errors);return}
@@ -274,7 +266,7 @@ export default function ProductsPage() {
       let upload=0
       const payload={
         product:{...formData,price:formData.price,original_price:formData.original_price||null,
-          category:Number(formData.category),brand:Number(formData.brand),shipping_profile:shipping},
+          category:Number(formData.category),brand:Number(formData.brand)},
         updated_at:editingProduct?.updated_at,
         images:gallery.map(item=>({... (item.id?{id:item.id}:{file:`upload_${upload++}`}),alt_text:item.alt_text})),
         primary:gallery.length?primary:null,
@@ -389,7 +381,6 @@ export default function ProductsPage() {
                       <TableRow key={product.id}>
                         <TableCell>
                           <p className="font-medium">{product.name}</p>
-                          {product.shipping_ready === false && <Badge variant="warning" className="mt-1">Información logística incompleta</Badge>}
                           {product.is_featured && (
                             <Badge variant="secondary" className="mt-1">Destacado</Badge>
                           )}
@@ -569,10 +560,9 @@ export default function ProductsPage() {
               </div>
             </div>
 
-            <ShippingProfileFields price={formData.price} value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>setFormData({...formData,shipping_profile})}/>
 
-            {fieldErrors.shipping_profile && <p className="text-sm text-destructive">{fieldErrors.shipping_profile}</p>}{fieldErrors.specs && <p className="text-sm text-destructive">{fieldErrors.specs}</p>}{/* Specifications */}
             <div className="grid gap-2">
+              {fieldErrors.specs && <p className="text-sm text-destructive">{fieldErrors.specs}</p>}
               <div className="flex items-center justify-between">
                 <Label>Especificaciones del producto</Label>
                 <Button

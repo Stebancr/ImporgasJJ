@@ -64,9 +64,6 @@ def context_for(delivery, source):
                 ('Impuestos',cop(source.taxes)),('Total pagado',cop(source.paid_total if source.paid_total is not None else source.total)),
                 ('Entrega',f'{source.shipping_address}, {source.city}, {source.department}'),('Pago','Wompi'),('Estado',source.get_status_display())],
             order_url=public_url(f'pedido/{source.tracking_code}'))
-        shipment = getattr(source,'shipment',None)
-        if shipment and shipment.waybill and shipment.waybill.isalnum():
-            context['tracking_url']='https://www.tcc.com.co/rastreo?tipo=RE&documento='+shipment.waybill
     else:
         tech = getattr(getattr(source.tecnico,'usuario_rel',None),'nombre_completo','')
         context.update(name=source.cliente.nombre, title='Tu servicio técnico ha sido finalizado',number=source.numero_tarea,

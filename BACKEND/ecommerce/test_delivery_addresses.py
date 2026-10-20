@@ -6,14 +6,13 @@ from rest_framework.test import APIClient, APITestCase
 from unittest import skipUnless
 from usuarios.models import Credenciales
 from ecommerce.models import UserAddress
-from shipping.catalog import city
+
 
 
 def payload():
-    location = city('76001000')
     return dict(label='Casa QA', recipient_name='Persona QA', phone='3000000000',
-                address='Calle sintética 123', city=location['city'], department=location['department'],
-                tcc_city_code=location['code'], neighborhood='Barrio QA', is_default=False)
+                address='Calle sintética 123', city='Cali', department='Valle del Cauca',
+                neighborhood='Barrio QA', is_default=False)
 
 
 class DeliveryAddressTests(APITestCase):
@@ -39,7 +38,7 @@ class DeliveryAddressTests(APITestCase):
         self.assertEqual(self.client.put(f'{self.url}/{pk}', {'is_default':True}, format='json').status_code, 200)
         self.assertTrue(UserAddress.objects.get(pk=pk).is_default)
         self.assertEqual(self.client.put(f'{self.url}/{other_pk}', {'address':payload()['address']}, format='json').status_code, 400)
-        self.assertEqual(self.client.put(f'{self.url}/{pk}', {'city':'Ciudad incorrecta'}, format='json').status_code, 400)
+        self.assertEqual(self.client.put(f'{self.url}/{pk}', {'city':''}, format='json').status_code, 400)
         self.client.force_authenticate(self.other)
         self.assertEqual(self.client.get(self.url).data['data'], [])
         self.assertEqual(self.client.put(f'{self.url}/{pk}', {'is_default':True}, format='json').status_code, 404)

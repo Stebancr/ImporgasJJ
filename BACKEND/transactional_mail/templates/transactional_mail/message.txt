@@ -13,7 +13,7 @@ Hola {{ name }},
 {{ document_url }}
 El enlace es personal y vence en 7 días. Solicita uno nuevo a nuestro equipo si vence.
 {% if order_url %}Consultar pedido: {{ order_url }}{% endif %}
-{% if tracking_url %}Rastrear TCC: {{ tracking_url }}{% endif %}
+
 
 Contacto: {{ contact }} · {{ phone }}
 {% endautoescape %}

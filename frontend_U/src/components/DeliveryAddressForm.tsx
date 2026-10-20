@@ -1,18 +1,17 @@
 import {useRef,useState,useId,type FormEvent} from 'react'
 import addressesService,{type CreateAddressPayload,type UserAddress} from '../services/addresses'
-import TCCAddressFields from './TCCAddressFields'
+import DeliveryLocationFields from './DeliveryLocationFields'
 
 export default function DeliveryAddressForm({initial,onSaved,onCancel}:{
   initial:Partial<CreateAddressPayload>&{id?:number};onSaved:(address:UserAddress)=>void;onCancel:()=>void
 }){
   const id=useId(),lock=useRef(false)
   const [busy,setBusy]=useState(false),[error,setError]=useState('')
-  const [form,setForm]=useState<CreateAddressPayload>({label:'Casa',recipient_name:'',phone:'',address:'',city:'',department:'',postal_code:'',is_default:false,tcc_city_code:'',complement:'',neighborhood:'',delivery_instructions:'',...initial})
+  const [form,setForm]=useState<CreateAddressPayload>({label:'Casa',recipient_name:'',phone:'',address:'',city:'',department:'',postal_code:'',is_default:false,complement:'',neighborhood:'',delivery_instructions:'',...initial})
   const input='mt-1 min-h-11 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-700'
   const submit=async(e:FormEvent)=>{
     e.preventDefault()
     if(lock.current)return
-    if(!form.tcc_city_code){setError('Selecciona el departamento y la ciudad de entrega.');return}
     lock.current=true;setBusy(true);setError('')
     try{
       const saved=initial.id?await addressesService.update(initial.id,form):await addressesService.create(form)
@@ -29,7 +28,7 @@ export default function DeliveryAddressForm({initial,onSaved,onCancel}:{
         <label className="text-sm" htmlFor={`${id}-name`}>Nombre de quien recibe<input id={`${id}-name`} required maxLength={200} autoComplete="name" className={input} value={form.recipient_name} onChange={e=>setForm({...form,recipient_name:e.target.value})}/></label>
         <label className="text-sm" htmlFor={`${id}-phone`}>Número de teléfono<input id={`${id}-phone`} required type="tel" pattern="[+0-9() .-]{7,30}" maxLength={30} title="Escribe un número de teléfono válido." autoComplete="tel" className={input} value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label>
       </div>
-      <TCCAddressFields compact value={{...form,tcc_city_code:form.tcc_city_code||'',complement:form.complement||'',neighborhood:form.neighborhood||'',delivery_instructions:form.delivery_instructions||''}} onChange={patch=>setForm(previous=>({...previous,...patch}))}/>
+      <DeliveryLocationFields value={form} onChange={patch=>setForm(previous=>({...previous,...patch}))}/>
       <label className="block text-sm" htmlFor={`${id}-street`}>Dirección<input id={`${id}-street`} required maxLength={500} autoComplete="street-address" className={input} value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label>
       <div className="grid gap-4 sm:grid-cols-2">
         {(['neighborhood','complement','postal_code','label'] as const).map(field=><label className="text-sm" key={field}>{{neighborhood:'Barrio (opcional)',complement:'Apartamento o complemento (opcional)',postal_code:'Código postal (opcional)',label:'Nombre de la dirección'}[field]}<input required={field==='label'} maxLength={{neighborhood:100,complement:200,postal_code:20,label:50}[field]} className={input} value={form[field]||''} onChange={e=>setForm({...form,[field]:e.target.value})}/></label>)}

@@ -8,16 +8,17 @@ import ordersService from '../../services/orders'
 import { getWompiOptions, loadWompiWidget } from '../../services/wompiCheckout'
 import addressesService, { UserAddress, type CreateAddressPayload } from '../../services/addresses'
 import DeliveryAddressForm from '../../components/DeliveryAddressForm'
-import { shippingService, type ShippingQuote, type TCCAddress } from '../../services/shipping'
-import TCCAddressFields from '../../components/TCCAddressFields'
-import { shippingDestinationKey } from '../../services/shipping'
+import DeliveryLocationFields from '../../components/DeliveryLocationFields'
 
 // La llave pública puede incluirse en el bundle; los secretos permanecen sólo
 // en Django. El backend también devuelve esta llave con la intención de pago.
 const WOMPI_PUBLIC_KEY = import.meta.env.VITE_WOMPI_PUBLIC_KEY ?? ''
 const CASH_ON_DELIVERY_ENABLED = false
 
-interface CheckoutForm extends TCCAddress {
+interface CheckoutForm {
+  complement:string
+  neighborhood:string
+  delivery_instructions:string
   email: string
   name: string
   phone: string
@@ -35,19 +36,13 @@ function CheckoutPage() {
   const [step, setStep] = useState<'info' | 'payment'>('info')
   const [submitting, setSubmitting] = useState(false)
   const paymentLock = useRef(false)
-  const restorePaymentCart=useRef<string|null>(null)
   const [addresses, setAddresses] = useState<UserAddress[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
   const [addressEditor,setAddressEditor]=useState<(Partial<CreateAddressPayload>&{id?:number})|null>(null)
   const [destinationReady,setDestinationReady]=useState(false)
   const [addressError,setAddressError]=useState('')
-  const [tccEnabled,setTccEnabled]=useState<boolean|null>(null)
-  const [shippingError,setShippingError]=useState('')
-  const [quoting,setQuoting]=useState(false)
-  const [quoted,setQuoted]=useState<{key:string;value:ShippingQuote}|null>(null)
-  const [quoteVersion,setQuoteVersion]=useState(0)
   const [form, setForm] = useState<CheckoutForm>({
-    tcc_city_code:'',complement:'',neighborhood:'',delivery_instructions:'',
+    complement:'',neighborhood:'',delivery_instructions:'',
     email: '',
     name: '',
     phone: '',
@@ -57,47 +52,11 @@ function CheckoutPage() {
     postalCode: '',
     paymentMethod: 'wompi',
   })
-  useEffect(()=>{shippingService.config().then(config=>setTccEnabled(config.enabled)).catch(()=>setShippingError('No fue posible verificar el transporte. Actualiza la página antes de pagar.'))},[])
-  const quoteKey=JSON.stringify({items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),form,address_id:selectedAddressId})
   const cartKey=JSON.stringify(items.map(item=>({id:item.product.id,quantity:item.quantity})))
   useEffect(()=>{
-    if(destinationReady&&items.length&&restorePaymentCart.current){
-      if(restorePaymentCart.current===cartKey)setStep('payment')
-      restorePaymentCart.current=null
-    }
-  },[destinationReady,cartKey])
-  const activeQuote=quoted?.key===quoteKey && Date.parse(quoted.value.expires_at)>Date.now()?quoted.value:null
-  useEffect(()=>{
-    let active=true
-    const controller=new AbortController()
-    setQuoted(null)
-    if(tccEnabled!==true||!destinationReady)return
-    setShippingError('')
-    if(!form.email||!form.name||!form.phone||!form.address||!form.tcc_city_code){setQuoting(false);return}
-    setQuoting(true)
-    const timer=setTimeout(()=>{
-      shippingService.quote({force:quoteVersion>0,items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),
-        address_id:selectedAddressId,customer_name:form.name,customer_email:form.email,customer_phone:form.phone,
-        shipping_address:form.address,city:form.city,department:form.department,postal_code:form.postalCode,
-        tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions},controller.signal)
-        .then(value=>{if(active)setQuoted({key:quoteKey,value})})
-        .catch((e:unknown)=>{if(active)setShippingError(e instanceof Error?e.message:'No fue posible cotizar el transporte.')})
-        .finally(()=>{if(active)setQuoting(false)})
-    },500)
-    return()=>{active=false;clearTimeout(timer);controller.abort()}
-  },[quoteKey,tccEnabled,quoteVersion,destinationReady])
-  useEffect(()=>{
     if(!destinationReady||!user?.id||!items.length)return
-    try{
-      sessionStorage.setItem(`delivery-checkout:${user.id}`,JSON.stringify({form,step,cartKey,address_id:selectedAddressId,quote_id:activeQuote?.id||null}))
-      sessionStorage.setItem(shippingDestinationKey(user.id),JSON.stringify({address_id:selectedAddressId,customer_name:form.name,customer_phone:form.phone,customer_email:form.email,shipping_address:form.address,city:form.city,department:form.department,postal_code:form.postalCode,tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions}))
-    }catch{/* Optional storage. Server always recalculates before charging. */}
-  },[destinationReady,user?.id,form,step,selectedAddressId,cartKey,activeQuote?.id])
-  useEffect(()=>{
-    if(!quoted)return
-    const timer=setTimeout(()=>setQuoteVersion(value=>value+1),Math.max(0,Date.parse(quoted.value.expires_at)-Date.now()))
-    return()=>clearTimeout(timer)
-  },[quoted])
+    try{sessionStorage.setItem(`delivery-checkout:${user.id}`,JSON.stringify({form,step,cartKey,address_id:selectedAddressId}))}catch{/* Optional browser storage. */}
+  },[destinationReady,user?.id,form,step,selectedAddressId,cartKey])
 
   // Load user data and addresses if authenticated
   useEffect(() => {
@@ -122,43 +81,22 @@ function CheckoutPage() {
       loaded=true
       setAddresses(data)
       // Auto-select default address
-      let defaultAddr = data.find((addr) => addr.is_default)
+      const defaultAddr = data.find(addr => addr.is_default)
       try{
         const saved=JSON.parse(sessionStorage.getItem(`delivery-checkout:${user?.id}`)||'null')
-        const destination=JSON.parse(sessionStorage.getItem(shippingDestinationKey(user?.id||''))||'null')
-        // A newer cart location takes precedence over an older checkout draft.
-        const sameDestination=!destination||(destination.tcc_city_code===saved?.form?.tcc_city_code
-          &&(destination.address_id??null)===(saved?.address_id??null)
-          &&[['shipping_address','address'],['complement','complement'],['neighborhood','neighborhood'],['delivery_instructions','delivery_instructions']].every(([source,target])=>!(source in destination)||destination[source]===saved?.form?.[target]))
-        if(saved?.form&&sameDestination&&(!saved.address_id||data.some(address=>address.id===saved.address_id))){
+        if(saved?.form&&(!saved.address_id||data.some(address=>address.id===saved.address_id))){
           setForm(previous=>({...previous,...Object.fromEntries(Object.entries(saved.form).filter(([key,value])=>key in previous&&typeof value==='string')),paymentMethod:'wompi'}))
           setSelectedAddressId(saved.address_id||null)
-          if(saved.address_id){const address=data.find(a=>a.id===saved.address_id)!;applyAddress(address)}
-          if(saved.step==='payment')restorePaymentCart.current=saved.cartKey
+          if(saved.address_id)applyAddress(data.find(a=>a.id===saved.address_id)!)
           return
         }
-      }catch{/* Invalid browser state is ignored. */}
-      try {
-        const draft = user?.id ? JSON.parse(sessionStorage.getItem(shippingDestinationKey(user.id)) || 'null') : null
-        if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
-          if (draft.address_id) defaultAddr = data.find(addr => addr.id === draft.address_id) || defaultAddr
-          else if (typeof draft.tcc_city_code === 'string') {
-            const text = (key:string) => typeof draft[key] === 'string' ? draft[key] : ''
-            setSelectedAddressId(null)
-            setForm(previous => ({...previous, name:text('customer_name')||previous.name, phone:text('customer_phone')||previous.phone,
-              address:text('shipping_address'), city:text('city'), department:text('department'), postalCode:text('postal_code'),
-              tcc_city_code:text('tcc_city_code'), complement:text('complement'), neighborhood:text('neighborhood'),
-              delivery_instructions:text('delivery_instructions')}))
-            return
-          }
-        }
-      } catch { /* Invalid or unavailable browser storage never replaces a saved address. */ }
+      }catch{/* Invalid drafts are ignored. */}
       if (defaultAddr) {
         setSelectedAddressId(defaultAddr.id)
         setForm(prev => ({ ...prev, name: defaultAddr.recipient_name, phone: defaultAddr.phone,
           address: defaultAddr.address, city: defaultAddr.city, department: defaultAddr.department,
           postalCode: defaultAddr.postal_code || '' }))
-        setForm(prev=>({...prev,tcc_city_code:defaultAddr.tcc_city_code||'',complement:defaultAddr.complement||'',neighborhood:defaultAddr.neighborhood||'',delivery_instructions:defaultAddr.delivery_instructions||''}))
+        setForm(prev=>({...prev,complement:defaultAddr.complement||'',neighborhood:defaultAddr.neighborhood||'',delivery_instructions:defaultAddr.delivery_instructions||''}))
       }
     } catch (error) {
       setAddressError('No fue posible cargar tus direcciones. Puedes reintentar o agregar una dirección de entrega.')
@@ -167,11 +105,11 @@ function CheckoutPage() {
 
   const applyAddress=(addr:UserAddress)=>{
     setSelectedAddressId(addr.id)
-    setForm(previous=>({...previous,name:addr.recipient_name,phone:addr.phone,address:addr.address,city:addr.city,department:addr.department,postalCode:addr.postal_code||'',tcc_city_code:addr.tcc_city_code||'',complement:addr.complement||'',neighborhood:addr.neighborhood||'',delivery_instructions:addr.delivery_instructions||''}))
+    setForm(previous=>({...previous,name:addr.recipient_name,phone:addr.phone,address:addr.address,city:addr.city,department:addr.department,postalCode:addr.postal_code||'',complement:addr.complement||'',neighborhood:addr.neighborhood||'',delivery_instructions:addr.delivery_instructions||''}))
   }
   const saveAddress=(address:UserAddress)=>{
     setAddresses(previous=>[address,...previous.filter(item=>item.id!==address.id).map(item=>address.is_default?{...item,is_default:false}:item)])
-    applyAddress(address);setAddressEditor(null);setDestinationReady(true);setAddressError('');setQuoteVersion(value=>value+1)
+    applyAddress(address);setAddressEditor(null);setDestinationReady(true);setAddressError('')
   }
 
   const handleSelectAddress = (addressId: number) => {
@@ -186,7 +124,7 @@ function CheckoutPage() {
         city: addr.city,
         department: addr.department,
         postalCode: addr.postal_code || '',
-        tcc_city_code:addr.tcc_city_code||'',complement:addr.complement||'',neighborhood:addr.neighborhood||'',delivery_instructions:addr.delivery_instructions||'',
+        complement:addr.complement||'',neighborhood:addr.neighborhood||'',delivery_instructions:addr.delivery_instructions||'',
       }))
     }
   }
@@ -195,14 +133,14 @@ function CheckoutPage() {
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
     [items]
   )
-  const shipping = tccEnabled!==false ? (activeQuote?Number(activeQuote.total):null) : (subtotal >= 500000 ? 0 : 25000)
-  const total = activeQuote?Number(activeQuote.order_total):subtotal+(shipping??0)
+  const shipping = subtotal >= 500000 ? 0 : 25000
+  const total = subtotal + shipping
 
 
   // Unique reference per session
   const reference = useMemo(
     () => `GS-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-    [activeQuote?.id]
+    []
   )
 
   const formatPrice = (price: number) =>
@@ -219,9 +157,6 @@ function CheckoutPage() {
 
   const handleSubmitInfo = (e: React.FormEvent) => {
     e.preventDefault()
-    if(tccEnabled===null || (tccEnabled && !activeQuote)){
-      setShippingError('Completa la dirección y espera una cotización vigente antes de pagar.');return
-    }
     if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
       alert('El carrito contiene una cantidad inválida. Regresa al carrito y vuelve a agregar el producto.')
       return
@@ -236,8 +171,8 @@ function CheckoutPage() {
     setSubmitting(true)
     try {
       const order = await ordersService.create({
-        shipping_quote_id:activeQuote?.id,address_id:selectedAddressId,
-        tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions,
+        address_id:selectedAddressId,
+        complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions,
         customer_name: form.name,
         customer_email: form.email,
         customer_phone: form.phone,
@@ -262,50 +197,35 @@ function CheckoutPage() {
   }
 
   const handleWompiConfirm = async () => {
-    if(tccEnabled===null || (tccEnabled && !activeQuote)){setShippingError('Actualiza la cotización antes de pagar.');return null}
     if (paymentLock.current) return
     paymentLock.current = true
     setSubmitting(true)
     try {
       const paymentIntent = await ordersService.createWompiIntent({
-        shipping_quote_id:activeQuote?.id,address_id:selectedAddressId,
-        tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions,
-        customer_name: form.name,
-        customer_email: form.email,
-        customer_phone: form.phone,
-        shipping_address: form.address,
-        city: form.city,
-        department: form.department,
-        postal_code: form.postalCode,
-        payment_method: 'wompi',
-        wompi_reference: reference,
-        items: items.map((i) => ({
-          product_id: parseInt(i.product.id),
-          quantity: i.quantity,
-        })),
+        address_id: selectedAddressId,
+        complement: form.complement, neighborhood: form.neighborhood, delivery_instructions: form.delivery_instructions,
+        customer_name: form.name, customer_email: form.email, customer_phone: form.phone,
+        shipping_address: form.address, city: form.city, department: form.department, postal_code: form.postalCode,
+        payment_method: 'wompi', wompi_reference: reference,
+        items: items.map(item => ({product_id: Number(item.product.id), quantity: item.quantity})),
       })
-      
       const options = getWompiOptions(paymentIntent, WOMPI_PUBLIC_KEY, form.email, form.name)
       const Widget = await loadWompiWidget()
       sessionStorage.setItem('pendingWompiOrder', JSON.stringify({
         tracking_code: paymentIntent.tracking_code, reference: paymentIntent.wompi_reference,
       }))
-      new Widget(options).open((result) => {
+      new Widget(options).open(result => {
         if (!result.transaction?.id) return
-        const query = new URLSearchParams({ tracking: paymentIntent.tracking_code, id: result.transaction.id })
+        const query = new URLSearchParams({tracking: paymentIntent.tracking_code, id: result.transaction.id})
         navigate('/checkout/resultado?' + query.toString())
       })
-      setSubmitting(false)
-      paymentLock.current = false
-
       return paymentIntent
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error al procesar el pedido'
-      alert(message)
-      if(tccEnabled)setQuoteVersion(value=>value+1)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Error al procesar el pedido')
+      return null
+    } finally {
       setSubmitting(false)
       paymentLock.current = false
-      return null
     }
   }
 
@@ -465,7 +385,7 @@ function CheckoutPage() {
                       placeholder="Calle 123 #45-67, Apto 101" />
                   </div>
 
-                  <TCCAddressFields value={form} onChange={patch=>{setSelectedAddressId(null);setForm(prev=>({...prev,...patch}))}}/>
+                  <DeliveryLocationFields value={form} onChange={patch=>{setSelectedAddressId(null);setForm(previous=>({...previous,...patch}))}}/>
                   <div className="grid md:grid-cols-3 gap-4">
                     <div>
                       <label htmlFor="checkout-postalCode" className="block text-sm font-medium text-gray-700 mb-1">Código Postal</label>
@@ -482,7 +402,6 @@ function CheckoutPage() {
 
                 <button
                   type="submit"
-                  disabled={tccEnabled===null || (tccEnabled && (!activeQuote||quoting))}
                   className="w-full mt-6 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
                 >
                   Continuar al Pago
@@ -566,7 +485,7 @@ function CheckoutPage() {
                     <button
                       type="button"
                       onClick={handleCashConfirm as unknown as React.MouseEventHandler}
-                      disabled={submitting||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
+                      disabled={submitting}
                       className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60"
                     >
                       {submitting ? 'Procesando...' : 'Confirmar Pedido'}
@@ -575,7 +494,7 @@ function CheckoutPage() {
                     <button
                       type="button"
                       onClick={handleWompiConfirm}
-                      disabled={submitting||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
+                      disabled={submitting}
                       className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition-all disabled:opacity-60 flex items-center justify-center gap-2"
                     >
                       {submitting ? (
@@ -627,8 +546,8 @@ function CheckoutPage() {
                   <span className="text-gray-600">Subtotal de productos</span>
                   <span className="font-medium">{formatPrice(subtotal)}</span>
                 </div>
-                <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeQuote?.discounts||0))}</span></div>
-                <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(Number(activeQuote?.taxes||0))}</span></div>
+                <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(0)}</span></div>
+                <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(0)}</span></div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Envío</span>
                   {shipping === 0 ? (
@@ -640,22 +559,16 @@ function CheckoutPage() {
                 <div className="border-t pt-3">
                   <div className="flex justify-between">
                     <span className="text-lg font-semibold text-gray-900">Total</span>
-                    <span className="text-lg font-bold text-gray-900">{tccEnabled!==false&&!activeQuote?'Pendiente de cotización':formatPrice(total)}</span>
+                    <span className="text-lg font-bold text-gray-900">{formatPrice(total)}</span>
                   </div>
                 </div>
               </div>
 
-              {tccEnabled && <div className="mt-4 space-y-2 text-sm" aria-live="polite">
-                {quoting&&<p>Calculando el costo de envío…</p>}
-                {activeQuote&&<><p>Costo de envío: {formatPrice(Number(activeQuote.tcc_rate))}</p><p>Preparación del envío: {formatPrice(Number(activeQuote.surcharge))}</p><p>Precio válido hasta {new Date(activeQuote.expires_at).toLocaleTimeString('es-CO')}</p></>}
-                <button type="button" className="text-blue-700 underline" disabled={quoting} onClick={()=>setQuoteVersion(value=>value+1)}>Volver a cotizar</button>
-              </div>}
-              {shippingError&&<p role="alert" className="mt-3 text-sm text-red-700">{shippingError}</p>}
 
               <div className="mt-6 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Truck className="w-4 h-4 text-blue-600" />
-                  <span>{tccEnabled?'El costo de envío se confirma antes del pago':'Envío gratis en compras +$500.000'}</span>
+                  <span>{'Envío gratis en compras +$500.000'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Shield className="w-4 h-4 text-green-600" />

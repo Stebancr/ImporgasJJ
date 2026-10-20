@@ -100,7 +100,6 @@ class ProductListSerializer(serializers.ModelSerializer):
     brand_name    = serializers.CharField(source='brand.name', read_only=True)
     primary_image = serializers.SerializerMethodField()
     discount_percentage = serializers.ReadOnlyField()
-    shipping_ready = serializers.ReadOnlyField()
 
     class Meta:
         model = Product
@@ -108,7 +107,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'price', 'original_price', 'discount_percentage',
             'category_id', 'category_name', 'brand_id', 'brand_name',
             'total_stock', 'is_available', 'is_featured',
-            'rating', 'reviews_count', 'primary_image', 'shipping_ready',
+            'rating', 'reviews_count', 'primary_image',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
@@ -136,9 +135,6 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     specifications = ProductSpecSerializer(many=True, read_only=True)
     stock_entries  = ProductStockSerializer(many=True, read_only=True)
     discount_percentage = serializers.ReadOnlyField()
-    shipping_ready = serializers.ReadOnlyField()
-    from shipping.serializers import ProductShippingSerializer
-    shipping_profile = ProductShippingSerializer(read_only=True)
 
     class Meta:
         model = Product
@@ -147,7 +143,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'category_id', 'category', 'brand_id', 'brand',
             'total_stock', 'is_available', 'is_featured',
             'rating', 'reviews_count',
-            'images', 'specifications', 'stock_entries', 'shipping_profile', 'shipping_ready',
+            'images', 'specifications', 'stock_entries',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']
@@ -165,8 +161,6 @@ class ProductDetailSerializer(serializers.ModelSerializer):
 class ProductCreateSerializer(serializers.ModelSerializer):
     """Serializer para crear/editar productos (sin imágenes — se suben aparte)."""
     description = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
-    from shipping.serializers import ProductShippingSerializer
-    shipping_profile = ProductShippingSerializer(required=False)
 
     def validate_price(self, value):
         if value <= 0:
@@ -177,24 +171,10 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         model = Product
         fields = [
             'name', 'description', 'price', 'original_price',
-            'category', 'brand', 'is_available', 'is_featured', 'shipping_profile',
+            'category', 'brand', 'is_available', 'is_featured',
         ]
 
     def validate(self, data):
-        from django.conf import settings
-        incoming = data.get('shipping_profile')
-        profile = getattr(self.instance, 'shipping_profile', None) if self.instance else None
-        available = data.get('is_available', getattr(self.instance, 'is_available', True))
-        if available and (settings.TCC_SHIPPING_ENABLED or incoming is not None):
-            values = {field: getattr(profile, field) for field in ('requires_shipping', 'weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')} if profile else {'requires_shipping': True}
-            values.update(incoming or {})
-            automatic = values.get('declared_value_from_price', getattr(profile, 'declared_value_from_price', False))
-            if automatic:
-                values['declared_value'] = data.get('price', getattr(self.instance, 'price', None))
-                if values['declared_value'] is not None and values['declared_value'] * 100 < values.get('packages_per_unit', getattr(profile, 'packages_per_unit', 1)):
-                    raise serializers.ValidationError({'price': 'El precio debe cubrir al menos un centavo por paquete.'})
-            if values.get('requires_shipping', True) and any(not values.get(field) for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')):
-                raise serializers.ValidationError({'shipping_profile': 'Completa peso, dimensiones y valor declarado por paquete antes de publicar un producto físico.'})
         original = data.get('original_price', getattr(self.instance, 'original_price', None))
         price    = data.get('price', getattr(self.instance, 'price', None))
         if original is not None and price is not None and original < price:
@@ -202,26 +182,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
                 {"original_price": "El precio original debe ser mayor o igual al precio actual."}
             )
         return data
-
-    def create(self, validated_data):
-        from django.db import transaction
-        from shipping.models import ProductShippingProfile
-        shipping = validated_data.pop('shipping_profile', None)
-        with transaction.atomic():
-            product = super().create(validated_data)
-            if shipping is not None:
-                ProductShippingProfile.objects.create(product=product, **shipping)
-        return product
-
-    def update(self, instance, validated_data):
-        from django.db import transaction
-        from shipping.models import ProductShippingProfile
-        shipping = validated_data.pop('shipping_profile', None)
-        with transaction.atomic():
-            instance = super().update(instance, validated_data)
-            if shipping is not None:
-                ProductShippingProfile.objects.update_or_create(product=instance, defaults=shipping)
-        return instance
 
 
 # ─── Review ───────────────────────────────────────────────────────────────────
@@ -282,14 +242,6 @@ class OrderItemSerializer(serializers.ModelSerializer):
 class OrderSerializer(serializers.ModelSerializer):
     items            = OrderItemSerializer(many=True, read_only=True)
     tracking_history = TrackingEventSerializer(many=True, read_only=True)
-    shipment = serializers.SerializerMethodField()
-
-    def get_shipment(self, obj):
-        from shipping.serializers import shipment_data
-        request = self.context.get('request')
-        admin = bool(request and getattr(request.user, 'tipo_usuario', 0) in (1, 4))
-        return shipment_data(obj, admin=admin)
-
     class Meta:
         model = Order
         fields = [
@@ -302,7 +254,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'wompi_transaction_id', 'wompi_reference',
             'wompi_status',
             'notes',
-            'items', 'tracking_history', 'shipment',
+            'items', 'tracking_history',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
@@ -325,9 +277,7 @@ class OrderItemInputSerializer(serializers.Serializer):
 
 
 class OrderCreateSerializer(serializers.Serializer):
-    shipping_quote_id = serializers.UUIDField(required=False, allow_null=True)
     address_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
-    tcc_city_code = serializers.CharField(required=False, allow_blank=True, max_length=8)
     complement = serializers.CharField(required=False, allow_blank=True, max_length=200)
     neighborhood = serializers.CharField(required=False, allow_blank=True, max_length=100)
     delivery_instructions = serializers.CharField(required=False, allow_blank=True, max_length=300)
@@ -373,19 +323,10 @@ class UserAddressSerializer(serializers.ModelSerializer):
         model = UserAddress
         fields = [
             'id', 'label', 'recipient_name', 'phone', 'address',
-            'city', 'department', 'postal_code', 'is_default', 'tcc_city_code', 'complement', 'neighborhood', 'delivery_instructions',
+            'city', 'department', 'postal_code', 'is_default', 'complement', 'neighborhood', 'delivery_instructions',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-
-    def validate(self, data):
-        from shipping.catalog import city
-        code = data.get('tcc_city_code', getattr(self.instance, 'tcc_city_code', ''))
-        if code:
-            location = city(code)
-            if not location or any(data.get(field, getattr(self.instance, field, '')) != location[field] for field in ('city', 'department')):
-                raise serializers.ValidationError({'city': 'Selecciona una ciudad del departamento indicado.'})
-        return data
 
 
 # ─── Favorite ─────────────────────────────────────────────────────────────────

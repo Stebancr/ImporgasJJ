@@ -1,7 +1,7 @@
 // Docker-only, disposable Django/PostgreSQL database. No real carrier calls.
 const {chromium}=require('/tmp/crm-ui/node_modules/playwright')
 const assert=require('node:assert/strict')
-const api='http://tcc-e2e-backend:8099'
+const api='http://general-e2e-backend:8099'
 ;(async()=>{
  const browser=await chromium.launch({args:['--host-resolver-rules=MAP crm.localhost nginx']})
  const page=await browser.newPage();page.setDefaultTimeout(20000)
@@ -10,7 +10,7 @@ const api='http://tcc-e2e-backend:8099'
  let fail=false
  try{
   assert((await (await page.request.get(api+'/__qa/state')).json()).database_isolated)
-  const login=await page.request.post(api+'/auth/token/',{data:{usuario:'tcc-e2e-admin',password:'TCC-synthetic-fixture-only'}})
+  const login=await page.request.post(api+'/auth/token/',{data:{usuario:'general-e2e-admin',password:'General-synthetic-fixture-only'}})
   assert.equal(login.status(),200)
   const tokens=await login.json(),headers={Authorization:'Bearer '+tokens.access}
   await page.addInitScript(tokens=>localStorage.setItem('token',tokens.access),tokens)
@@ -31,8 +31,6 @@ const api='http://tcc-e2e-backend:8099'
   const selects=dialog.getByRole('combobox')
   await selects.nth(0).click();await page.getByRole('option',{name:'QA',exact:true}).click()
   await selects.nth(1).click();await page.getByRole('option',{name:'QA',exact:true}).click()
-  for(const label of ['Peso por paquete (kg)','Alto por paquete (cm)','Ancho por paquete (cm)','Largo por paquete (cm)']) await dialog.getByLabel(label,{exact:true}).fill('10')
-  assert(await dialog.getByLabel('Usar el precio de venta como valor declarado').isChecked())
   const png=await page.screenshot({clip:{x:0,y:0,width:4,height:4}})
   await dialog.locator('input[type=file]').setInputFiles([{name:'first.png',mimeType:'image/png',buffer:png},{name:'second.png',mimeType:'image/png',buffer:png}])
   await dialog.getByLabel('Usar imagen 2 como principal',{exact:true}).click()
@@ -63,7 +61,6 @@ const api='http://tcc-e2e-backend:8099'
   await dialog.waitFor({state:'hidden'})
   stored=(await (await page.request.get(api+'/products/'+id,{headers})).json()).data
   assert.equal(stored.price,'124000.00');assert.equal(stored.images.length,1);assert(stored.images[0].is_primary)
-  assert(stored.shipping_profile.declared_value_from_price)
   await page.getByRole('row').filter({hasText:'Editor completo QA'}).getByRole('button',{name:'Editar',exact:true}).click()
   assert.equal(await dialog.getByLabel('Precio *',{exact:true}).inputValue(),'124000.00')
   await dialog.getByRole('button',{name:'Cancelar',exact:true}).click()

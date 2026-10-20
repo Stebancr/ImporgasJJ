@@ -11,8 +11,6 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 from usuarios.models import Credenciales
 from ecommerce.models import Product, ProductImage, ProductStock, Brand, Category, Location
-from shipping.services import shipping_snapshot
-from shipping.tests import TEST_SETTINGS
 
 
 def photo():
@@ -25,16 +23,14 @@ class ProductEditorTests(APITestCase):
     def setUp(self):
         self.media = tempfile.TemporaryDirectory()
         self.addCleanup(self.media.cleanup)
-        self.settings_override = override_settings(MEDIA_ROOT=self.media.name, **TEST_SETTINGS)
+        self.settings_override = override_settings(MEDIA_ROOT=self.media.name)
         self.settings_override.enable()
         self.addCleanup(self.settings_override.disable)
         self.user = Credenciales.objects.create(usuario='product-editor-admin', tipo_usuario=4, estado=1)
         self.client.force_authenticate(self.user)
         self.location = Location.objects.create(name='QA', address='QA', city='Cali')
         self.payload = dict(key=str(uuid.uuid4()), product=dict(name='Producto QA', price='100.00',
-            category=Category.objects.create(name='QA').pk, brand=Brand.objects.create(name='QA').pk,
-            shipping_profile=dict(weight_kg='1', height_cm='10', width_cm='10', length_cm='10',
-                declared_value_from_price=True, packages_per_unit=3)),
+            category=Category.objects.create(name='QA').pk, brand=Brand.objects.create(name='QA').pk),
             images=[dict(file='upload_0', alt_text='Imagen QA')], primary=0,
             stocks=[dict(location=self.location.pk, quantity=5)], specs=[dict(name='Modelo', value='QA')])
 
@@ -91,27 +87,9 @@ class ProductEditorTests(APITestCase):
         self.payload.update(primary=0, images=[dict(id=999)])
         self.assertEqual(self.save().status_code, 400)
 
-    def test_declared_price_distributed_without_rounding_inflation(self):
-        response = self.save()
-        self.assertEqual(response.status_code, 201, response.data)
-        product = Product.objects.get()
-        self.assertTrue(product.shipping_ready)
-        snapshot = shipping_snapshot(self.user, [{'product_id':product.pk,'quantity':2}], {
-            'tcc_city_code':'76001000'}, estimate=True)
-        values = [Decimal(p['declared_value']) for p in snapshot['packages']]
-        self.assertEqual(sum(values), Decimal('200'))
-        self.assertEqual(values[:3], [Decimal('33.34'), Decimal('33.33'), Decimal('33.33')])
-        product.price = Decimal('120'); product.save()
-        second = shipping_snapshot(self.user, [{'product_id':product.pk,'quantity':1}], {
-            'tcc_city_code':'76001000'}, estimate=True)
-        self.assertEqual(sum(Decimal(p['declared_value']) for p in second['packages']), Decimal('120'))
-
-    def test_manual_declared_value_and_existing_images_survive_edit(self):
-        self.payload['product']['shipping_profile'].update(declared_value_from_price=False, declared_value='20')
+    def test_existing_images_survive_edit(self):
         first = self.save().data['data']
         product = Product.objects.get()
-        snapshot = shipping_snapshot(self.user, [{'product_id':product.pk,'quantity':2}], {'tcc_city_code':'76001000'}, estimate=True)
-        self.assertEqual(sum(Decimal(p['declared_value']) for p in snapshot['packages']), Decimal('120'))
         image = ProductImage.objects.get()
         original_path = image.image.name
         self.payload.update(key=str(uuid.uuid4()), updated_at=first['updated_at'], images=[dict(id=image.pk, alt_text='Nuevo texto')])
@@ -125,7 +103,6 @@ class ProductEditorTests(APITestCase):
         self.assertEqual(image.alt_text, 'Nuevo texto')
         self.assertEqual(ProductStock.objects.get().quantity, 9)
         self.assertEqual(product.specifications.get().value, 'Actualizado')
-        self.assertEqual(product.shipping_profile.declared_value, Decimal('20'))
 
     def test_primary_change_and_duplicate_spec_roll_back(self):
         first = self.save().data['data']

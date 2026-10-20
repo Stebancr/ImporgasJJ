@@ -3,7 +3,6 @@ export interface ProductDraft {
   gallery?: {file:number;alt_text:string}[]
   primary?: number
   formData: {
-    shipping_profile?: import('../../services/shipping').ShippingProfile
     name: string
     description: string
     price: string
@@ -32,7 +31,8 @@ export function readProductDraft(key: string): ProductDraft | null {
     if (!value) return null
     const draft = JSON.parse(value) as ProductDraft
     if (!draft.formData || !Array.isArray(draft.newSpecRows) || !draft.stockValues) return null
-    return draft
+    const {name,description,price,original_price,category,brand,is_available,is_featured}=draft.formData
+    return {...draft,formData:{name,description,price,original_price,category,brand,is_available,is_featured}}
   } catch { return null }
 }
 
