@@ -176,7 +176,9 @@ class Product(models.Model):
         profile = getattr(self, 'shipping_profile', None)
         return bool(profile and (not profile.requires_shipping or (
             1 <= profile.packages_per_unit <= 100 and all(getattr(profile, field) is not None and getattr(profile, field) > 0
-                for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')))))
+                for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm')) and
+            (self.price * 100 >= profile.packages_per_unit if profile.declared_value_from_price else
+             profile.declared_value is not None and profile.declared_value > 0))))
 
     @property
     def discount_percentage(self):
@@ -203,6 +205,14 @@ class Product(models.Model):
 #  PRODUCT IMAGE
 # ─────────────────────────────────────────────
 
+class ProductEditorOperation(models.Model):
+    key = models.UUIDField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    fingerprint = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class ProductImage(models.Model):
     product    = models.ForeignKey(
         Product,
@@ -218,6 +228,7 @@ class ProductImage(models.Model):
     class Meta:
         db_table = 'product_images'
         ordering = ['order']
+        constraints = [models.UniqueConstraint(fields=['product'], condition=models.Q(is_primary=True), name='uniq_product_primary_image')]
         verbose_name = 'Imagen de producto'
         verbose_name_plural = 'Imágenes de producto'
 

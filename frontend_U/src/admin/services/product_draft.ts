@@ -1,5 +1,9 @@
 export interface ProductDraft {
+  operationKey?: string
+  gallery?: {file:number;alt_text:string}[]
+  primary?: number
   formData: {
+    shipping_profile?: import('../../services/shipping').ShippingProfile
     name: string
     description: string
     price: string

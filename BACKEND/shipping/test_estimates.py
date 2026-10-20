@@ -19,6 +19,16 @@ class EstimateAndPricingTests(APITestCase):
     intent = fixtures.TCCFlowTests.intent
     webhook = fixtures.TCCFlowTests.webhook
 
+    def test_last_destination_is_private_and_normalized(self):
+        self.quote()
+        response = self.client.get(reverse('shipping-destination'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['destination']['code'], self.payload['tcc_city_code'])
+        self.assertNotIn('phone', str(response.data))
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.client.force_authenticate(None)
+        self.assertIn(self.client.get(reverse('shipping-destination')).status_code, (401,403))
+
     def test_anonymous_estimate_uses_product_and_city_without_creating_orders(self):
         self.client.force_authenticate(None)
         payload = {'items': self.payload['items'], 'tcc_city_code': '76001000',
@@ -60,6 +70,15 @@ class EstimateAndPricingTests(APITestCase):
         payload['tcc_city_code'] = '76001000'
         self.assertEqual(self.client.post(reverse('shipping-estimate'), payload, format='json').status_code, 400)
         self.assertFalse(Product.objects.get(pk=self.product.pk).shipping_ready)
+        self.http.assert_not_called()
+
+    def test_missing_profile_returns_actionable_error_without_carrier_request(self):
+        self.profile.delete()
+        response=self.client.post(reverse('shipping-estimate'), {'items': self.payload['items'], 'tcc_city_code':'76001000'}, format='json')
+        self.assertEqual(response.status_code,400)
+        self.assertEqual(response.data['code'],'shipping_profile_incomplete')
+        self.assertIn('completar sus datos',response.data['error'])
+        self.assertNotIn('items',response.data)
         self.http.assert_not_called()
 
     def test_quote_metadata_and_accounting_survive_verified_duplicate_payment(self):

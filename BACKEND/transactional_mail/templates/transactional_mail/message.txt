@@ -1,0 +1,19 @@
+{% autoescape off %}IMPORGAS JJ
+{{ title }}
+
+Hola {{ name }},
+{{ summary }}
+{{ number }} · {{ date }}
+
+{% for row in rows %}{{ row.name }} × {{ row.quantity }} · {{ row.price }} · Importe: {{ row.total }}
+{% endfor %}
+{% for label,value in details %}{{ label }}: {{ value }}
+{% endfor %}
+{{ document_label }}:
+{{ document_url }}
+El enlace es personal y vence en 7 días. Solicita uno nuevo a nuestro equipo si vence.
+{% if order_url %}Consultar pedido: {{ order_url }}{% endif %}
+{% if tracking_url %}Rastrear TCC: {{ tracking_url }}{% endif %}
+
+Contacto: {{ contact }} · {{ phone }}
+{% endautoescape %}

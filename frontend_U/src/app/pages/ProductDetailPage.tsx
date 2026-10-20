@@ -254,6 +254,8 @@ function ProductDetailPage() {
               </div>
 
               {/* Stock Status */}
+              <ShippingCalculator items={[{product_id:Number(product.id),quantity}]} productPrice={product.price} enabled={shippingConfig.enabled===true}/>
+              {shippingConfig.error&&<p role="alert" className="text-sm text-red-700">{shippingConfig.error}</p>}
               <div className="flex items-center gap-2 mb-6">
                 {isLoading ? (
                   <span className="text-gray-500">Cargando disponibilidad...</span>
@@ -307,8 +309,6 @@ function ProductDetailPage() {
             </div>
           </div>
 
-          {shippingConfig.enabled && <ShippingCalculator items={[{product_id:Number(product.id),quantity}]}/>}
-          {shippingConfig.error && <p role="alert" className="p-4 text-sm text-red-700">{shippingConfig.error}</p>}
 
           {/* Tabs */}
           <div className="border-t">

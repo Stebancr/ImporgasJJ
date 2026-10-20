@@ -88,7 +88,7 @@ export async function processIncoming(
           details.media.fileName || `${details.type}-${messageId}`,
         )
       } catch (error: any) {
-        mediaError = String(error?.message || 'No fue posible descargar el archivo.').slice(0, 200)
+        mediaError = 'No fue posible descargar el archivo. Solicita al remitente que lo reenvíe.'
       }
     }
 

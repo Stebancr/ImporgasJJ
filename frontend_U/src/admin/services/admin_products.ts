@@ -26,6 +26,15 @@ export interface CreateProductData {
 }
 
 export const productsService = {
+  async saveEditor(id: number | undefined, payload: unknown, files: File[]): Promise<Product> {
+    const body = new FormData()
+    body.append('payload', JSON.stringify(payload))
+    files.forEach((file, index) => body.append(`upload_${index}`, file))
+    const response = await api.post<ApiResponse<Product>>(id ? `/products/${id}/editor` : '/products/editor', body, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data.data
+  },
   async getAll(filters?: ProductFilters): Promise<PaginatedResponse<Product>> {
     const response = await api.get<PaginatedResponse<Product>>('/products', { params: filters })
     return response.data

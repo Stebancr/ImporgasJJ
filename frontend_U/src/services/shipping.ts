@@ -2,6 +2,7 @@ import api from './api'
 export const shippingDestinationKey = (userId:string) => `tcc-checkout-destination:${userId}`
 
 export interface ShippingProfile {
+  declared_value_from_price?: boolean
   requires_shipping: boolean
   weight_kg: string | null
   height_cm: string | null
@@ -38,6 +39,7 @@ export interface TCCAddress {
 export const shippingService = {
   config: () => api.get<{enabled:boolean; tracking_api_available:boolean}>('/shipping/config'),
   cities: () => api.get<TCCCity[]>('/shipping/cities'),
-  quote: (payload: unknown) => api.post<ShippingQuote>('/shipping/quote',payload),
-  estimate: (payload: unknown) => api.post<ShippingCalculation>('/shipping/estimate',payload),
+  destination: () => api.get<{destination: {code:string;city:string;department:string}|null}>('/shipping/destination'),
+  quote: (payload: unknown, signal?:AbortSignal) => api.post<ShippingQuote>('/shipping/quote',payload,signal),
+  estimate: (payload: unknown, signal?:AbortSignal) => api.post<ShippingCalculation>('/shipping/estimate',payload,signal),
 }

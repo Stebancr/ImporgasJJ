@@ -21,6 +21,8 @@ export interface ChatSession {
 }
 
 export interface ChatMessage {
+  channel?: string
+  normalized_text?: string
   id: number
   text: string
   sender_type: 'user' | 'bot' | 'agent'
@@ -43,6 +45,9 @@ export interface ChatMessage {
 export type Channel = 'ecommerce' | 'whatsapp' | 'whatsapp_web' | 'facebook' | 'instagram'
 
 export interface ChatAttachment {
+  state?: string
+  error?: string
+  retry_allowed?: boolean
   id: number
   url: string
   name: string
@@ -220,6 +225,7 @@ export const adminChatService = {
     const res = await api.get(apiPath, { responseType: 'blob' })
     return res.data
   },
+  retryAttachment: async (id: number) => { await api.post(`/crm-chat/attachments/${id}/retry/`) },
 
   retryMessage: async (sessionId: number, messageId: number) => {
     return (await api.post(`/crm-chat/sessions/${sessionId}/messages/${messageId}/retry/`)).data

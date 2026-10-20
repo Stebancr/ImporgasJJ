@@ -197,7 +197,7 @@ function CartPage() {
                   <span className="font-medium text-[#1A1D21]">{formatPrice(subtotal)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#6B7280]">{tccEnabled?'Envío TCC':'Envío'}</span>
+                  <span className="text-[#6B7280]">Costo de envío</span>
                   {shipping === 0 ? (
                     <span className="font-medium text-[#059669]">Gratis</span>
                   ) : (

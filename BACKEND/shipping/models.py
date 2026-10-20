@@ -7,6 +7,7 @@ from decimal import Decimal
 
 class ProductShippingProfile(models.Model):
     """Uniform boxes per sale unit; dimensions/weight refer to EACH box."""
+    declared_value_from_price = models.BooleanField(default=False)
     product = models.OneToOneField('ecommerce.Product', on_delete=models.CASCADE, related_name='shipping_profile')
     requires_shipping = models.BooleanField(default=True)
     weight_kg = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, validators=[MinValueValidator(Decimal('0.001'))])

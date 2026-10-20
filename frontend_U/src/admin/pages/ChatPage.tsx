@@ -13,6 +13,8 @@ import {
 
 import { ChannelBadge } from '../components/ChannelBadge'
 import TemplateDialog from '../components/TemplateDialog'
+import MessageText from '../../components/chat/MessageText'
+import ChatAttachmentView from '../../components/chat/ChatAttachmentView'
 import { useCRMWebSocket } from '../hooks/useCRMWebSocket'
 import { useInboxFilters } from '../hooks/useInboxFilters'
 import { useAuth } from '../context/AuthContext'
@@ -33,79 +35,6 @@ const statusColor: Record<ChatSession['status'], 'default' | 'warning' | 'succes
   bot: 'info', waiting: 'warning', active: 'success', closed: 'default',
 }
 
-/** Renderiza inline: **negrita** y texto plano */
-function renderInline(text: string): React.ReactNode {
-  const parts: React.ReactNode[] = []
-  const regex = /\*\*(.+?)\*\*/g
-  let last = 0
-  let match
-  let key = 0
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > last) parts.push(<span key={key++}>{text.slice(last, match.index)}</span>)
-    parts.push(<strong key={key++}>{match[1]}</strong>)
-    last = match.index + match[0].length
-  }
-  if (last < text.length) parts.push(<span key={key++}>{text.slice(last)}</span>)
-  return <>{parts}</>
-}
-
-/** Renderiza texto del bot respetando saltos de línea, viñetas y links de producto */
-function BotMarkdown({ text }: { text: string }) {
-  const lines = text.split('\n')
-  return (
-    <Box>
-      {lines.map((line, i) => {
-        // Link público de producto, absoluto o relativo.
-        const productMatch = line.trim().match(/^(https?:\/\/[^\s]+\/producto\/\d+|\/producto\/\d+)$/)
-        if (productMatch) {
-          return (
-            <Box key={i} sx={{ mt: 0.75 }}>
-              <Button
-                component="a"
-                href={line.trim()}
-                target="_blank"
-                size="small"
-                variant="outlined"
-                startIcon={<ExternalLink size={13} />}
-                sx={{
-                  fontSize: '0.72rem',
-                  textTransform: 'none',
-                  borderColor: '#b45309',
-                  color: '#b45309',
-                  '&:hover': { borderColor: '#92400e', bgcolor: '#fff7ed' },
-                }}
-              >
-                Ver producto
-              </Button>
-            </Box>
-          )
-        }
-
-        // Línea vacía → espaciado
-        if (!line.trim()) {
-          return <Box key={i} sx={{ height: '0.35em' }} />
-        }
-
-        // Viñeta: empieza con "- "
-        if (line.startsWith('- ')) {
-          return (
-            <Stack key={i} direction="row" spacing={0.75} sx={{ alignItems: 'flex-start' }}>
-              <Typography variant="body2" sx={{ mt: '2px', lineHeight: 1 }}>•</Typography>
-              <Typography variant="body2" sx={{ flex: 1 }}>{renderInline(line.slice(2))}</Typography>
-            </Stack>
-          )
-        }
-
-        return (
-          <Typography key={i} variant="body2" sx={{ lineHeight: 1.5 }}>
-            {renderInline(line)}
-          </Typography>
-        )
-      })}
-    </Box>
-  )
-}
-
 function messageState(message: ChatMessage) {
   if (message.status === 'failed') return (
     <Tooltip title={message.error || 'Meta rechazó el envío'} arrow>
@@ -121,58 +50,7 @@ function messageState(message: ChatMessage) {
   return null
 }
 
-function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
-  const [objectUrl, setObjectUrl] = useState('')
-  const [error, setError] = useState('')
-  const mime = attachment.mime_type || ''
-  const previewable = mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/')
-
-  useEffect(() => {
-    if (!attachment.url || !previewable) return
-    let active = true
-    let currentUrl = ''
-    adminChatService.getAttachmentBlob(attachment.url)
-      .then((blob) => {
-        if (!active) return
-        currentUrl = URL.createObjectURL(blob)
-        setObjectUrl(currentUrl)
-      })
-      .catch(() => active && setError('No fue posible cargar el archivo.'))
-    return () => {
-      active = false
-      if (currentUrl) URL.revokeObjectURL(currentUrl)
-    }
-  }, [attachment.url, previewable])
-
-  const download = async () => {
-    try {
-      setError('')
-      const blob = await adminChatService.getAttachmentBlob(attachment.url)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = attachment.name || 'adjunto'
-      link.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      setError('No fue posible descargar el archivo.')
-    }
-  }
-
-  if (!attachment.url) return <Button size="small" startIcon={<Paperclip size={14} />} disabled>{attachment.name || 'Adjunto pendiente'}</Button>
-  return (
-    <Box sx={{ mt: 1 }}>
-      {!objectUrl && previewable && !error && <CircularProgress size={18} />}
-      {objectUrl && mime.startsWith('image/') && <Box component="img" src={objectUrl} alt={attachment.name || 'Imagen adjunta'} sx={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 1, objectFit: 'contain' }} />}
-      {objectUrl && mime.startsWith('audio/') && <Box component="audio" controls preload="metadata" src={objectUrl} sx={{ display: 'block', width: '100%', maxWidth: 360 }} />}
-      {objectUrl && mime.startsWith('video/') && <Box component="video" controls preload="metadata" src={objectUrl} sx={{ display: 'block', width: '100%', maxHeight: 360, borderRadius: 1 }} />}
-      <Button size="small" startIcon={<Paperclip size={14} />} onClick={download}>
-        {attachment.name || mime || 'Ver o descargar'}{attachment.size ? ` (${Math.ceil(attachment.size / 1024)} KB)` : ''}
-      </Button>
-      {error && <Typography variant="caption" color="error" sx={{ display: 'block' }}>{error}</Typography>}
-    </Box>
-  )
-}
+function AttachmentView({attachment}: {attachment: ChatAttachment}) { return <ChatAttachmentView attachment={attachment} loadBlob={adminChatService.getAttachmentBlob} retry={() => adminChatService.retryAttachment(attachment.id)} /> }
 
 function ConversationMessage({ message, avatarUrl, contactName, onRetry }: { message: ChatMessage; avatarUrl?: string; contactName: string; onRetry: (id: number) => void }) {
   const incoming = message.direction === 'inbound' || message.sender_type === 'user'
@@ -194,10 +72,7 @@ function ConversationMessage({ message, avatarUrl, contactName, onRetry }: { mes
           {bot && <Bot size={13} />}
           <Typography variant="caption" sx={{ fontWeight: 700 }}>{originLabel}</Typography>
         </Stack>
-        {message.text && (bot
-          ? <BotMarkdown text={message.text} />
-          : <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Typography>
-        )}
+        {message.text && <MessageText text={message.normalized_text || message.text} channel={message.channel || 'ecommerce'} />}
         {message.attachments.map((attachment) => <AttachmentView key={attachment.id} attachment={attachment} />)}
         {message.status === 'failed' && <Typography variant="caption" sx={{ display: 'block' }}>{message.error || 'No fue posible completar el procesamiento.'}</Typography>}
         {message.retry_allowed && <Button size="small" color="inherit" onClick={() => onRetry(message.id)}>Reintentar</Button>}
@@ -376,8 +251,13 @@ function CRMInbox({ userId }: { userId?: number | string }) {
     onError: invalidate,
   })
   const submit = () => {
+    if (file && (!file.size || file.size > 25 * 1024 * 1024)) { setFileError('Selecciona un archivo no vacío de hasta 25 MB.'); return }
+    if (file && selected?.channel === 'instagram' && !file.type.startsWith('image/')) { setFileError('Instagram solo tiene habilitadas imágenes en esta integración.'); return }
+    if (file && text.trim() && (['facebook', 'instagram'].includes(selected?.channel || '') || (selected?.channel !== 'ecommerce' && file.type.startsWith('audio/')))) { setFileError('Envía el texto y este archivo por separado; el borrador se conserva.'); return }
+    setFileError('')
     if (selected && !send.isPending && !messages.isError && selected.status !== 'closed') send.mutate({ sessionId: selected.id, text, file, clientId: clientId.current, template })
   }
+  const [fileError, setFileError] = useState('')
   const retry = useMutation({ mutationFn: (id: number) => adminChatService.retryMessage(selectedId!, id), onSettled: invalidate })
   const allowedFiles = selected?.channel === 'instagram' ? '.jpg,.jpeg,.png,.webp,.gif' : '.jpg,.jpeg,.png,.webp,.gif,.pdf,.docx,.xlsx,.mp3,.ogg,.wav,.m4a,.mp4,.webm'
   const take = useMutation({ mutationFn: () => adminChatService.takeSession(selectedId!), onSuccess: invalidate })
@@ -490,7 +370,8 @@ function CRMInbox({ userId }: { userId?: number | string }) {
                 {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} avatarUrl={selected.avatar_url} contactName={selected.user_name} onRetry={id => { if (!retry.isPending) retry.mutate(id) }} />)}
               </Stack>
               {hasNewMessage && <Button onClick={() => scrollToLatest()} startIcon={<ArrowDown size={16} />} variant="contained" size="small" sx={{ alignSelf: 'center', mb: 1, borderRadius: 99 }}>Nuevo mensaje</Button>}
-              <Box sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
+              <Box onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (send.isPending || selected.status === 'closed' || selected.channel === 'whatsapp') return; if (e.dataTransfer.files.length !== 1) { setFileError('Adjunta un archivo por mensaje.'); return } setFile(e.dataTransfer.files[0]); setFileError('') }} sx={{ position: 'sticky', bottom: 0, zIndex: 2, bgcolor: '#fff', p: 1.5, borderTop: '1px solid #e2e8f0' }}>
+                {fileError && <Alert severity="warning">{fileError}</Alert>}
                 {(take.isError || close.isError || priority.isError || assignQueue.isError) && <Alert severity="error">No fue posible actualizar la conversación. Reintenta la operación.</Alert>}
                 {send.error && <Alert severity="error" sx={{ mb: 1 }}>{(send.error as any).response?.data?.error || 'No fue posible enviar el mensaje.'}</Alert>}
                 {retry.error && <Alert severity="error">{(retry.error as any).response?.data?.error || 'No fue posible reintentar.'}</Alert>}

@@ -168,6 +168,11 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     from shipping.serializers import ProductShippingSerializer
     shipping_profile = ProductShippingSerializer(required=False)
 
+    def validate_price(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('El precio debe ser mayor que cero.')
+        return value
+
     class Meta:
         model = Product
         fields = [
@@ -183,10 +188,15 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         if available and (settings.TCC_SHIPPING_ENABLED or incoming is not None):
             values = {field: getattr(profile, field) for field in ('requires_shipping', 'weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')} if profile else {'requires_shipping': True}
             values.update(incoming or {})
+            automatic = values.get('declared_value_from_price', getattr(profile, 'declared_value_from_price', False))
+            if automatic:
+                values['declared_value'] = data.get('price', getattr(self.instance, 'price', None))
+                if values['declared_value'] is not None and values['declared_value'] * 100 < values.get('packages_per_unit', getattr(profile, 'packages_per_unit', 1)):
+                    raise serializers.ValidationError({'price': 'El precio debe cubrir al menos un centavo por paquete.'})
             if values.get('requires_shipping', True) and any(not values.get(field) for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')):
                 raise serializers.ValidationError({'shipping_profile': 'Completa peso, dimensiones y valor declarado por paquete antes de publicar un producto físico.'})
-        original = data.get('original_price')
-        price    = data.get('price')
+        original = data.get('original_price', getattr(self.instance, 'original_price', None))
+        price    = data.get('price', getattr(self.instance, 'price', None))
         if original is not None and price is not None and original < price:
             raise serializers.ValidationError(
                 {"original_price": "El precio original debe ser mayor o igual al precio actual."}
@@ -352,6 +362,13 @@ class OrderCreateSerializer(serializers.Serializer):
 # ─── User Address ─────────────────────────────────────────────────────────────
 
 class UserAddressSerializer(serializers.ModelSerializer):
+    def validate_phone(self, value):
+        import re
+        digits = re.sub(r'\D', '', value)
+        if not re.fullmatch(r'[+0-9(). \-]+', value) or not 7 <= len(digits) <= 15:
+            raise serializers.ValidationError('Escribe un número de teléfono válido, incluyendo indicativo si corresponde.')
+        return value
+
     class Meta:
         model = UserAddress
         fields = [
@@ -367,7 +384,7 @@ class UserAddressSerializer(serializers.ModelSerializer):
         if code:
             location = city(code)
             if not location or any(data.get(field, getattr(self.instance, field, '')) != location[field] for field in ('city', 'department')):
-                raise serializers.ValidationError({'tcc_city_code': 'Ciudad y departamento no corresponden al código TCC.'})
+                raise serializers.ValidationError({'city': 'Selecciona una ciudad del departamento indicado.'})
         return data
 
 

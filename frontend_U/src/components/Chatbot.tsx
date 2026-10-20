@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import MessageText from './chat/MessageText'
+import ChatAttachmentView, { type AttachmentData } from './chat/ChatAttachmentView'
 import { Link } from 'react-router-dom'
 import { MessageCircle, X, Send, Bot, Sparkles, Loader2, UserCheck, PhoneOff, RotateCcw, LogIn } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -12,6 +14,7 @@ import type { ChatSession } from '../services/chat'
 interface Message {
   id: number
   text: string
+  attachments?: AttachmentData[]
   isBot: boolean
   isAgent?: boolean
   needsLogin?: boolean   // muestra botón de inicio de sesión
@@ -33,47 +36,7 @@ const quickReplies = [
 
 // ─── BotMessageText: renderiza texto con markdown y links ─────────────────────
 
-function BotMessageText({ text }: { text: string }) {
-  const renderLine = (line: string, lineIdx: number) => {
-    const tokens: React.ReactNode[] = []
-    let tokenKey = 0
-    const pattern = /(\[([^\]]+)\]\(((?:https?:\/\/|\/)[^)]+)\)|\*\*([^*]+)\*\*|(https?:\/\/[^\s]+\/producto\/\d+|\/producto\/\d+))/g
-    let cursor = 0
-    let match: RegExpExecArray | null
-
-    while ((match = pattern.exec(line)) !== null) {
-      if (match.index > cursor) {
-        tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{line.slice(cursor, match.index)}</span>)
-      }
-      if (match[4]) {
-        tokens.push(<strong key={`${lineIdx}-${tokenKey++}`} className="font-semibold">{match[4]}</strong>)
-      } else {
-        const href = match[3] || match[5]
-        const label = match[2] || 'Ver producto →'
-        const classes = 'text-[#001575] underline underline-offset-2 font-medium hover:text-[#0020aa]'
-        tokens.push(href.startsWith('/') ? (
-          <Link key={`${lineIdx}-${tokenKey++}`} to={href} className={classes}>{label}</Link>
-        ) : (
-          <a key={`${lineIdx}-${tokenKey++}`} href={href} target="_blank" rel="noopener noreferrer" className={classes}>{label}</a>
-        ))
-      }
-      cursor = pattern.lastIndex
-    }
-    if (cursor < line.length) {
-      tokens.push(<span key={`${lineIdx}-${tokenKey++}`}>{line.slice(cursor)}</span>)
-    }
-    return <>{tokens}</>
-  }
-
-  const lines = text.split(/\r?\n/)
-  return (
-    <div className="text-sm leading-relaxed break-words whitespace-pre-wrap">
-      {lines.map((line, i) => (
-        <div key={i} className={line.trim() ? 'min-w-0' : 'h-3'}>{renderLine(line, i)}</div>
-      ))}
-    </div>
-  )
-}
+const BotMessageText = MessageText
 
 // ─── component ────────────────────────────────────────────────────────────────
 
@@ -85,6 +48,12 @@ function Chatbot() {
     { id: 1, text: 'Muchas gracias por comunicarse con ImporGas JJ, especialistas en Gas y Climatización.\n\nSoy el asesor comercial virtual de ImporGas JJ. ¿Cómo podemos ayudarte?', isBot: true, timestamp: new Date() },
   ])
   const [inputValue, setInputValue] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | undefined>()
+  const [filePreview, setFilePreview] = useState('')
+  const [sendError, setSendError] = useState('')
+  const [sending, setSending] = useState(false)
+  const sendLock = useRef(false)
+  const pendingSend = useRef<{ text: string; file?: File; id: string } | null>(null)
   const [isTyping, setIsTyping]     = useState(false)
   const [chatMode, setChatMode]     = useState<ChatMode>('local')
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
@@ -97,6 +66,15 @@ function Chatbot() {
   const dialogRef       = useRef<HTMLDivElement>(null)
   const lastMsgIdRef    = useRef<number | null>(null)
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const refreshMessages = useRef<() => Promise<void>>(async () => {})
+  const nearBottom = useRef(true)
+
+  useEffect(() => {
+    if (!selectedFile) { setFilePreview(''); return }
+    const url = URL.createObjectURL(selectedFile)
+    setFilePreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [selectedFile])
 
   useEffect(() => {
     if (!isOpen) return
@@ -114,7 +92,7 @@ function Chatbot() {
 
   // ── scroll ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (nearBottom.current) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
 
   // ── resume session on mount ───────────────────────────────────────────────
@@ -136,6 +114,7 @@ function Chatbot() {
         const msgs: Message[] = result.messages.map((m) => ({
           id:         m.id,
           text:       m.text,
+          attachments: m.attachments,
           isBot:      m.sender_type !== 'user',
           isAgent:    m.sender_type === 'agent',
           senderName: m.sender_type === 'agent' ? m.sender_name : undefined,
@@ -143,7 +122,7 @@ function Chatbot() {
         }))
         if (msgs.length > 0) {
           setMessages(msgs)
-          lastMsgIdRef.current = result.messages[result.messages.length - 1].id
+          lastMsgIdRef.current = Math.max(...result.messages.map(m=>m.id))
         }
       })
       .catch(() => sessionStorage.removeItem('chatSessionId'))
@@ -154,21 +133,22 @@ function Chatbot() {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
     const poll = async () => {
       try {
-        const result = publicBot ? await getSessionMessages(id, lastMsgIdRef.current ?? undefined) : await chatService.getMessages(id, lastMsgIdRef.current ?? undefined)
+        const result = publicBot ? await getSessionMessages(id, lastMsgIdRef.current ?? undefined) : await chatService.getMessages(id)
         if (result.messages.length > 0) {
           const newMsgs: Message[] = result.messages
-            .filter((m) => m.sender_type !== 'user')
+            .filter((m) => !publicBot || m.sender_type !== 'user')
             .map((m) => ({
-              id:         Date.now() + m.id,
+              id:         m.id,
               text:       m.text,
-              isBot:      true,
+          attachments: m.attachments,
+              isBot:      m.sender_type !== 'user',
               isAgent:    m.sender_type === 'agent',
               needsLogin: publicBot && result.status === 'waiting',
               senderName: m.sender_type === 'agent' ? m.sender_name : undefined,
               timestamp:  new Date(m.created_at),
             }))
-          if (newMsgs.length > 0) { setMessages((prev) => [...prev, ...newMsgs]); setIsTyping(false) }
-          lastMsgIdRef.current = result.messages[result.messages.length - 1].id
+          if (newMsgs.length > 0) { setMessages((prev) => publicBot ? [...prev.filter(old=>!newMsgs.some(next=>next.id===old.id)), ...newMsgs] : newMsgs); setIsTyping(false) }
+          lastMsgIdRef.current = Math.max(...result.messages.map(m=>m.id))
         }
         if (publicBot && (result as any).bot_error) setIsTyping(false)
         if (publicBot && !(result as any).pending) setIsTyping(false)
@@ -176,8 +156,27 @@ function Chatbot() {
         if (result.status === 'closed') { setChatMode('closed'); clearInterval(pollIntervalRef.current!) }
       } catch { /* silent */ }
     }
+    refreshMessages.current = poll
+    void poll()
     pollIntervalRef.current = setInterval(poll, 3000)
   }, [])
+
+  useEffect(() => {
+    if (!sessionId || !isAuthenticated) return
+    let stopped = false, attempts = 0
+    let socket: WebSocket | undefined, timer: ReturnType<typeof setTimeout> | undefined
+    const connect = () => {
+      const token = localStorage.getItem('authToken')
+      if (stopped || !token) return
+      socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/crm-chat/sessions/${sessionId}/`, ['crm-chat', `jwt.${token}`])
+      socket.onopen = () => { attempts = 0; void refreshMessages.current() }
+      socket.onmessage = () => { void refreshMessages.current() }
+      socket.onclose = () => { if (!stopped) timer = setTimeout(connect, Math.min(30000, 1000 * 2 ** ++attempts)) }
+      socket.onerror = () => socket?.close()
+    }
+    connect()
+    return () => { stopped = true; clearTimeout(timer); socket?.close() }
+  }, [sessionId, isAuthenticated])
 
   useEffect(() => {
     if (sessionId && (chatMode === 'waiting' || chatMode === 'active')) startPolling(sessionId)
@@ -196,15 +195,40 @@ function Chatbot() {
   // ── send ──────────────────────────────────────────────────────────────────
   const handleSend = async (text?: string) => {
     const messageText = (text ?? inputValue).trim()
-    if (!messageText || isTyping || chatMode === 'creating') return
-    setMessages((prev) => [...prev, { id: Date.now(), text: messageText, isBot: false, timestamp: new Date() }])
-    setInputValue('')
-
-    // Session mode: forward to agent
-    if ((chatMode === 'waiting' || chatMode === 'active') && sessionId) {
-      chatService.sendMessage(sessionId, messageText).catch(() => {})
+    if ((!messageText && !selectedFile) || isTyping || chatMode === 'creating' || sendLock.current) return
+    if (selectedFile || ((chatMode === 'waiting' || chatMode === 'active') && sessionId)) {
+      if (!isAuthenticated) { setSendError('Inicia sesión para adjuntar archivos.'); return }
+      sendLock.current = true
+      nearBottom.current = true
+      setSending(true)
+      setSendError('')
+      if (!pendingSend.current || pendingSend.current.text !== messageText || pendingSend.current.file !== selectedFile) {
+        pendingSend.current = { text: messageText, file: selectedFile, id: crypto.randomUUID() }
+      }
+      try {
+        let target = sessionId
+        if (!target) {
+          const session = await chatService.createSession(messages.map(m => ({ text: m.text, is_bot: m.isBot })))
+          target = session.id
+          setSessionId(target)
+          sessionStorage.setItem('chatSessionId', String(target))
+          setChatMode(session.status === 'active' ? 'active' : 'waiting')
+        }
+        const sent = await chatService.sendMessage(target, messageText, pendingSend.current.id, selectedFile)
+        setMessages(prev => [...prev.filter(m => m.id !== sent.id), { id: sent.id, text: sent.text, attachments: sent.attachments, isBot: false, timestamp: new Date(sent.created_at) }])
+        setInputValue('')
+        setSelectedFile(undefined)
+        pendingSend.current = null
+      } catch {
+        setSendError('No se pudo enviar. Conservamos tu mensaje y archivo; pulsa Enviar para reintentar.')
+      } finally {
+        sendLock.current = false
+        setSending(false)
+      }
       return
     }
+    setMessages((prev) => [...prev, { id: Date.now(), text: messageText, isBot: false, timestamp: new Date() }])
+    setInputValue('')
 
     // Pending action: awaiting tracking number
     if (pendingAction === 'tracking') {
@@ -382,7 +406,7 @@ Fecha: ${result.created_at}
           </div>
 
           {/* Messages */}
-          <div className="h-80 min-h-0 overflow-y-auto p-4 bg-[#F9FAFB]">
+          <div onScroll={e => { const box = e.currentTarget; nearBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 96 }} className="h-80 min-h-0 overflow-y-auto p-4 bg-[#F9FAFB]">
             <div className="space-y-4">
               {messages.map((message) => (
                 <div key={message.id} className={`flex ${message.isBot ? 'justify-start' : 'justify-end'}`}>
@@ -400,6 +424,7 @@ Fecha: ${result.created_at}
                       <p className="text-[10px] font-semibold text-[#001575] mb-1">{message.senderName}</p>
                     )}
                     <BotMessageText text={message.text} />
+                    {message.attachments?.map(attachment=><ChatAttachmentView key={attachment.id} attachment={attachment} loadBlob={chatService.getAttachmentBlob}/>)}
                     {/* Botón de login cuando el bot requiere autenticación */}
                     {message.needsLogin && (
                       <Link
@@ -477,7 +502,27 @@ Fecha: ${result.created_at}
           )}
 
           {/* Input */}
-          <div className="p-4 bg-white border-t border-[#E5E7EB]">
+          <div className="p-4 bg-white border-t border-[#E5E7EB]" onDragOver={e => e.preventDefault()} onDrop={e => {
+            e.preventDefault()
+            if (!isAuthenticated || sending || chatMode === 'closed') return
+            const file = e.dataTransfer.files[0]
+            if (e.dataTransfer.files.length !== 1 || !file?.size || file.size > 25 * 1024 * 1024) { setSendError('Adjunta un archivo no vacío de hasta 25 MB por mensaje.'); return }
+            setSelectedFile(file); setSendError('')
+          }}>
+            {sendError && <p role="alert" className="text-sm text-red-700 mb-2">{sendError}</p>}
+            {sending && <div role="status" className="text-sm mb-2 flex gap-2"><Loader2 aria-hidden="true" className="animate-spin w-4 h-4" />Cargando archivo y esperando confirmación…</div>}
+            {filePreview && selectedFile?.type.startsWith('image/') && <img src={filePreview} alt="Vista previa del archivo seleccionado" className="max-h-24 max-w-full object-contain mb-2" />}
+            {filePreview && selectedFile?.type.startsWith('audio/') && <audio src={filePreview} controls preload="metadata" className="max-w-full" />}
+            {filePreview && selectedFile?.type.startsWith('video/') && <video src={filePreview} controls preload="metadata" className="max-h-24 max-w-full" />}
+            {isAuthenticated && chatMode !== 'closed' && <label className="block text-sm mb-2">Adjuntar archivo (máximo 25 MB)
+              <input aria-label="Adjuntar archivo" type="file" disabled={sending} className="block w-full text-xs" accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.mp3,.ogg,.wav,.m4a,.mp4,.webm,.docx,.xlsx" onChange={e => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file && (!file.size || file.size > 25 * 1024 * 1024)) { setSendError('Selecciona un archivo no vacío de hasta 25 MB.'); return }
+                setSelectedFile(file); setSendError('')
+              }} />
+            </label>}
+            {selectedFile && <div className="text-xs mb-2 break-all">{selectedFile.name} · {(selectedFile.size / 1024).toFixed(1)} KB <button type="button" disabled={sending} onClick={() => setSelectedFile(undefined)} className="underline">Quitar archivo</button></div>}
             {chatMode === 'closed' ? (
               <button
                 onClick={handleReset}
@@ -488,17 +533,20 @@ Fecha: ${result.created_at}
               </button>
             ) : (
               <div className="flex items-center gap-2">
-                <input
-                  type="text"
+                <textarea
+                  rows={2}
+                  aria-label="Mensaje"
+                  disabled={sending}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
                   placeholder={chatMode === 'waiting' ? 'Escribe, tu asesor lo vera...' : 'Escribe un mensaje...'}
                   className="flex-1 px-4 py-3 bg-[#F3F4F6] border-2 border-transparent rounded-xl focus:outline-none focus:border-[#001575] focus:bg-white transition-all text-sm"
                 />
                 <button
                   onClick={() => handleSend()}
-                  disabled={!inputValue.trim() || isTyping || chatMode === 'creating'}
+                  aria-label={sending ? 'Enviando mensaje' : 'Enviar mensaje'}
+                  disabled={(!inputValue.trim() && !selectedFile) || sending || isTyping || chatMode === 'creating'}
                   className="w-12 h-12 bg-gradient-to-r from-[#001575] to-[#00104f] text-white rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-[#001575]/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   <Send className="w-5 h-5" />

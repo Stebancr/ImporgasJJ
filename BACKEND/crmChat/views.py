@@ -19,6 +19,7 @@ from .attachment_validation import validate_chat_upload, ensure_channel_media, u
 from .ollama_service import ollama_service
 from .apps.meta.services import MetaAPIError, dispatch_outbound_message
 from .realtime import publish_crm_event
+from .message_format import format_for_channel, validate_message_text
 from .session_filters import filtered_sessions
 import logging
 
@@ -82,6 +83,12 @@ def _serialize_message(m):
     return {
         'id':          m.id,
         'text':        m.text,
+        'original_text': metadata.get('original_text', m.text),
+        'normalized_text': format_for_channel(m.text, m.session.channel),
+        'channel': m.session.channel,
+        'conversation_id': m.session_id,
+        'reply_to_external_id': m.reply_to_external_id,
+        'normalized_type': 'mixed' if m.text and m.attachments.exists() else m.message_type,
         'sender_type': m.sender_type,
         'sender_name': m.sender_name,
         'direction':   m.direction,
@@ -104,7 +111,13 @@ def _serialize_message(m):
                 'mime_type': attachment.mime_type,
                 'size': attachment.size,
                 'sha256': attachment.metadata.get('sha256', ''),
-                'state': m.status if m.direction == 'outbound' else 'stored',
+                'state': attachment.metadata.get('state', 'stored' if attachment.file else 'pending'),
+                'error': attachment.metadata.get('error', ''),
+                'retry_allowed': not attachment.file and attachment.message.session.channel in ('facebook','instagram','whatsapp'),
+                'extension': Path(attachment.original_name).suffix.lower(),
+                'created_at': attachment.created_at,
+                'external_media_id': attachment.external_media_id,
+                'duration': attachment.metadata.get('duration'),
             }
             for attachment in m.attachments.all()
         ],
@@ -310,7 +323,7 @@ class MessageListCreateView(APIView):
         if err:
             return err
 
-        qs = session.messages.prefetch_related('attachments').annotate(
+        qs = session.messages.select_related('session').prefetch_related('attachments').annotate(
             activity_at=Coalesce('external_timestamp', 'created_at'),
         ).order_by('activity_at', 'id')
         after = request.query_params.get('after')
@@ -340,8 +353,14 @@ class MessageListCreateView(APIView):
         if session.status == 'closed':
             return Response({'error': 'La sesión está cerrada'}, status=400)
 
-        text = (request.data.get('text') or '').strip()
+        original_text = (request.data.get('text') or '').strip()
+        try:
+            text = validate_message_text(original_text, session.channel)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=400)
         upload = request.FILES.get('file')
+        if sum(len(request.FILES.getlist(key)) for key in request.FILES) > 1:
+            return Response({'error': 'Adjunta un archivo por mensaje para este canal.'}, status=400)
         message_type = request.data.get('message_type', 'text')
         payload = request.data.get('payload') or {}
         client_message_id = (request.data.get('client_message_id') or '').strip()
@@ -379,15 +398,15 @@ class MessageListCreateView(APIView):
 
         attachment_data = None
         if upload:
-            if not is_agent:
-                return Response({'error': 'La carga de archivos está disponible para agentes autenticados'}, status=403)
+            if not is_agent and session.channel != 'ecommerce':
+                return Response({'error': 'Solo puedes adjuntar archivos a tu conversación de la tienda.'}, status=403)
             try:
                 attachment_data = validate_chat_upload(upload)
                 ensure_channel_media(session.channel, attachment_data[2])
             except ValueError as exc:
                 return Response({'error': str(exc)}, status=400)
             message_type = attachment_data[2]
-            if text and (session.channel in ('facebook', 'instagram') or message_type == 'audio'):
+            if text and (session.channel in ('facebook', 'instagram') or (message_type == 'audio' and session.channel != 'ecommerce')):
                 return Response({'error': 'Este tipo de envío no admite texto junto al archivo. Envía el texto y el archivo por separado.'}, status=400)
         elif is_agent and message_type in {'image', 'audio', 'video', 'document', 'sticker'} and session.channel in ('facebook', 'instagram', 'whatsapp_web'):
             return Response({'error': 'Adjunta un archivo validado desde el CRM; no se admiten URLs arbitrarias.'}, status=400)
@@ -436,12 +455,14 @@ class MessageListCreateView(APIView):
                     client_message_id=client_message_id or None,
                     metadata={
                         'origin': origin,
+                        'original_text': original_text,
                         **({'template_id': template.pk} if template else {}),
                         **({'outbound_payload': payload} if payload else {}),
                     },
                 )
                 if upload and attachment_data:
                     original_name, mime_type, _ = attachment_data
+                    upload.name = uuid.uuid4().hex + Path(original_name).suffix.lower()
                     attachment = ChatAttachment.objects.create(
                         message=msg,
                         file=upload,
@@ -541,7 +562,7 @@ class ProtectedAttachmentView(APIView):
 
     def get(self, request, pk):
         attachment = ChatAttachment.objects.select_related('message__session').filter(pk=pk).first()
-        if not attachment or not attachment.file:
+        if not attachment or not attachment.file or not attachment.file.storage.exists(attachment.file.name):
             return Response({'error': 'Archivo no encontrado'}, status=404)
         session = attachment.message.session
         if not _is_agent(request.user) and session.user_id_ref != request.user.pk:
@@ -556,6 +577,28 @@ class ProtectedAttachmentView(APIView):
         response['X-Content-Type-Options'] = 'nosniff'
         response['Cache-Control'] = 'private, no-store'
         return response
+
+
+class RetryAttachmentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        attachment = ChatAttachment.objects.select_related('message__session').filter(pk=pk).first()
+        if not attachment:
+            return Response(status=404)
+        session = attachment.message.session
+        if not _is_agent(request.user) and session.user_id_ref != request.user.pk:
+            return Response(status=403)
+        if attachment.file:
+            return Response({'state': 'stored'})
+        if session.channel not in ('facebook', 'instagram', 'whatsapp'):
+            return Response({'error': 'El proveedor debe reenviar este archivo; el mensaje se conserva.'}, status=409)
+        from .tasks import download_meta_attachment
+        try:
+            download_meta_attachment.apply_async(args=[attachment.pk], retry=False)
+        except Exception:
+            return Response({'error': 'No fue posible programar la descarga. Reintenta en unos segundos.'}, status=503)
+        return Response({'state': 'pending'}, status=202)
 
 
 class AttachmentDeliveryView(APIView):
@@ -577,7 +620,7 @@ class AttachmentDeliveryView(APIView):
         if signed_id != pk:
             return Response({'error': 'Enlace inválido'}, status=403)
         attachment = ChatAttachment.objects.filter(pk=pk).first()
-        if not attachment or not attachment.file:
+        if not attachment or not attachment.file or not attachment.file.storage.exists(attachment.file.name):
             return Response({'error': 'Archivo no encontrado'}, status=404)
         response = FileResponse(
             attachment.file.open('rb'),

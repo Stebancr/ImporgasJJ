@@ -7,6 +7,7 @@ import api from './api';
 const API_URL = '/api/crm-chat/bot';
 
 export interface ChatMessage {
+  attachments?: import('../components/chat/ChatAttachmentView').AttachmentData[];
   id: number;
   text: string;
   sender_type: 'user' | 'bot' | 'agent';

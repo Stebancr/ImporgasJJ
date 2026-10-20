@@ -382,6 +382,10 @@ class PaymentConfirmationEmailTests(APITestCase):
         )
         self.assertTrue(send_order_payment_confirmation(order.pk))
         self.assertFalse(send_order_payment_confirmation(order.pk))
+        from transactional_mail.models import Delivery
+        from transactional_mail.service import send
+        with override_settings(TRANSACTIONAL_EMAIL_ENABLED=True,DEBUG=True,FRONTEND_PUBLIC_URL='http://localhost',PUBLIC_API_URL='http://localhost/api',TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=['cliente@example.com']):
+            self.assertTrue(send(Delivery.objects.get(kind='order',object_id=order.pk).pk))
         order.refresh_from_db()
         self.assertIsNotNone(order.payment_confirmation_email_sent_at)
         self.assertEqual(len(mail.outbox), 1)

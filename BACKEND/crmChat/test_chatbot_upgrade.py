@@ -174,6 +174,26 @@ class ChatbotUpgradeAPITests(APITestCase):
         self.client.force_authenticate(self.customer)
         self.assertEqual(self.client.get('/crm-chat/templates/').status_code, 403)
 
+    def test_template_duplicate_delete_new_variables_and_permissions(self):
+        payload = {'name': 'Pedido QA', 'text': '{{numero_pedido}} {{estado_pedido}} {{nombre_tecnico}} {{enlace_seguimiento}}',
+                   'channels': ['whatsapp_web', 'facebook', 'instagram', 'ecommerce']}
+        created = self.client.post('/crm-chat/templates/', payload, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        pk = created.data['id']
+        self.assertEqual(self.client.post('/crm-chat/templates/', payload, format='json').status_code, 400)
+        copy = self.client.post(f'/crm-chat/templates/{pk}/duplicate/')
+        self.assertEqual(copy.status_code, 201, copy.data)
+        self.assertFalse(copy.data['active'])
+        self.assertEqual(copy.data['text'], payload['text'])
+        self.assertNotEqual(copy.data['name'], payload['name'])
+        self.client.force_authenticate(self.agent)
+        self.assertEqual(self.client.delete(f'/crm-chat/templates/{pk}/').status_code, 403)
+        self.assertEqual(self.client.post(f'/crm-chat/templates/{pk}/duplicate/').status_code, 403)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete(f'/crm-chat/templates/{pk}/').status_code, 204)
+        self.assertTrue(QuickReply.objects.filter(pk=copy.data['id']).exists())
+        self.assertFalse(ChatMessage.objects.exists())
+
     def test_template_attachment_is_private_and_compatible(self):
         res = self.client.post('/crm-chat/templates/', {'name': 'Ficha', 'text': 'Documento',
             'channels': '["facebook"]', 'file': pdf()}, format='multipart')

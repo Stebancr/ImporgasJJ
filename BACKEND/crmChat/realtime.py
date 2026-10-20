@@ -18,6 +18,7 @@ def publish_crm_event(event_type, *, session_id, message_id=None):
         payload['message_id'] = message_id
     try:
         async_to_sync(layer.group_send)('crm_agents', {'type': 'crm.event', 'payload': payload})
+        async_to_sync(layer.group_send)(f'crm_session_{session_id}', {'type': 'crm.event', 'payload': payload})
     except Exception as exc:
         # Redis availability must not turn a committed message into an HTTP 500.
         # Polling/reconnection retrieves the authoritative persisted state.

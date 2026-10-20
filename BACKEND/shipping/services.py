@@ -77,21 +77,28 @@ def shipping_snapshot(user, items, data, *, estimate=False):
         product = products[pk]
         profile = getattr(product, 'shipping_profile', None)
         if profile is None:
-            raise ValidationError({'items': f'El producto {pk} no tiene configuración de transporte. Contacta al asesor.'})
+            raise ValidationError({'error': 'El envío de este producto aún no está disponible para calcular en línea. Nuestro equipo debe completar sus datos de entrega. Contacta a un asesor.', 'code': 'shipping_profile_incomplete'})
         subtotal += product.price * qty
         lines.append({'product_id': pk, 'quantity': qty, 'unit_price': str(product.price),
                       'shipping_revision': profile.updated_at.isoformat()})
         if not profile.requires_shipping:
             continue
-        fields = ('weight_kg', 'height_cm', 'width_cm', 'length_cm', 'declared_value')
+        fields = ('weight_kg', 'height_cm', 'width_cm', 'length_cm')
+        if not profile.declared_value_from_price:
+            fields += ('declared_value',)
         if any(getattr(profile, field) is None or getattr(profile, field) <= 0 for field in fields):
-            raise ValidationError({'items': f'Faltan peso, dimensiones o valor declarado del producto {pk}.'})
+            raise ValidationError({'error': 'El envío de este producto aún no está disponible para calcular en línea. Nuestro equipo debe completar sus datos de entrega. Contacta a un asesor.', 'code': 'shipping_profile_incomplete'})
         count = qty * profile.packages_per_unit
         if count < 1 or len(packages) + count > 100:
             raise ValidationError({'items': 'El envío supera el límite operativo de 100 paquetes. Contacta al asesor.'})
-        for _ in range(count):
+        cents, remainder = divmod(int(product.price * 100), profile.packages_per_unit)
+        if profile.declared_value_from_price and cents < 1:
+            raise ValidationError({'items': 'El valor declarado debe ser positivo para cada paquete.'})
+        for index in range(count):
             volumetric = money(profile.length_cm * profile.width_cm * profile.height_cm * Decimal('0.0004'))
             packages.append({**{field: str(getattr(profile, field)) for field in fields},
+                'declared_value': str(Decimal(cents + (index % profile.packages_per_unit < remainder)) / 100
+                                      if profile.declared_value_from_price else profile.declared_value),
                 'volumetric_kg': str(volumetric), 'product_id': pk, 'packaging_code': profile.packaging_code,
                 'fragile': profile.fragile})
     real = sum((Decimal(p['weight_kg']) for p in packages), Decimal('0'))

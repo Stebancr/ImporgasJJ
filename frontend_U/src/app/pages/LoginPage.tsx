@@ -70,6 +70,7 @@ function LoginPage() {
           termsVersion,
           termsAccepted,
         })
+        try { sessionStorage.setItem('delivery-address-invitation','yes') } catch { /* Optional invitation. */ }
         await login(form.email, form.password)
         const requested = searchParams.get('redirect') || '/'
         const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'

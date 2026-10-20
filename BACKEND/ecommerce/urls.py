@@ -1,5 +1,6 @@
 from django.urls import path, include
 from . import views
+from .product_editor import ProductEditorView
 
 urlpatterns = [
     path('shipping/', include('shipping.urls')),
@@ -26,6 +27,8 @@ urlpatterns = [
 
     # ── Products ──────────────────────────────────────────────────────────────
     path('products', views.ProductListView.as_view(), name='product-list'),
+    path('products/editor', ProductEditorView.as_view(), name='product-editor-create'),
+    path('products/<int:pk>/editor', ProductEditorView.as_view(), name='product-editor-update'),
     path('products/<int:pk>', views.ProductDetailView.as_view(), name='product-detail'),
     path('products/slug/<slug:slug>', views.ProductSlugView.as_view(), name='product-slug'),
 

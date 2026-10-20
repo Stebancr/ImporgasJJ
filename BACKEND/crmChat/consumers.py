@@ -1,6 +1,7 @@
 """Consumer WebSocket para actualizaciones de la bandeja de asesores."""
 
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.db import database_sync_to_async
 
 
 class CRMInboxConsumer(AsyncJsonWebsocketConsumer):
@@ -25,3 +26,23 @@ class CRMInboxConsumer(AsyncJsonWebsocketConsumer):
 
     async def crm_event(self, event):
         await self.send_json(event['payload'])
+
+
+class CustomerChatConsumer(CRMInboxConsumer):
+    """A customer receives only IDs belonging to their own web conversation."""
+
+    async def connect(self):
+        from .models import ChatSession
+        user = self.scope.get('user')
+        session_id = self.scope['url_route']['kwargs']['session_id']
+        self.group_name = f'crm_session_{session_id}'
+        if not user or not user.is_authenticated:
+            await self.close(code=4403)
+            return
+        allowed = await database_sync_to_async(ChatSession.objects.filter(
+            pk=session_id, channel='ecommerce', user_id_ref=user.pk).exists)()
+        if not allowed:
+            await self.close(code=4403)
+            return
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept(subprotocol='crm-chat')

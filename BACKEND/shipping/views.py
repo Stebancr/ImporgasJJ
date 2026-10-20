@@ -9,7 +9,7 @@ from ecommerce.serializers import OrderItemInputSerializer
 from .catalog import cities
 from .services import quote_shipping, estimate_shipping, enqueue_shipment
 from .serializers import quote_data, shipment_data
-from .models import Shipment, ShipmentEvent
+from .models import Shipment, ShipmentEvent, ShippingQuote
 from .tcc import TCCError
 
 
@@ -43,6 +43,19 @@ class CityListView(APIView):
 
     def get(self, request):
         return Response(cities())
+
+
+class DestinationView(APIView):
+    """Only return a municipality from this user's latest validated quotation."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .catalog import city
+        quote = ShippingQuote.objects.filter(user=request.user).order_by('-created_at').first()
+        destination = city(quote.snapshot.get('address', {}).get('tcc_city_code')) if quote else None
+        response = Response({'destination': destination})
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
 
 class QuoteView(APIView):

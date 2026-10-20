@@ -35,6 +35,13 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
     let body={data:[]},status=200
     if(path.endsWith('/user/perfil'))body={id:998,tipo_usuario:4,nombre_completo:'Cliente QA',correo:'qa@example.invalid',telefono:'3000000000',estado:1,terms_version:'qa',current_terms_version:'qa',terms_accepted_at:now}
     else if(path.endsWith('/cart'))body={items:[{product_id:991,quantity:1}]}
+    else if(path.endsWith('/products/991/editor')){
+      const multipart=route.request().postData()
+      const payload=JSON.parse(multipart.split('\r\n\r\n')[1].split('\r\n--')[0])
+      product.shipping_profile=payload.product.shipping_profile
+      assert.equal(product.shipping_profile.weight_kg,'3.200');profileSaves++
+      body={data:product}
+    }
     else if(path.endsWith('/products/991')){
       if(['PATCH','PUT'].includes(route.request().method())){
         product.shipping_profile=route.request().postDataJSON().shipping_profile
@@ -70,13 +77,14 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
   for(const width of [1280,768,390]){
     await page.setViewportSize({width,height:1000})
     await page.goto('http://crm.localhost/checkout')
-    await page.getByText('Tarifa TCC:',{exact:false}).waitFor().catch(async e=>{console.log('URL',page.url(),'BODY',(await page.locator('body').innerText()).slice(0,2200),'QUOTES',quotes);throw e})
+    await page.getByText('Costo de envío:',{exact:false}).waitFor().catch(async e=>{console.log('URL',page.url(),'BODY',(await page.locator('body').innerText()).slice(0,2200),'QUOTES',quotes);throw e})
     assert.equal(quotes.at(-1).address_id,77)
     assert.equal(quotes.at(-1).tcc_city_code,'11001000')
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`checkout overflow ${width}`)
   }
-  await page.getByLabel('Ciudad de entrega TCC').selectOption('76001000')
-  await page.getByText('Tarifa TCC:',{exact:false}).waitFor()
+  await page.getByLabel('Departamento de entrega',{exact:true}).selectOption('VALLE DEL CAUCA')
+  await page.getByLabel('Ciudad o municipio de entrega',{exact:true}).selectOption('76001000')
+  await page.getByText('Costo de envío:',{exact:false}).waitFor()
   assert.equal(quotes.at(-1).tcc_city_code,'76001000')
   assert.equal(quotes.at(-1).address_id,null)
   failQuote=true
@@ -85,7 +93,7 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
   assert(await page.getByRole('button',{name:'Continuar al Pago'}).isDisabled())
   failQuote=false
   await page.getByRole('button',{name:'Volver a cotizar'}).click()
-  await page.getByText('Tarifa TCC:',{exact:false}).waitFor()
+  await page.getByText('Costo de envío:',{exact:false}).waitFor()
   assert.equal(quotes.at(-1).force,true)
   await page.getByRole('button',{name:'Continuar al Pago'}).click()
   await page.getByRole('button',{name:'Pagar con Wompi',exact:true}).click()
@@ -129,6 +137,18 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
   await page.getByRole('button',{name:'Reintentar creación en TCC'}).click()
   await page.getByText('Despacho creado',{exact:true}).waitFor()
   assert.equal(retries,1)
+  // A different street in the SAME city must override an older checkout draft.
+  await page.evaluate(()=>{
+    const key='tcc-checkout-destination:998'
+    const old=JSON.parse(sessionStorage.getItem(key))
+    sessionStorage.setItem(key,JSON.stringify({...old,address_id:null,shipping_address:'Nueva calle QA en la misma ciudad'}))
+  })
+  await page.goto('http://crm.localhost/checkout')
+  await page.getByText('Costo de envío:',{exact:false}).waitFor()
+  assert.equal(await page.getByLabel('Dirección',{exact:true}).inputValue(),'Nueva calle QA en la misma ciudad')
+  assert.equal(quotes.at(-1).shipping_address,'Nueva calle QA en la misma ciudad')
+  await page.goto('http://crm.localhost/admin/ordenes')
+  await page.getByRole('button',{name:'Ver detalle',exact:true}).click()
   assert.equal(await page.getByRole('link',{name:'Etiqueta TCC'}).getAttribute('href'),'https://testsomos.tcc.com.co/qa.pdf')
   assert.deepEqual(errors,[])
   console.log('PASS TCC browser: saved address, changed city, canonical department, error blocks payment, forced refresh, quote ID, server Wompi total, customer shipment/history/link, admin product profile save/reload, admin shipment retry/document, responsive 1280/768/390. All APIs mocked.')

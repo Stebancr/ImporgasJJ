@@ -80,46 +80,12 @@ def _schedule_visit_assignment_notification(visita_id):
 
 
 def _enviar_correo_visita_completada(visita):
-    """Envía una sola vez el reporte final usando la configuración SMTP existente."""
-    if visita.correo_completada_en:
-        return False
-
-
-    destinatario = (visita.cliente.correo or '').strip()
-    if not destinatario:
-        visita.correo_completada_error = 'El cliente no tiene correo configurado.'
-        visita.save(update_fields=['correo_completada_error', 'fecha_actualizacion'])
-        return False
+    from transactional_mail.service import queue
     try:
-        if not visita.pdf_final or visita.pdf_estado != 'generado':
-            raise ValueError('El PDF definitivo todavía no está disponible.')
-        with visita.pdf_final.open('rb') as saved_pdf:
-            pdf = saved_pdf.read()
-        if len(pdf) != visita.pdf_bytes or hashlib.sha256(pdf).hexdigest() != visita.pdf_sha256:
-            raise ValueError('El PDF definitivo no superó la validación de integridad.')
-        message = EmailMessage(
-            subject=f'Visita técnica #{visita.numero_tarea} completada',
-            body=(
-                f'Hola {visita.cliente.nombre},\n\n'
-                f'La visita técnica #{visita.numero_tarea} fue completada. '
-                'Adjuntamos el informe técnico en formato PDF.\n\n'
-                'Atentamente,\nIMPORGAS JJ'
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[destinatario],
-        )
-        message.attach(f'reporte_{visita.numero_tarea}.pdf', pdf, 'application/pdf')
-        message.send(fail_silently=False)
-        visita.correo_completada_en = timezone.now()
-        visita.correo_completada_error = ''
-        visita.save(update_fields=['correo_completada_en', 'correo_completada_error', 'fecha_actualizacion'])
-        return True
-    except Exception as exc:
-        logger.exception('No fue posible enviar el reporte de la visita %s', visita.pk)
-        visita.correo_completada_error = str(exc)[:1000]
-        visita.save(update_fields=['correo_completada_error', 'fecha_actualizacion'])
+        return queue('visit', visita.pk)
+    except Exception:
+        logger.warning('transactional_email event_registration_failed kind=visit id=%s', visita.pk)
         return False
-
 
 def _normalized_colombian_phone(value):
     digits = re.sub(r'\D', '', str(value or ''))
@@ -296,6 +262,7 @@ def _save_pdf_and_notify(visita_id):
         visit = _persist_visit_pdf(visita_id)
     except Exception:
         logger.exception('No fue posible guardar PDF de visita %s', visita_id)
+        _enviar_correo_visita_completada(visit)
         visit.pdf_estado = 'fallido'
         visit.pdf_error = 'No se pudo generar o guardar el PDF. Reintenta desde el CRM.'
         visit.whatsapp_notificacion_estado = 'error'

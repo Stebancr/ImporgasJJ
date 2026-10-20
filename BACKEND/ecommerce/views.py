@@ -669,7 +669,7 @@ class ProductImageListView(APIView):
 
         serializer = ProductImageUploadSerializer(data=request.data)
         if serializer.is_valid():
-            image = serializer.save(product=product)
+            image = serializer.save(product=product, is_primary=serializer.validated_data.get('is_primary', False) or not product.images.filter(is_primary=True).exists())
             return Response(
                 {'data': ProductImageSerializer(image, context={'request': request}).data},
                 status=201,
@@ -698,6 +698,10 @@ class ProductImageDetailView(APIView):
         serializer = ProductImageUploadSerializer(obj, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            if not obj.product.images.filter(is_primary=True).exists():
+                alternative = obj.product.images.order_by('order', 'id').first()
+                alternative.is_primary = True
+                alternative.save(update_fields=['is_primary'])
             return Response({'data': ProductImageSerializer(obj, context={'request': request}).data})
         return Response(serializer.errors, status=400)
 
@@ -708,7 +712,7 @@ class ProductImageDetailView(APIView):
         obj = self._get(product_id, image_id)
         if not obj:
             return Response({'error': 'Not found'}, status=404)
-        obj.image.delete(save=False)
+        # Keep the blob: filesystem deletion cannot roll back with this transaction.
         obj.delete()
         remaining = ProductImage.objects.filter(product_id=product_id)
         if not remaining.filter(is_primary=True).exists():
@@ -1327,7 +1331,7 @@ def _create_approved_order(intent):
     if data.get('tcc_quote_id'):
         from shipping.services import mark_paid
         mark_paid(order)
-    transaction.on_commit(lambda order_id=order.pk: send_order_payment_confirmation(order_id))
+    send_order_payment_confirmation(order.pk)
     return order
 
 
@@ -1490,6 +1494,19 @@ class OrderAdminListView(APIView):
 
 # --- User Addresses -----------------------------------------------------------
 
+def address_identity(data):
+    """Compare delivery details, not the display label, without changing history."""
+    import unicodedata
+    fields = ('recipient_name', 'phone', 'address', 'city', 'department', 'postal_code',
+              'complement', 'neighborhood', 'delivery_instructions')
+    return tuple(' '.join(unicodedata.normalize('NFKC', str(data.get(field) or '')).casefold().split()) for field in fields)
+
+
+def matching_address(user, data, exclude=None):
+    identity = address_identity(data)
+    return next((address for address in UserAddress.objects.filter(user=user).exclude(pk=exclude)
+                 if address_identity(address.__dict__) == identity), None)
+
 class UserAddressListView(APIView):
     permission_classes = [IsAuthenticatedUser]
 
@@ -1498,12 +1515,27 @@ class UserAddressListView(APIView):
         serializer = UserAddressSerializer(addresses, many=True)
         return Response({'data': serializer.data})
 
+    @transaction.atomic
     def post(self, request):
+        # Serialize writes per account: concurrent retries cannot create copies
+        # or leave two default addresses. No volume or historical row is removed.
+        get_user_model().objects.select_for_update().get(pk=request.user.pk)
         serializer = UserAddressSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(user=request.user)
-            return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        existing = matching_address(request.user, serializer.validated_data)
+        if existing:
+            enrich_code = not existing.tcc_city_code and serializer.validated_data.get('tcc_city_code')
+            if enrich_code:
+                existing.tcc_city_code = enrich_code
+            if serializer.validated_data.get('is_default') and not existing.is_default:
+                existing.is_default = True
+                existing.save()
+            elif enrich_code:
+                existing.save()
+            return Response({'data': UserAddressSerializer(existing).data})
+        serializer.save(user=request.user, is_default=serializer.validated_data.get('is_default', False)
+                        or not UserAddress.objects.filter(user=request.user).exists())
+        return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
 
 
 class UserAddressDetailView(APIView):
@@ -1521,12 +1553,16 @@ class UserAddressDetailView(APIView):
             return Response({'error': 'Not found'}, status=404)
         return Response({'data': UserAddressSerializer(addr).data})
 
+    @transaction.atomic
     def put(self, request, pk):
+        get_user_model().objects.select_for_update().get(pk=request.user.pk)
         addr = self._get(request.user, pk)
         if not addr:
             return Response({'error': 'Not found'}, status=404)
-        serializer = UserAddressSerializer(addr, data=request.data)
+        serializer = UserAddressSerializer(addr, data=request.data, partial=True)
         if serializer.is_valid():
+            if matching_address(request.user, {**addr.__dict__, **serializer.validated_data}, exclude=addr.pk):
+                return Response({'address': 'Ya tienes guardada esta dirección de entrega.'}, status=400)
             serializer.save()
             return Response({'data': serializer.data})
         return Response(serializer.errors, status=400)

@@ -1,0 +1,15 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f2f4f8;font-family:Arial,sans-serif;color:#18223c">
+<table role="presentation" style="width:100%;border-collapse:collapse"><tr><td style="padding:20px 12px">
+<table role="presentation" style="max-width:620px;width:100%;margin:auto;background:#fff;border-collapse:collapse">
+<tr><td style="padding:24px;border-top:6px solid #0b1460"><img src="{{ logo }}" alt="ImporGas JJ" width="150" style="max-width:100%;height:auto"><h1 style="font-size:24px;line-height:1.3">{{ title }}</h1>
+<p>Hola {{ name }},</p><p>{{ summary }}</p><p><strong>{{ number }}</strong> · {{ date }}</p></td></tr>
+{% if rows %}<tr><td style="padding:0 24px"><table style="width:100%;border-collapse:collapse;font-size:14px"><tr><th align="left">Producto</th><th>Cant.</th><th align="right">Precio</th><th align="right">Importe</th></tr>
+{% for row in rows %}<tr><td style="padding:12px 4px;border-bottom:1px solid #ddd;overflow-wrap:anywhere">{{ row.name }}</td><td align="center">{{ row.quantity }}</td><td align="right">{{ row.price }}</td><td align="right">{{ row.total }}</td></tr>{% endfor %}</table></td></tr>{% endif %}
+<tr><td style="padding:24px">{% for label,value in details %}<p style="margin:0 0 12px"><strong>{{ label }}:</strong> {{ value }}</p>{% endfor %}
+<p style="margin:28px 0"><a href="{{ document_url }}" style="display:inline-block;background:#0b1460;color:#fff;padding:14px 20px;border-radius:6px;text-decoration:none">{{ document_label }}</a></p>
+<p style="font-size:12px;color:#555">El enlace es personal y vence en 7 días. Si vence, solicita uno nuevo a nuestro equipo.</p>
+<p style="font-size:12px;word-break:break-all"><a href="{{ document_url }}">{{ document_url }}</a></p>
+{% if order_url %}<p><a href="{{ order_url }}">Consultar pedido</a></p>{% endif %}{% if tracking_url %}<p><a href="{{ tracking_url }}">Rastrear envío en TCC</a></p>{% endif %}
+</td></tr><tr><td style="padding:24px;background:#edf0f7;font-size:13px">ImporGas JJ · {{ phone }}<br><a href="mailto:{{ contact }}">{{ contact }}</a><br>Este mensaje corresponde a tu compra o servicio técnico.</td></tr>
+</table></td></tr></table></body></html>

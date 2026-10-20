@@ -29,11 +29,11 @@ import {
 } from '@/components/ui/select'
 import { Plus, Search, Edit, Trash2, Package, Upload, X } from 'lucide-react'
 import { productsService } from '@/admin/services/admin_products'
-import type { CreateProductData } from '@/admin/services/admin_products'
+
 import { brandsService } from '@/admin/services/admin_brands'
 import { categoriesService } from '@/admin/services/admin_categories'
 import { locationsService } from '@/admin/services/admin_locations'
-import api from '@/admin/services/admin_api'
+
 import { clearProductDraft, productDraftKey, readDraftImages, readProductDraft, saveDraftImages, saveProductDraft } from '@/admin/services/product_draft'
 import type { Product, Brand, Category, ProductSpec, Location } from '@/admin/types'
 import ProductDescription from '@/components/ProductDescription'
@@ -53,7 +53,7 @@ interface FormData {
 }
 
 const defaultForm: FormData = {
-  shipping_profile: emptyShippingProfile,
+  shipping_profile: { ...emptyShippingProfile, declared_value_from_price: true },
   name: '',
   description: '',
   price: '',
@@ -65,7 +65,20 @@ const defaultForm: FormData = {
 }
 
 export default function ProductsPage() {
-  const [imageBusy, setImageBusy] = useState(false)
+  const imageBusy = false
+  const [gallery, setGallery] = useState<{id?:number;file?:number;url:string;alt_text:string}[]>([])
+  const [primary, setPrimary] = useState(0)
+  const [fieldErrors, setFieldErrors] = useState<Record<string,string>>({})
+  const errorRef = useRef<HTMLDivElement>(null)
+  const saveLock = useRef(false)
+  const operation = useRef<{key:string;fingerprint:string}>({ key: crypto.randomUUID(), fingerprint: '' })
+  const [confirmClose, setConfirmClose] = useState(false)
+  const closeEditor = () => { if (!saveLock.current) setConfirmClose(true) }
+  const showErrors = (errors:Record<string,string>) => {
+    setFieldErrors(errors)
+    setError('Revisa los campos indicados. Tus cambios se conservan.')
+    requestAnimationFrame(() => { errorRef.current?.focus(); errorRef.current?.scrollIntoView({block:'nearest'}) })
+  }
   const [imageError, setImageError] = useState('')
   const [products, setProducts] = useState<Product[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
@@ -77,6 +90,7 @@ export default function ProductsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoadingProduct, setIsLoadingProduct] = useState(false)
+  const [editorReady, setEditorReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -130,8 +144,9 @@ export default function ProductsPage() {
   useEffect(() => {
     if (!isDialogOpen || editingProduct || !draftReady) return
     const key = productDraftKey()
-    saveProductDraft(key, { formData, newSpecRows, stockValues })
-  }, [isDialogOpen, editingProduct, draftReady, formData, newSpecRows, stockValues])
+    saveProductDraft(key, { formData, newSpecRows, stockValues, operationKey:operation.current.key,
+      gallery:gallery.filter(item=>item.file!==undefined).map(item=>({file:item.file!,alt_text:item.alt_text})),primary })
+  }, [isDialogOpen, editingProduct, draftReady, formData, newSpecRows, stockValues, gallery, primary])
 
   useEffect(() => {
     if (!isDialogOpen || editingProduct || !draftReady) return
@@ -140,19 +155,38 @@ export default function ProductsPage() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
-    setImageFiles(prev => [...prev, ...files])
-    const previews = files.map(f => URL.createObjectURL(f))
-    setImagePreviews(prev => [...prev, ...previews])
-  }
-
-  const removeImage = (index: number) => {
-    URL.revokeObjectURL(imagePreviews[index])
-    setImageFiles(prev => prev.filter((_, i) => i !== index))
-    setImagePreviews(prev => prev.filter((_, i) => i !== index))
-  }
-
-  const handleOpenDialog = async (product?: Product) => {
+    e.target.value = ''
+    if (files.some(file => !['image/jpeg','image/png','image/webp'].includes(file.type) || file.size > 5*1024*1024)) {
+      setImageError('Usa imágenes JPG, PNG o WebP de hasta 5 MB por archivo.'); return
+    }
+    const activeFiles=gallery.filter(item=>item.file!==undefined).map(item=>imageFiles[item.file!])
+    const unique = files.filter((file,index) => ![...activeFiles,...files.slice(0,index)].some(other => other.name===file.name && other.size===file.size && other.lastModified===file.lastModified))
+    if (gallery.length + unique.length > 30) { setImageError('Puedes guardar hasta 30 imágenes.'); return }
     setImageError('')
+    const previews = unique.map(file=>URL.createObjectURL(file))
+    setGallery(prev=>[...prev,...unique.map((_,index)=>({file:imageFiles.length+index,url:previews[index],alt_text:''}))])
+    setImageFiles(prev=>[...prev,...unique])
+    setImagePreviews(prev=>[...prev,...previews])
+  }
+
+  const removeGalleryImage = (index:number) => {
+    setGallery(prev=>prev.filter((_,i)=>i!==index))
+    setPrimary(prev=>prev===index?0:prev>index?prev-1:prev)
+  }
+  const moveImage = (index:number, direction:number) => {
+    const target=index+direction
+    if(target<0 || target>=gallery.length) return
+    setGallery(prev=>{const next=[...prev]; [next[index],next[target]]=[next[target],next[index]]; return next})
+    setPrimary(prev=>prev===index?target:prev===target?index:prev)
+  }
+  const handleOpenDialog = async (product?: Product) => {
+    setEditorReady(false)
+    setImageError('')
+    setGallery([])
+    setPrimary(0)
+    setFieldErrors({})
+    setConfirmClose(false)
+    operation.current = {key:crypto.randomUUID(),fingerprint:''}
     setDraftReady(false)
     setDraftRestored(false)
     imagePreviews.forEach(URL.revokeObjectURL)
@@ -173,6 +207,8 @@ export default function ProductsPage() {
           productsService.getStock(product.id),
         ])
         setEditingProduct(full)
+        setGallery((full.images??[]).map(img=>({id:img.id,url:img.image_url||img.image,alt_text:img.alt_text})))
+        setPrimary(Math.max(0,(full.images??[]).findIndex(img=>img.is_primary)))
         setFormData({
           name: full.name,
           description: full.description ?? '',
@@ -188,6 +224,7 @@ export default function ProductsPage() {
         const stockMap: Record<number, string> = {}
         stockEntries.forEach(s => { stockMap[s.location_id] = s.quantity.toString() })
         setStockValues(stockMap)
+        setEditorReady(true)
       } catch {
         setError('Error al cargar los datos del producto')
       } finally {
@@ -197,6 +234,7 @@ export default function ProductsPage() {
       setEditingProduct(null)
       const key = productDraftKey()
       const draft = readProductDraft(key)
+      if(draft?.operationKey) operation.current.key=draft.operationKey
       setFormData(draft?.formData ?? defaultForm)
       setNewSpecRows(draft?.newSpecRows ?? [])
       setStockValues(draft?.stockValues ?? {})
@@ -205,94 +243,67 @@ export default function ProductsPage() {
       setIsDialogOpen(true)
       const files = await readDraftImages(key)
       setImageFiles(files)
-      setImagePreviews(files.map(file => URL.createObjectURL(file)))
+      const previews = files.map(file => URL.createObjectURL(file))
+      setImagePreviews(previews)
+      setGallery((draft?.gallery??files.map((_,index)=>({file:index,alt_text:''}))).filter(item=>files[item.file]).map(item=>({...item,url:previews[item.file]})))
+      setPrimary(draft?.primary??0)
       setDraftReady(true)
+      setEditorReady(true)
       setIsLoadingProduct(false)
     }
   }
 
   const handleSave = async () => {
-    if (!formData.name || !formData.price || !formData.category || !formData.brand) {
-      setError('Completa los campos obligatorios: nombre, precio, categoría y marca')
-      return
-    }
-    const shipping = formData.shipping_profile ?? emptyShippingProfile
-    if (!Number.isInteger(shipping.packages_per_unit) || Number(shipping.packages_per_unit) < 1 || Number(shipping.packages_per_unit) > 100) {
-      setError('Indica entre 1 y 100 paquetes por unidad vendida')
-      return
-    }
-    if (formData.is_available && shipping.requires_shipping &&
-        [shipping.weight_kg, shipping.height_cm, shipping.width_cm, shipping.length_cm, shipping.declared_value]
-          .some(value => value === null || !Number.isFinite(Number(value)) || Number(value) <= 0)) {
-      setError('Para publicar un producto físico completa peso, dimensiones y valor declarado con valores mayores a cero')
-      return
-    }
-    setIsSaving(true)
-    setError(null)
+    if(saveLock.current || !editorReady) return
+    const errors:Record<string,string>={}
+    if(!formData.name.trim()) errors.name='Escribe el nombre del producto.'
+    if(!formData.category) errors.category='Selecciona una categoría.'
+    if(!formData.brand) errors.brand='Selecciona una marca.'
+    if(!Number.isFinite(Number(formData.price)) || Number(formData.price)<=0) errors.price='El precio debe ser mayor que cero.'
+    if(formData.original_price && Number(formData.original_price)<Number(formData.price)) errors.original_price='Debe ser mayor o igual al precio de venta.'
+    const shipping=formData.shipping_profile??emptyShippingProfile
+    if(!Number.isInteger(shipping.packages_per_unit)||Number(shipping.packages_per_unit)<1||Number(shipping.packages_per_unit)>100) errors.shipping_profile='Indica entre 1 y 100 paquetes.'
+    if(formData.is_available && shipping.requires_shipping && [shipping.weight_kg,shipping.height_cm,shipping.width_cm,shipping.length_cm,...(shipping.declared_value_from_price?[]:[shipping.declared_value])].some(value=>!value||!Number.isFinite(Number(value))||Number(value)<=0)) errors.shipping_profile='Completa el peso, las dimensiones y el valor manual con números positivos.'
+    if(Object.values(stockValues).some(value=>value!==''&&(!/^\d+$/.test(value)||Number(value)>2147483647))) errors.stocks='Las existencias deben ser números enteros no negativos.'
+    if(newSpecRows.some(row=>!row.name.trim()||!row.value.trim())) errors.specs='Completa o elimina las características vacías.'
+    if(Object.keys(errors).length){showErrors(errors);return}
+    saveLock.current=true
+    setIsSaving(true);setError(null);setFieldErrors({})
     try {
-      const payload = {
-        name: formData.name,
-        description: formData.description,
-        price: parseFloat(formData.price),
-        original_price: formData.original_price ? parseFloat(formData.original_price) : undefined,
-        category: parseInt(formData.category),
-        brand: parseInt(formData.brand),
-        is_available: formData.is_available,
-        is_featured: formData.is_featured,
-        shipping_profile: formData.shipping_profile ?? emptyShippingProfile,
+      const files=gallery.filter(item=>item.file!==undefined).map(item=>imageFiles[item.file!])
+      let upload=0
+      const payload={
+        product:{...formData,price:formData.price,original_price:formData.original_price||null,
+          category:Number(formData.category),brand:Number(formData.brand),shipping_profile:shipping},
+        updated_at:editingProduct?.updated_at,
+        images:gallery.map(item=>({... (item.id?{id:item.id}:{file:`upload_${upload++}`}),alt_text:item.alt_text})),
+        primary:gallery.length?primary:null,
+        stocks:Object.entries(stockValues).filter(([,value])=>value!=='').map(([location,quantity])=>({location:Number(location),quantity:Number(quantity)})),
+        specs:[...existingSpecs.map(spec=>({id:spec.id,value:spec.value})),...newSpecRows.map(row=>({name:row.name.trim(),value:row.value.trim()}))],
       }
-
-      let savedProduct: Product
-      if (editingProduct) {
-        savedProduct = await productsService.update(editingProduct.id, payload as Partial<CreateProductData>)
-      } else {
-        savedProduct = await productsService.create(payload as CreateProductData)
-      }
-
-      // Upload images one by one
-      for (let i = 0; i < imageFiles.length; i++) {
-        await productsService.addImage(savedProduct.id, imageFiles[i], i === 0 && !editingProduct)
-      }
-
-      // Save new specs
-      const specErrors: string[] = []
-      for (const row of newSpecRows.filter(r => r.name.trim() && r.value.trim())) {
-        try {
-          const attrRes = await api.post<{ id: number } | { data: { id: number } }>('/spec-attributes', { name: row.name.trim() })
-          const attrData = attrRes.data as { data?: { id: number }; id?: number }
-          const attrId = attrData.data?.id ?? attrData.id
-          if (attrId) await productsService.addSpec(savedProduct.id, attrId, row.value.trim())
-          else specErrors.push(row.name)
-        } catch {
-          specErrors.push(row.name)
-        }
-      }
-      if (specErrors.length > 0) {
-        setError(`No se guardaron algunas especificaciones: ${specErrors.join(', ')}`)
-      }
-
-      // Save stock per location
-      for (const [locIdStr, qtyStr] of Object.entries(stockValues)) {
-        const qty = parseInt(qtyStr)
-        if (!isNaN(qty) && qty >= 0) {
-          await productsService.upsertStock(savedProduct.id, parseInt(locIdStr), qty)
-        }
-      }
-
-      if (!editingProduct) {
-        setDraftReady(false)
-        await clearProductDraft(productDraftKey())
-      }
+      const fingerprint=JSON.stringify(payload)+files.map(file=>`${file.name}:${file.size}:${file.lastModified}`).join('|')
+      operation.current.fingerprint=fingerprint
+      await productsService.saveEditor(editingProduct?.id,{...payload,key:operation.current.key},files)
+      if(!editingProduct){setDraftReady(false);await clearProductDraft(productDraftKey())}
       setIsDialogOpen(false)
       await fetchProducts()
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data
-      setError(msg?.detail || msg?.error || 'Error al guardar el producto')
-    } finally {
-      setIsSaving(false)
-    }
+    } catch(err:unknown) {
+      const response=(err as {response?:{status?:number;data?:unknown}}).response
+      const status=response?.status
+      if(status===400 && response?.data && typeof response.data==='object') {
+        operation.current={key:crypto.randomUUID(),fingerprint:''}
+        if(!editingProduct) {
+          const draft=readProductDraft(productDraftKey())
+          if(draft) saveProductDraft(productDraftKey(),{...draft,operationKey:operation.current.key})
+        }
+        const flatten=(value:unknown):string=>typeof value==='string'?value:Array.isArray(value)?value.map(flatten).join(' '):value&&typeof value==='object'?Object.values(value).map(flatten).join(' '):''
+        showErrors(Object.fromEntries(Object.entries(response.data).map(([key,value])=>[key,flatten(value)])))
+      } else {
+        setError(status===401?'Tu sesión caducó. Inicia sesión para guardar.':status===403?'No tienes permisos para guardar productos.':status===409?'El producto cambió o la solicitud ya fue utilizada. Conserva tus cambios y revisa la versión actual.':status===413?'Los archivos superan el tamaño permitido. Reduce su tamaño.':'No se pudo confirmar el guardado. Conservamos tus datos; reintenta sin cerrar el formulario.')
+        requestAnimationFrame(()=>errorRef.current?.focus())
+      }
+    } finally {saveLock.current=false;setIsSaving(false)}
   }
-
   const handleDelete = async (id: number) => {
     if (!confirm('¿Está seguro de eliminar este producto?')) return
     try {
@@ -303,47 +314,13 @@ export default function ProductsPage() {
     }
   }
 
-  const handleDeleteExistingImage = async (imageId: number) => {
-    if (!editingProduct || imageBusy) return
-    setImageBusy(true)
-    setImageError('')
-    try {
-      await productsService.deleteImage(editingProduct.id, imageId)
-      setEditingProduct(await productsService.getById(editingProduct.id))
-    } catch {
-      setImageError('Error al eliminar o actualizar las imágenes. Vuelve a abrir el producto para comprobar el estado.')
-    } finally { setImageBusy(false) }
-  }
-
-  const handlePrimaryImage = async (imageId: number) => {
-    if (!editingProduct || imageBusy) return
-    setImageBusy(true)
-    setImageError('')
-    try {
-      await productsService.setPrimaryImage(editingProduct.id, imageId)
-      setEditingProduct(prev => prev ? { ...prev, images: prev.images?.map(img => ({ ...img, is_primary: img.id === imageId })) } : null)
-      await fetchProducts()
-    } catch {
-      setImageError('No se pudo cambiar la imagen principal. Inténtalo nuevamente.')
-    } finally { setImageBusy(false) }
-  }
-
-  const handleDeleteSpec = async (specId: number) => {
-    if (!editingProduct) return
-    try {
-      await productsService.deleteSpec(editingProduct.id, specId)
-      setExistingSpecs(prev => prev.filter(s => s.id !== specId))
-    } catch {
-      setError('Error al eliminar la especificación')
-    }
-  }
-
+  const handleDeleteSpec = (id:number) => setExistingSpecs(prev=>prev.filter(spec=>spec.id!==id))
 
   const formatPrice = (price: number) =>
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(price)
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE))
-  const primaryImageId = editingProduct?.images?.find(img => img.is_primary)?.id ?? editingProduct?.images?.[0]?.id
+
 
   return (
     <div className="space-y-6">
@@ -412,7 +389,7 @@ export default function ProductsPage() {
                       <TableRow key={product.id}>
                         <TableCell>
                           <p className="font-medium">{product.name}</p>
-                          {product.shipping_ready === false && <Badge variant="warning" className="mt-1">Datos de envío pendientes</Badge>}
+                          {product.shipping_ready === false && <Badge variant="warning" className="mt-1">Información logística incompleta</Badge>}
                           {product.is_featured && (
                             <Badge variant="secondary" className="mt-1">Destacado</Badge>
                           )}
@@ -484,14 +461,14 @@ export default function ProductsPage() {
       </Card>
 
       {/* Product Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!isSaving && !imageBusy) setIsDialogOpen(open) }}>
+      <Dialog open={isDialogOpen} onOpenChange={(open) => { if (open) setIsDialogOpen(true); else closeEditor() }}>
         <DialogContent
-          className="max-w-2xl max-h-[90vh] overflow-y-auto"
+          className="max-w-3xl max-h-[90dvh] overflow-y-auto p-0 sm:p-0 [&>button]:z-30"
           aria-describedby={undefined}
           onPointerDownOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
         >
-          <DialogHeader>
+          <DialogHeader className="sticky top-0 z-20 border-b bg-background px-6 py-4">
             <DialogTitle>
               {editingProduct ? 'Editar Producto' : 'Agregar Producto'}
             </DialogTitle>
@@ -499,19 +476,21 @@ export default function ProductsPage() {
           {!editingProduct && draftRestored && (
             <p className="text-sm text-muted-foreground">Se recuperó el borrador guardado en este navegador.</p>
           )}
+          {error && <div ref={errorRef} tabIndex={-1} role="alert" className="mx-6 rounded border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"><p className="font-medium">{error}</p>{Object.entries(fieldErrors).map(([key,message])=><p key={key}>{message}</p>)}</div>}
+          {confirmClose && <div role="alert" className="mx-6 rounded border p-4 space-y-3"><p>¿Cerrar el formulario? Los cambios no guardados de edición se descartarán.</p><div className="flex gap-2"><Button variant="outline" onClick={()=>setConfirmClose(false)}>Seguir editando</Button><Button variant="destructive" onClick={()=>{setConfirmClose(false);setIsDialogOpen(false)}}>Cerrar formulario</Button></div></div>}
           {isLoadingProduct ? (
             <div className="py-12 text-center text-muted-foreground">Cargando datos del producto...</div>
           ) : (
             <>
-            <div className="grid gap-4 py-4">
+            <fieldset disabled={isSaving} className="grid min-w-0 gap-5 px-6 py-4"><h3 className="font-semibold">Información básica</h3>
             <div className="grid gap-2">
               <Label htmlFor="name">Nombre del producto *</Label>
               <Input
-                id="name"
+                id="name" aria-invalid={!!fieldErrors.name} aria-describedby="name-error"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="Ej: Calentador de Paso 10L"
-              />
+              />{fieldErrors.name && <p id="name-error" className="text-sm text-destructive">{fieldErrors.name}</p>}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="description">Descripción</Label>
@@ -533,27 +512,27 @@ export default function ProductsPage() {
               <div className="grid gap-2">
                 <Label htmlFor="price">Precio *</Label>
                 <Input
-                  id="price"
+                  id="price" aria-invalid={!!fieldErrors.price} aria-describedby="price-error"
                   type="number"
                   value={formData.price}
                   onChange={(e) => setFormData({ ...formData, price: e.target.value })}
                   placeholder="450000"
-                />
+                />{fieldErrors.price && <p id="price-error" className="text-sm text-destructive">{fieldErrors.price}</p>}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="original_price">Precio original (opcional)</Label>
                 <Input
-                  id="original_price"
+                  id="original_price" aria-invalid={!!fieldErrors.original_price} aria-describedby="original_price-error"
                   type="number"
                   value={formData.original_price}
                   onChange={(e) => setFormData({ ...formData, original_price: e.target.value })}
                   placeholder="500000"
-                />
+                />{fieldErrors.original_price && <p id="original_price-error" className="text-sm text-destructive">{fieldErrors.original_price}</p>}
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label>Categoría *</Label>
+                <Label>Categoría *</Label>{fieldErrors.category && <p className="text-sm text-destructive">{fieldErrors.category}</p>}
                 <Select
                   value={formData.category}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
@@ -571,7 +550,7 @@ export default function ProductsPage() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label>Marca *</Label>
+                <Label>Marca *</Label>{fieldErrors.brand && <p className="text-sm text-destructive">{fieldErrors.brand}</p>}
                 <Select
                   value={formData.brand}
                   onValueChange={(value) => setFormData({ ...formData, brand: value })}
@@ -590,9 +569,9 @@ export default function ProductsPage() {
               </div>
             </div>
 
-            <ShippingProfileFields value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>setFormData({...formData,shipping_profile})}/>
+            <ShippingProfileFields price={formData.price} value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>setFormData({...formData,shipping_profile})}/>
 
-            {/* Specifications */}
+            {fieldErrors.shipping_profile && <p className="text-sm text-destructive">{fieldErrors.shipping_profile}</p>}{fieldErrors.specs && <p className="text-sm text-destructive">{fieldErrors.specs}</p>}{/* Specifications */}
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <Label>Especificaciones del producto</Label>
@@ -668,7 +647,7 @@ export default function ProductsPage() {
               )}
             </div>
 
-            {/* Stock per location */}
+            <h3 className="font-semibold">Inventario por sede</h3>{fieldErrors.stocks && <p className="text-sm text-destructive">{fieldErrors.stocks}</p>}{/* Stock per location */}
             {locations.length > 0 && (
               <div className="grid gap-2">
                 <Label>Stock por sede</Label>
@@ -704,82 +683,21 @@ export default function ProductsPage() {
               </div>
             )}
 
-            {/* Image upload */}
-            <div className="grid gap-2">
-              {imageError && <p role="alert" className="text-sm text-destructive">{imageError}</p>}
-              {editingProduct && <p className="text-xs text-muted-foreground">Los cambios de imágenes se guardan inmediatamente.</p>}
-              <Label>Imágenes del producto</Label>              <div
-                className="border-2 border-dashed rounded-lg p-4 cursor-pointer hover:bg-muted/30 transition-colors"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                  <Upload className="h-8 w-8" />
-                  <p className="text-sm">Haz clic para seleccionar Imágenes</p>
-                  <p className="text-xs">PNG, JPG, WEBP (múltiples)</p>
-                </div>
+            <section className="space-y-3 min-w-0">
+              <h3 className="font-semibold">Imágenes del producto</h3>
+              <p className="text-sm text-muted-foreground">Selecciona la principal, ordena las imágenes y describe su contenido. Los cambios se aplican al guardar.</p>
+              {(imageError||fieldErrors.images) && <p role="alert" className="text-sm text-destructive">{imageError||fieldErrors.images}</p>}
+              <Button type="button" variant="outline" onClick={()=>fileInputRef.current?.click()}><Upload className="mr-2 h-4 w-4"/>Agregar imágenes</Button>
+              <p className="text-xs text-muted-foreground">JPG, PNG o WebP · Máximo 5 MB por imagen · Hasta 30 imágenes</p>
+              <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" onChange={handleFileSelect}/>
+              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 sm:grid-cols-3 gap-3">
+                {gallery.map((item,index)=><div key={item.id?`saved-${item.id}`:`new-${item.file}`} className={`rounded-lg border p-3 space-y-2 min-w-0 ${index===primary?'border-primary bg-primary/5':''}`}>
+                  <button type="button" className="w-full rounded focus-visible:ring-2 focus-visible:ring-primary" aria-pressed={primary===index} aria-label={`Usar imagen ${index+1} como principal`} onClick={()=>setPrimary(index)}><img src={item.url} alt={item.alt_text||`Imagen ${index+1}`} className="h-28 w-full object-contain"/><span className="text-xs">{primary===index?'Principal':'Elegir como principal'}</span></button>
+                  <Input maxLength={255} aria-label={`Descripción de imagen ${index+1}`} placeholder="Texto alternativo" value={item.alt_text} onChange={event=>setGallery(prev=>prev.map((image,i)=>i===index?{...image,alt_text:event.target.value}:image))}/>
+                  <div className="flex gap-1"><Button type="button" variant="outline" size="sm" disabled={index===0} aria-label={`Mover imagen ${index+1} antes`} onClick={()=>moveImage(index,-1)}>←</Button><Button type="button" variant="outline" size="sm" disabled={index===gallery.length-1} aria-label={`Mover imagen ${index+1} después`} onClick={()=>moveImage(index,1)}>→</Button><Button type="button" variant="ghost" size="sm" aria-label={`Eliminar imagen ${index+1}`} onClick={()=>removeGalleryImage(index)}><Trash2 className="h-4 w-4"/></Button></div>
+                </div>)}
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-              {imagePreviews.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {imagePreviews.map((preview, index) => (
-                    <div key={index} className="relative">
-                      <img
-                        src={preview}
-                        alt={`Preview ${index + 1}`}
-                        className="h-20 w-20 object-cover rounded border"
-                      />
-                      {index === 0 && !editingProduct?.images?.length && (
-                        <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-xs text-center py-0.5 rounded-b">
-                          Principal
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeImage(index)}
-                        className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
-                       aria-label="Cerrar">
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {editingProduct && editingProduct.images && editingProduct.images.length > 0 && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Imágenes actuales:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {editingProduct.images.map((img) => (
-                      <div key={img.id} className="relative w-28">
-                        <button type="button" disabled={imageBusy || isSaving} onClick={() => handlePrimaryImage(img.id)} aria-pressed={img.id === primaryImageId} aria-label={`Establecer como principal: imagen ${img.id}`} className="w-full rounded focus-visible:ring-2 focus-visible:ring-primary">
-                        <img
-                          src={img.image_url || img.image}
-                          alt={img.alt_text || 'imagen'}
-                          className={`h-24 w-full object-contain rounded border-2 ${img.id === primaryImageId ? 'border-primary' : 'border-muted'}`}
-                        />
-                        <span className="block text-xs py-1">{img.id === primaryImageId ? 'Principal' : 'Establecer como principal'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          disabled={imageBusy || isSaving}
-                          onClick={() => handleDeleteExistingImage(img.id)}
-                          className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
-                         aria-label={`Eliminar imagen ${img.id}`}>
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
+            </section>
             <div className="flex gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -800,12 +718,12 @@ export default function ProductsPage() {
                 <span className="text-sm">Producto destacado</span>
               </label>
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSaving || imageBusy}>
+          </fieldset>
+          <DialogFooter className="sticky bottom-0 z-20 border-t bg-background px-6 py-4">
+            <Button variant="outline" onClick={closeEditor} disabled={isSaving || imageBusy}>
               Cancelar
             </Button>
-            <Button onClick={handleSave} disabled={isSaving || imageBusy}>
+            <Button onClick={handleSave} disabled={isSaving || imageBusy || !editorReady}>
               {isSaving ? 'Guardando...' : editingProduct ? 'Guardar cambios' : 'Crear producto'}
             </Button>
           </DialogFooter>

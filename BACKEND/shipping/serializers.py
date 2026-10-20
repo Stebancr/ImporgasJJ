@@ -5,7 +5,7 @@ from ecommerce.pricing import totals
 
 
 PROFILE_FIELDS = ['requires_shipping', 'weight_kg', 'height_cm', 'width_cm', 'length_cm',
-                  'packages_per_unit', 'declared_value', 'packaging_code', 'fragile']
+                  'packages_per_unit', 'declared_value', 'declared_value_from_price', 'packaging_code', 'fragile']
 
 
 class ProductShippingSerializer(serializers.ModelSerializer):

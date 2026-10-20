@@ -15,6 +15,7 @@ urlpatterns = [
     path('sessions/<int:pk>/',      views.SessionDetailView.as_view(),     name='crm-session-detail'),
     path('sessions/<int:pk>/messages/', views.MessageListCreateView.as_view(), name='crm-messages'),
     path('attachments/<int:pk>/', views.ProtectedAttachmentView.as_view(), name='crm-attachment'),
+    path('attachments/<int:pk>/retry/', views.RetryAttachmentView.as_view(), name='crm-attachment-retry'),
     path('attachments/<int:pk>/delivery/', views.AttachmentDeliveryView.as_view(), name='crm-attachment-delivery'),
     
     # Endpoints públicos para el bot (ecommerce)

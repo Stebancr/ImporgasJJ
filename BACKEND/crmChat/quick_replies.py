@@ -13,16 +13,20 @@ from .models import QuickReply, QuickReplyPreference, ChatAuditEvent, ChatSessio
 from .attachment_validation import validate_chat_upload, upload_sha256, CHANNEL_MEDIA, ensure_channel_media
 
 VARIABLES = {'nombre_cliente', 'nombre_agente', 'numero_visita', 'fecha_visita',
-             'costo_final', 'enlace_pdf', 'nombre_producto', 'enlace_producto'}
+             'costo_final', 'enlace_pdf', 'nombre_producto', 'enlace_producto',
+             'numero_pedido', 'estado_pedido', 'nombre_tecnico', 'enlace_seguimiento', 'enlace_pago'}
 PATTERN = re.compile(r'{{\s*([a-z_]+)\s*}}')
 
 
 def render_template(template, values):
     required = set(PATTERN.findall(template.text))
-    missing = sorted(key for key in required if not str(values.get(key, '')).strip())
+    if required - VARIABLES:
+        raise ValueError('La plantilla contiene variables desconocidas.')
+    missing = sorted(key for key in required if not isinstance(values.get(key), (str, int, float)) or not str(values[key]).strip())
     if missing:
         raise ValueError('Completa las variables: ' + ', '.join(missing))
-    text = PATTERN.sub(lambda match: str(values[match[1]]).strip(), template.text)
+    from .message_format import format_for_channel
+    text = PATTERN.sub(lambda match: format_for_channel(str(values[match[1]]), 'facebook'), template.text)
     if '{{' in text or '}}' in text or len(text) > 4000:
         raise ValueError('Variables inválidas o mensaje demasiado largo.')
     return text
@@ -65,6 +69,18 @@ class QuickReplySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Selecciona al menos un canal válido.')
         return sorted(set(value))
 
+    def validate_name(self, value):
+        value = value.strip()
+        # Preserve historical names, but reject new ambiguous duplicates.
+        if self.instance and self.instance.name == value:
+            return value
+        matches = QuickReply.objects.filter(name__iexact=value)
+        if self.instance:
+            matches = matches.exclude(pk=self.instance.pk)
+        if matches.exists():
+            raise serializers.ValidationError('Ya existe una plantilla con este nombre.')
+        return value
+
     def validate_text(self, value):
         unknown = set(PATTERN.findall(value)) - VARIABLES
         residue = PATTERN.sub('', value)
@@ -98,7 +114,7 @@ class QuickReplyView(APIView):
         return Response(self.serialize(qs, request, many=True))
 
     def post(self, request, pk=None, action=None):
-        if action not in (None, 'favorite', 'preview'):
+        if action not in (None, 'favorite', 'preview', 'duplicate'):
             return Response(status=404)
         if not self.allowed(request):
             return Response({'error': 'No autorizado'}, status=403)
@@ -124,6 +140,18 @@ class QuickReplyView(APIView):
             return Response({'text': text, 'attachment_url': self.serialize(obj, request)['attachment_url']})
         if getattr(request.user, 'tipo_usuario', 0) != 4:
             return Response({'error': 'Solo administradores pueden administrar plantillas.'}, status=403)
+        if action == 'duplicate':
+            base = obj.name[:100]
+            name, counter = f'{base} (copia)', 2
+            while QuickReply.objects.filter(name__iexact=name).exists():
+                name = f'{base} (copia {counter})'
+                counter += 1
+            copy = QuickReply.objects.create(name=name, category=obj.category, channels=obj.channels,
+                text=obj.text, active=False, author=request.user, attachment=obj.attachment.name,
+                attachment_metadata=obj.attachment_metadata)
+            ChatAuditEvent.objects.create(actor=request.user, action='template.duplicated',
+                details={'template_id': copy.pk, 'source_id': obj.pk})
+            return Response(self.serialize(copy, request), status=201)
         data = request.data.copy()
         if isinstance(data.get('channels'), str):
             try:
@@ -164,6 +192,17 @@ class QuickReplyView(APIView):
 
     def patch(self, request, pk):
         return self.post(request, pk)
+
+    def delete(self, request, pk):
+        if getattr(request.user, 'tipo_usuario', 0) != 4:
+            return Response({'error': 'Solo administradores pueden eliminar plantillas.'}, status=403)
+        obj = QuickReply.objects.filter(pk=pk).first()
+        if not obj:
+            return Response(status=404)
+        ChatAuditEvent.objects.create(actor=request.user, action='template.deleted', details={'template_id': obj.pk})
+        # Do not delete attachments: duplicates and historical messages can share them.
+        obj.delete()
+        return Response(status=204)
 
 
 class QuickReplyFileView(APIView):
