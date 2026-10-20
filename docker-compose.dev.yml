@@ -218,6 +218,8 @@ services:
     environment:
       - WHATSAPP_GATEWAY_ENV=development
       # Shipping credentials belong only to Django/Celery, not this gateway.
+      - TCC_API_TOKEN=
+      - TCC_PRODUCTION_API_TOKEN=
       - WHATSAPP_GATEWAY_PORT=3001
       - CRM_API_URL=http://backend:8000
       - REDIS_URL=redis://redis:6379/1
@@ -248,6 +250,8 @@ services:
         format: raw
     environment:
       - WHATSAPP_GATEWAY_ENV=test
+      - TCC_API_TOKEN=
+      - TCC_PRODUCTION_API_TOKEN=
       - CRM_API_URL=http://backend:8000
       - REDIS_URL=redis://redis:6379/1
       - WHATSAPP_AUTH_DIR=/tmp/whatsapp-auth
