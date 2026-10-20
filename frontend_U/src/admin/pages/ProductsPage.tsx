@@ -74,6 +74,8 @@ export default function ProductsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [searchTerm, setSearchTerm] = useState('')
+  const [shippingFilter, setShippingFilter] = useState('')
+  const [shippingTouched, setShippingTouched] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoadingProduct, setIsLoadingProduct] = useState(false)
@@ -96,6 +98,7 @@ export default function ProductsPage() {
 
   // Stock state: locationId -> quantity string
   const [stockValues, setStockValues] = useState<Record<number, string>>({})
+  const initialStocks = useRef<Record<number, string>>({})
 
   const PER_PAGE = 20
 
@@ -105,6 +108,7 @@ export default function ProductsPage() {
     try {
       const res = await productsService.getAll({
         search: searchTerm || undefined,
+        shipping_status: shippingFilter || undefined,
         page,
         per_page: PER_PAGE,
       })
@@ -119,7 +123,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts()
-  }, [searchTerm, page])
+  }, [searchTerm, page, shippingFilter])
 
   useEffect(() => {
     brandsService.getAll({ is_active: true, per_page: 100 }).then(r => setBrands(r.data)).catch(() => {})
@@ -152,6 +156,7 @@ export default function ProductsPage() {
   }
 
   const handleOpenDialog = async (product?: Product) => {
+    setShippingTouched(false)
     setImageError('')
     setDraftReady(false)
     setDraftRestored(false)
@@ -161,6 +166,7 @@ export default function ProductsPage() {
     setExistingSpecs([])
     setNewSpecRows([])
     setStockValues({})
+    initialStocks.current = {}
     setError(null)
     if (product) {
       setEditingProduct(product)
@@ -188,6 +194,7 @@ export default function ProductsPage() {
         const stockMap: Record<number, string> = {}
         stockEntries.forEach(s => { stockMap[s.location_id] = s.quantity.toString() })
         setStockValues(stockMap)
+        initialStocks.current = {...stockMap}
       } catch {
         setError('Error al cargar los datos del producto')
       } finally {
@@ -217,11 +224,12 @@ export default function ProductsPage() {
       return
     }
     const shipping = formData.shipping_profile ?? emptyShippingProfile
-    if (!Number.isInteger(shipping.packages_per_unit) || Number(shipping.packages_per_unit) < 1 || Number(shipping.packages_per_unit) > 100) {
+    const validateShipping = !editingProduct || shippingTouched
+    if (validateShipping && (!Number.isInteger(shipping.packages_per_unit) || Number(shipping.packages_per_unit) < 1 || Number(shipping.packages_per_unit) > 100)) {
       setError('Indica entre 1 y 100 paquetes por unidad vendida')
       return
     }
-    if (formData.is_available && shipping.requires_shipping &&
+    if (validateShipping && formData.is_available && shipping.requires_shipping &&
         [shipping.weight_kg, shipping.height_cm, shipping.width_cm, shipping.length_cm, shipping.declared_value]
           .some(value => value === null || !Number.isFinite(Number(value)) || Number(value) <= 0)) {
       setError('Para publicar un producto físico completa peso, dimensiones y valor declarado con valores mayores a cero')
@@ -239,12 +247,16 @@ export default function ProductsPage() {
         brand: parseInt(formData.brand),
         is_available: formData.is_available,
         is_featured: formData.is_featured,
-        shipping_profile: formData.shipping_profile ?? emptyShippingProfile,
+        ...((!editingProduct || shippingTouched) ? {shipping_profile: formData.shipping_profile ?? emptyShippingProfile} : {}),
       }
 
       let savedProduct: Product
       if (editingProduct) {
-        savedProduct = await productsService.update(editingProduct.id, payload as Partial<CreateProductData>)
+        const previous:Record<string,unknown> = {name:editingProduct.name, description:editingProduct.description??'',
+          price:Number(editingProduct.price),original_price:editingProduct.original_price?Number(editingProduct.original_price):undefined,
+          category:editingProduct.category_id,brand:editingProduct.brand_id,is_available:editingProduct.is_available,is_featured:editingProduct.is_featured}
+        const changed = Object.fromEntries(Object.entries(payload).filter(([key,value])=>key==='shipping_profile'||value!==previous[key]))
+        savedProduct = await productsService.update(editingProduct.id, changed as Partial<CreateProductData>)
       } else {
         savedProduct = await productsService.create(payload as CreateProductData)
       }
@@ -273,6 +285,7 @@ export default function ProductsPage() {
 
       // Save stock per location
       for (const [locIdStr, qtyStr] of Object.entries(stockValues)) {
+        if (editingProduct && initialStocks.current[Number(locIdStr)] === qtyStr) continue
         const qty = parseInt(qtyStr)
         if (!isNaN(qty) && qty >= 0) {
           await productsService.upsertStock(savedProduct.id, parseInt(locIdStr), qty)
@@ -372,7 +385,9 @@ export default function ProductsPage() {
               Lista de Productos
               <Badge variant="secondary">{total}</Badge>
             </CardTitle>
-            <div className="relative w-full sm:w-64">
+            <div className="w-full sm:w-64">
+              <select aria-label="Estado de envío" className="mb-2 w-full rounded border p-2" value={shippingFilter} onChange={e=>{setShippingFilter(e.target.value);setPage(1)}}><option value="">Todos los estados de envío</option><option value="incomplete">Información de envío incompleta</option><option value="ready">Listo para cotizar</option><option value="not_required">No requiere envío</option></select>
+              <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar productos..."
@@ -380,6 +395,7 @@ export default function ProductsPage() {
                 onChange={(e) => { setSearchTerm(e.target.value); setPage(1) }}
                 className="pl-9"
                aria-label="Buscar productos..." />
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -590,7 +606,8 @@ export default function ProductsPage() {
               </div>
             </div>
 
-            <ShippingProfileFields value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>setFormData({...formData,shipping_profile})}/>
+            {editingProduct && !editingProduct.shipping_ready && <p className="text-sm text-amber-800">Información de envío incompleta. Puedes guardar los demás datos sin modificar el transporte.</p>}
+            <ShippingProfileFields value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>{setShippingTouched(true);setFormData({...formData,shipping_profile})}}/>
 
             {/* Specifications */}
             <div className="grid gap-2">

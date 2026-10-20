@@ -78,6 +78,9 @@ def shipping_snapshot(user, items, data, *, estimate=False):
         profile = getattr(product, 'shipping_profile', None)
         if profile is None:
             raise ValidationError({'items': f'El producto {pk} no tiene configuración de transporte. Contacta al asesor.'})
+        from .rollout import missing_fields
+        if missing_fields(profile):
+            raise ValidationError({'items': f'Información de envío incompleta en el producto {pk}. Contacta al asesor.'})
         subtotal += product.price * qty
         lines.append({'product_id': pk, 'quantity': qty, 'unit_price': str(product.price),
                       'shipping_revision': profile.updated_at.isoformat()})

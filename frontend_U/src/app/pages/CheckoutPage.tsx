@@ -37,6 +37,7 @@ function CheckoutPage() {
   const [addresses, setAddresses] = useState<UserAddress[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
   const [tccEnabled,setTccEnabled]=useState<boolean|null>(null)
+  const [requiresConfirmation,setRequiresConfirmation]=useState(true)
   const [shippingError,setShippingError]=useState('')
   const [quoting,setQuoting]=useState(false)
   const [quoted,setQuoted]=useState<{key:string;value:ShippingQuote}|null>(null)
@@ -52,7 +53,7 @@ function CheckoutPage() {
     postalCode: '',
     paymentMethod: 'wompi',
   })
-  useEffect(()=>{shippingService.config().then(config=>setTccEnabled(config.enabled)).catch(()=>setShippingError('No fue posible verificar el transporte. Actualiza la página antes de pagar.'))},[])
+  useEffect(()=>{shippingService.config().then(config=>{setTccEnabled(config.enabled);setRequiresConfirmation(config.requires_shipping_confirmation===true);if(config.requires_shipping_confirmation&&!config.enabled)setShippingError('Envío pendiente por confirmar. Contacta al asesor antes de pagar.')}).catch(()=>setShippingError('No fue posible verificar el transporte. Actualiza la página antes de pagar.'))},[])
   const quoteKey=JSON.stringify({items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),form,address_id:selectedAddressId})
   const activeQuote=quoted?.key===quoteKey && Date.parse(quoted.value.expires_at)>Date.now()?quoted.value:null
   useEffect(()=>{
@@ -148,7 +149,7 @@ function CheckoutPage() {
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
     [items]
   )
-  const shipping = tccEnabled ? (activeQuote?Number(activeQuote.total):null) : (subtotal >= 500000 ? 0 : 25000)
+  const shipping = (tccEnabled===null || (requiresConfirmation&&!tccEnabled)) ? null : tccEnabled ? (activeQuote?Number(activeQuote.total):null) : (subtotal >= 500000 ? 0 : 25000)
   const total = activeQuote?Number(activeQuote.order_total):subtotal+(shipping??0)
 
 
@@ -172,7 +173,7 @@ function CheckoutPage() {
 
   const handleSubmitInfo = (e: React.FormEvent) => {
     e.preventDefault()
-    if(tccEnabled===null || (tccEnabled && !activeQuote)){
+    if((requiresConfirmation&&!tccEnabled) || tccEnabled===null || (tccEnabled && !activeQuote)){
       setShippingError('Completa la dirección y espera una cotización vigente antes de pagar.');return
     }
     if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
@@ -215,7 +216,7 @@ function CheckoutPage() {
   }
 
   const handleWompiConfirm = async () => {
-    if(tccEnabled===null || (tccEnabled && !activeQuote)){setShippingError('Actualiza la cotización antes de pagar.');return null}
+    if((requiresConfirmation&&!tccEnabled) || tccEnabled===null || (tccEnabled && !activeQuote)){setShippingError('Actualiza la cotización antes de pagar.');return null}
     if (paymentLock.current) return
     paymentLock.current = true
     setSubmitting(true)
@@ -470,7 +471,7 @@ function CheckoutPage() {
 
                 <button
                   type="submit"
-                  disabled={tccEnabled===null || (tccEnabled && (!activeQuote||quoting))}
+                  disabled={(requiresConfirmation&&!tccEnabled) || tccEnabled===null || (tccEnabled && (!activeQuote||quoting))}
                   className="w-full mt-6 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
                 >
                   Continuar al Pago
@@ -554,7 +555,7 @@ function CheckoutPage() {
                     <button
                       type="button"
                       onClick={handleCashConfirm as unknown as React.MouseEventHandler}
-                      disabled={submitting||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
+                      disabled={submitting||(requiresConfirmation&&!tccEnabled)||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
                       className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60"
                     >
                       {submitting ? 'Procesando...' : 'Confirmar Pedido'}
@@ -563,7 +564,7 @@ function CheckoutPage() {
                     <button
                       type="button"
                       onClick={handleWompiConfirm}
-                      disabled={submitting||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
+                      disabled={submitting||(requiresConfirmation&&!tccEnabled)||tccEnabled===null||(!!tccEnabled&&!activeQuote)}
                       className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-semibold hover:shadow-lg transition-all disabled:opacity-60 flex items-center justify-center gap-2"
                     >
                       {submitting ? (
@@ -628,7 +629,7 @@ function CheckoutPage() {
                 <div className="border-t pt-3">
                   <div className="flex justify-between">
                     <span className="text-lg font-semibold text-gray-900">Total</span>
-                    <span className="text-lg font-bold text-gray-900">{tccEnabled&&!activeQuote?'Pendiente de cotización':formatPrice(total)}</span>
+                    <span className="text-lg font-bold text-gray-900">{shipping===null?'Pendiente de cotización':formatPrice(total)}</span>
                   </div>
                 </div>
               </div>
@@ -643,7 +644,7 @@ function CheckoutPage() {
               <div className="mt-6 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Truck className="w-4 h-4 text-blue-600" />
-                  <span>{tccEnabled?'Transporte cotizado con TCC antes del pago':'Envío gratis en compras +$500.000'}</span>
+                  <span>{tccEnabled?'Transporte cotizado con TCC antes del pago':requiresConfirmation?'Envío pendiente por confirmar':'Envío gratis en compras +$500.000'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Shield className="w-4 h-4 text-green-600" />

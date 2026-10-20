@@ -492,6 +492,24 @@ class ProductListView(APIView):
     def get(self, request):
         qs = Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related('images')
 
+        logistical = request.query_params.get('shipping_status')
+        if logistical:
+            ready = Q(shipping_profile__requires_shipping=True,
+                shipping_profile__weight_kg__gt=0, shipping_profile__height_cm__gt=0,
+                shipping_profile__width_cm__gt=0, shipping_profile__length_cm__gt=0,
+                shipping_profile__declared_value__gt=0, shipping_profile__packages_per_unit__gte=1,
+                shipping_profile__packages_per_unit__lte=100,
+                shipping_profile__packaging_code__in=('CLEM_CAJA', 'CLEM_MEDIANA'))
+            not_required = Q(shipping_profile__requires_shipping=False)
+            if logistical == 'incomplete':
+                qs = qs.exclude(ready | not_required)
+            elif logistical == 'ready':
+                qs = qs.filter(ready)
+            elif logistical == 'not_required':
+                qs = qs.filter(not_required)
+            else:
+                return Response({'error': 'Estado logístico no válido.'}, status=400)
+
         # Filtros
         if request.query_params.get('category_id'):
             qs = qs.filter(category_id=request.query_params['category_id'])
@@ -958,7 +976,12 @@ class OrderListView(APIView):
         )
         shipping = 0 if subtotal >= SHIPPING_THRESHOLD else SHIPPING_COST
         shipping_quote = None
-        if settings.TCC_SHIPPING_ENABLED:
+        from shipping.rollout import enabled_for
+        use_tcc = enabled_for(request.user)
+        if settings.TCC_REQUIRE_CONFIRMED_SHIPPING and not use_tcc:
+            return Response({'error': 'Envío pendiente por confirmar. Contacta al asesor antes de pagar; no se cobrará un envío sin confirmar.',
+                             'code': 'shipping_pending'}, status=409)
+        if use_tcc:
             if not data.get('shipping_quote_id'):
                 return Response({'error': 'Cotiza el transporte antes de pagar.'}, status=400)
             from shipping.services import validate_checkout_quote

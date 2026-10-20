@@ -36,7 +36,7 @@ export interface TCCAddress {
   tcc_city_code: string; complement: string; neighborhood: string; delivery_instructions: string
 }
 export const shippingService = {
-  config: () => api.get<{enabled:boolean; tracking_api_available:boolean}>('/shipping/config'),
+  config: () => api.get<{enabled:boolean; tracking_api_available:boolean; requires_shipping_confirmation?:boolean}>('/shipping/config'),
   cities: () => api.get<TCCCity[]>('/shipping/cities'),
   quote: (payload: unknown) => api.post<ShippingQuote>('/shipping/quote',payload),
   estimate: (payload: unknown) => api.post<ShippingCalculation>('/shipping/estimate',payload),

@@ -308,6 +308,7 @@ function ProductDetailPage() {
           </div>
 
           {shippingConfig.enabled && <ShippingCalculator items={[{product_id:Number(product.id),quantity}]}/>}
+          {!shippingConfig.enabled && shippingConfig.requiresConfirmation && <p className="p-4 text-sm text-amber-800">Envío: pendiente por calcular. El costo de entrega será confirmado según el destino y las características del producto.</p>}
           {shippingConfig.error && <p role="alert" className="p-4 text-sm text-red-700">{shippingConfig.error}</p>}
 
           {/* Tabs */}
