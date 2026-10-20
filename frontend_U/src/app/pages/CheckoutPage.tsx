@@ -568,7 +568,7 @@ function CheckoutPage() {
               <div className="mt-6 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Truck className="w-4 h-4 text-blue-600" />
-                  <span>{'Envío gratis en compras +$500.000'}</span>
+                  <span>El costo de envío se muestra antes del pago</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Shield className="w-4 h-4 text-green-600" />

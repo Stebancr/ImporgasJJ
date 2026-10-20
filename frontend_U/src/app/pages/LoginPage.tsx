@@ -351,7 +351,7 @@ function LoginPage() {
             <div className="grid grid-cols-3 gap-4">
               {[
                 { icon: Shield, label: 'Garantia 5 anos' },
-                { icon: Truck, label: 'Envio gratis' },
+                { icon: Truck, label: 'Envíos' },
                 { icon: Headphones, label: 'Soporte 24/7' },
               ].map((feature, idx) => (
                 <div key={idx} className="bg-white/10 backdrop-blur rounded-xl p-4 border border-white/10">

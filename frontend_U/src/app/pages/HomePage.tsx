@@ -40,8 +40,8 @@ const categories = [
 const features = [
   {
     icon: Truck,
-    title: 'Envio Gratis',
-    description: 'En compras mayores a $500.000',
+    title: 'Envíos',
+    description: 'Consulta el costo de entrega al comprar',
     color: 'text-[#001575]',
     bgColor: 'bg-[#e8ecff]'
   },

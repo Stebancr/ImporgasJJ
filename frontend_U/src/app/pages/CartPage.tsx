@@ -193,14 +193,6 @@ function CartPage() {
                     <span className="font-medium text-[#1A1D21]">{formatPrice(shipping)}</span>
                   )}
                 </div>
-                {shipping > 0 && (
-                  <div className="flex items-center gap-2 p-3 bg-[#e8ecff] rounded-xl">
-                    <Truck className="w-5 h-5 text-[#001575]" />
-                    <p className="text-sm text-[#001575]">
-                      Agrega {formatPrice(500000 - subtotal)} mas para envio gratis
-                    </p>
-                  </div>
-                )}
                 <div className="border-t border-[#E5E7EB] pt-4">
                   <div className="flex justify-between items-center">
                     <span className="text-lg font-semibold text-[#1A1D21]">Total</span>
