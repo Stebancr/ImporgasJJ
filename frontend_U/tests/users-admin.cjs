@@ -1,7 +1,7 @@
 const { chromium } = require('/tmp/crm-ui/node_modules/playwright')
 const assert = require('node:assert/strict')
 ;(async () => {
-  const browser = await chromium.launch({args:['--host-resolver-rules=MAP users.localhost users-frontend-qa']})
+  const browser = await chromium.launch({args:['--host-resolver-rules=MAP users.localhost nginx']})
   const page = await browser.newPage()
   page.setDefaultTimeout(15000)
   const errors = []
@@ -32,7 +32,7 @@ const assert = require('node:assert/strict')
     }
     await route.fulfill({status,json})
   })
-  await page.goto('http://users.localhost:3000/admin/usuarios')
+  await page.goto('http://users.localhost/admin/usuarios')
   await page.getByText('Trabajador QA',{exact:true}).waitFor()
   await page.getByLabel('Estado de las cuentas').click()
   await page.getByRole('option',{name:'Inactivos',exact:true}).click()

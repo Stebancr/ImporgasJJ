@@ -9,7 +9,11 @@ const api='http://general-e2e-backend:8099'
  page.on('response',async response=>{if(response.url().endsWith('/editor')) console.log('EDITOR',response.status(),response.status()>=400?await response.text():'saved')})
  let fail=false
  try{
-  assert((await (await page.request.get(api+'/__qa/state')).json()).database_isolated)
+  let ready
+  for(let attempt=0;attempt<60;attempt++){
+   try{ready=await(await page.request.get(api+'/__qa/state')).json();break}catch{await new Promise(resolve=>setTimeout(resolve,500))}
+  }
+  assert(ready?.database_isolated)
   const login=await page.request.post(api+'/auth/token/',{data:{usuario:'general-e2e-admin',password:'General-synthetic-fixture-only'}})
   assert.equal(login.status(),200)
   const tokens=await login.json(),headers={Authorization:'Bearer '+tokens.access}

@@ -1,5 +1,7 @@
 # Separación local de TCC — 19 de octubre de 2026
 
+> Informe histórico de la separación. La política temporal de envío descrita inicialmente fue retirada. La versión vigente no calcula ni cobra envío: consulta GENERAL_PR_VALIDATION.md.
+
 ## Referencias y alcance
 
 | Referencia | Commit | Contenido |
@@ -35,7 +37,7 @@ CRM, chats, adjuntos, plantillas, usuarios/trabajadores, visitas, PDFs, correos,
 
 ## Envío temporal explícito
 
-Se recuperó la regla previa de la aplicación: **$25.000 COP por debajo de $500.000 COP de subtotal; gratis desde $500.000 COP**. No es un fallback ante una cotización fallida. Django calcula el importe y la firma de Wompi. No se llama a TCC ni se crean guías.
+La tarifa temporal fue retirada en la preparación del PR general. El total vigente solo incluye productos, impuestos y descuentos; el envío queda fuera de la compra y se registra como NULL.
 
 ## Migraciones y conservación de la base
 

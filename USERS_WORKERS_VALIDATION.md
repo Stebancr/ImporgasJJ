@@ -1,4 +1,7 @@
-# Usuarios y trabajadores: validación de la rama dependiente
+# Usuarios y trabajadores: integración en dev
+
+Actualización: los cambios de cac808e0 y las correcciones generales de 88592f0c fueron incorporados a dev mediante 1a850e03 y 540a3592. El PR general #7 contiene ahora esta funcionalidad. El PR #8 permanece abierto, sin fusionar, y requiere revisión antes de cualquier integración adicional porque conserva su base anterior. Las referencias de dependencia siguientes describen el trabajo original.
+
 
 Base: PR #7, https://github.com/Stebancr/ImporgasJJ/pull/7, `dev` → `main`.
 Commit base: `e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5`.
