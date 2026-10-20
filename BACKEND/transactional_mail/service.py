@@ -60,10 +60,14 @@ def context_for(delivery, source):
             date=timezone.localtime(source.created_at,ZoneInfo('America/Bogota')).strftime('%d/%m/%Y %H:%M'),
             document_label='Ver o descargar comprobante', summary='Wompi confirmó tu pago. Este comprobante es un resumen interno, no una factura electrónica.',
             rows=[{'name':i.product.name,'quantity':i.quantity,'price':cop(i.unit_price),'total':cop(i.quantity*i.unit_price)} for i in source.items.all()],
-            details=[('Subtotal',cop(source.subtotal)),('Envío',cop(source.shipping_cost)),('Descuentos',cop(source.discounts)),
+            details=[('Subtotal',cop(source.subtotal)),('Descuentos',cop(source.discounts)),
                 ('Impuestos',cop(source.taxes)),('Total pagado',cop(source.paid_total if source.paid_total is not None else source.total)),
                 ('Entrega',f'{source.shipping_address}, {source.city}, {source.department}'),('Pago','Wompi'),('Estado',source.get_status_display())],
             order_url=public_url(f'pedido/{source.tracking_code}'))
+        if source.shipping_cost is not None and source.shipping_cost > 0:
+            context['details'].append(('Envío registrado anteriormente',cop(source.shipping_cost)))
+        else:
+            context['details'].append(('Condiciones de entrega','El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.'))
     else:
         tech = getattr(getattr(source.tecnico,'usuario_rel',None),'nombre_completo','')
         context.update(name=source.cliente.nombre, title='Tu servicio técnico ha sido finalizado',number=source.numero_tarea,

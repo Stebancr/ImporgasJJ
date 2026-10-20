@@ -410,7 +410,9 @@ class Order(models.Model):
 
     # ── Contabilidad ──────────────────────────────────────────────────────────
     subtotal      = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Subtotal")
-    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Costo de envío")
+    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=None, verbose_name="Costo de envío histórico")
+    delivery_address = models.ForeignKey('UserAddress', null=True, blank=True, on_delete=models.SET_NULL, related_name='orders')
+    delivery_details = models.JSONField(default=dict, blank=True)
     discounts     = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Descuentos adicionales")
     taxes         = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Impuestos adicionales")
     paid_total    = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, verbose_name="Total pagado confirmado")
@@ -484,7 +486,7 @@ class WompiPaymentIntent(models.Model):
     )
     checkout_data = models.JSONField(default=dict)
     subtotal = models.DecimalField(max_digits=14, decimal_places=2)
-    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2)
+    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=None)
     discounts = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     taxes = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=14, decimal_places=2)

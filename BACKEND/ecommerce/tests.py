@@ -210,7 +210,6 @@ class EcommercePurchaseFlowTests(APITestCase):
     WOMPI_INTEGRITY_SECRET='integrity-secret-for-tests',
     WOMPI_API_URL='https://sandbox.wompi.co/v1',
     WOMPI_HTTP_TIMEOUT=2,
-    TCC_SHIPPING_ENABLED=False,
 )
 class WompiPaymentTests(APITestCase):
     def setUp(self):

@@ -248,7 +248,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'tracking_code',
             'user_id',
             'customer_name', 'customer_email', 'customer_phone',
-            'shipping_address', 'city', 'department', 'postal_code',
+            'shipping_address', 'city', 'department', 'postal_code', 'delivery_address', 'delivery_details',
             'subtotal', 'shipping_cost', 'discounts', 'taxes', 'total', 'paid_total',
             'status', 'payment_method',
             'wompi_transaction_id', 'wompi_reference',
@@ -260,6 +260,7 @@ class OrderSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'order_number', 'tracking_code',
             'user_id', 'subtotal', 'shipping_cost', 'discounts', 'taxes', 'total', 'paid_total',
+            'delivery_address', 'delivery_details',
             'created_at', 'updated_at',
         ]
 

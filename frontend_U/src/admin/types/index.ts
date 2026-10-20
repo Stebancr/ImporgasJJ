@@ -163,7 +163,7 @@ export interface Order {
   department: string
   postal_code: string
   subtotal: number
-  shipping_cost: number
+  shipping_cost: number | null
   taxes?: number | string
   discounts?: number | string
   paid_total?: number | string | null

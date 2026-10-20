@@ -17,8 +17,7 @@ function CartPage() {
   }
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
-  const shipping = subtotal >= 500000 ? 0 : 25000
-  const total = subtotal + shipping
+  const total = subtotal
 
   if (cartItems.length === 0) {
     return (
@@ -147,8 +146,8 @@ function CartPage() {
                     <Truck className="w-5 h-5 text-[#001575]" />
                   </div>
                   <div>
-                    <p className="font-medium text-[#1A1D21] text-sm">Envio Gratis</p>
-                    <p className="text-xs text-[#6B7280]">En compras +$500K</p>
+                    <p className="font-medium text-[#1A1D21] text-sm">Condiciones de entrega</p>
+                    <p className="text-xs text-[#6B7280]">Serán confirmadas posteriormente</p>
                   </div>
                 </div>
               </div>
@@ -185,14 +184,7 @@ function CartPage() {
                   <span className="text-[#6B7280]">Subtotal ({cartItems.length} productos)</span>
                   <span className="font-medium text-[#1A1D21]">{formatPrice(subtotal)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-[#6B7280]">Envio</span>
-                  {shipping === 0 ? (
-                    <span className="font-medium text-[#059669]">Gratis</span>
-                  ) : (
-                    <span className="font-medium text-[#1A1D21]">{formatPrice(shipping)}</span>
-                  )}
-                </div>
+                <p className="text-sm text-[#6B7280]">El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.</p>
                 <div className="border-t border-[#E5E7EB] pt-4">
                   <div className="flex justify-between items-center">
                     <span className="text-lg font-semibold text-[#1A1D21]">Total</span>

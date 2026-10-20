@@ -28,8 +28,12 @@ def receipt(order):
     table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8edf7')),('VALIGN',(0,0),(-1,-1),'TOP'),
         ('BOTTOMPADDING',(0,0),(-1,-1),10),('LINEBELOW',(0,0),(-1,-1),.3,colors.HexColor('#dde3ed'))]))
     story += [table, Spacer(1, 20)]
-    for name, value in [('Subtotal',order.subtotal),('Envío',order.shipping_cost),('Descuentos',order.discounts),('Impuestos',order.taxes),('Total pagado',order.paid_total if order.paid_total is not None else order.total)]:
+    for name, value in [('Subtotal',order.subtotal),('Descuentos',order.discounts),('Impuestos',order.taxes),('Total pagado',order.paid_total if order.paid_total is not None else order.total)]:
         story.append(p(f'{name}: {cop(value)}'))
+    if order.shipping_cost is not None and order.shipping_cost > 0:
+        story.append(p(f'Envío registrado anteriormente: {cop(order.shipping_cost)}'))
+    else:
+        story.append(p('El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.'))
     story += [Spacer(1,20), p('Pago confirmado por Wompi.'), p('Contacto: ventas@imporgasjj.com · 3165266734 / 3176467820')]
     SimpleDocTemplate(stream, rightMargin=50, leftMargin=50, title='Comprobante de compra', author='ImporGas JJ').build(story)
     return stream.getvalue()

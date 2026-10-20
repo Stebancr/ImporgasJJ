@@ -56,7 +56,7 @@ class TransactionalTests(APITestCase):
         message=mail.outbox[0]
         self.assertEqual(message.reply_to,['ventas@imporgasjj.com'])
         self.assertIn('$ 107.000,00 COP',message.body)
-        self.assertIn('Envío: $ 10.000,00 COP',message.body)
+        self.assertIn('Envío registrado anteriormente: $ 10.000,00 COP',message.body)
         self.assertIn('&lt;script&gt;',message.alternatives[0].content)
         self.assertNotIn('<script>',message.alternatives[0].content)
         delivery.refresh_from_db()
@@ -70,6 +70,23 @@ class TransactionalTests(APITestCase):
         self.assertTrue(b''.join(response.streaming_content).startswith(b'%PDF'))
         self.assertEqual(response['Cache-Control'],'private, no-store')
         self.assertEqual(self.client.get('/media/'+delivery.document.name).status_code,404)
+
+    def test_new_order_receipt_and_email_do_not_offer_free_delivery(self):
+        self.order.shipping_cost=None
+        self.order.total=97000;self.order.paid_total=97000
+        self.order.save()
+        delivery=self.registration('order',self.order)
+        self.assertTrue(send(delivery.pk))
+        message=mail.outbox[0]
+        self.assertIn('El valor del envío no está incluido en esta compra.',message.body)
+        self.assertNotIn('Envío: $',message.body)
+        self.assertNotIn('gratis',message.body.lower())
+        delivery.refresh_from_db()
+        with delivery.document.open('rb') as document:
+            text='\n'.join(page.extract_text() for page in PdfReader(document).pages)
+        self.assertIn('El valor del envío no está incluido',text)
+        self.assertNotIn('Envío: $',text)
+        self.assertNotIn('gratis',text.lower())
 
     def test_pending_and_rejected_do_not_queue(self):
         for state in ('PENDING','DECLINED','ERROR'):

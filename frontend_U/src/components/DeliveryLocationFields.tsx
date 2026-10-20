@@ -15,7 +15,7 @@ export default function DeliveryLocationFields({value,onChange}:{value:Destinati
   <label className="min-w-0 text-sm" htmlFor={`${id}-department`}>Departamento<select id={`${id}-department`} aria-label="Departamento" required className={input} value={value.department} onChange={event=>onChange({department:event.target.value,city:''})}>
    <option value="">Selecciona un departamento</option>{options(departments,value.department).map(item=><option key={item} value={item}>{item}</option>)}
   </select></label>
-  <label className="min-w-0 text-sm" htmlFor={`${id}-city`}>Ciudad<select id={`${id}-city`} aria-label="Ciudad" required disabled={!value.department} className={input} value={value.city} onChange={event=>onChange({city:event.target.value})}>
+  <label className="min-w-0 text-sm" htmlFor={`${id}-city`}>Ciudad o municipio<select id={`${id}-city`} aria-label="Ciudad o municipio" required disabled={!value.department} className={input} value={value.city} onChange={event=>onChange({city:event.target.value})}>
    <option value="">Selecciona una ciudad</option>{options(choices,value.city).map(item=><option key={item} value={item}>{item}</option>)}
   </select></label>
  </div>

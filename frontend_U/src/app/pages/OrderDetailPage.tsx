@@ -250,10 +250,9 @@ export default function OrderDetailPage() {
             <div className="flex justify-between text-gray-600">
               <span>Subtotal</span><span>{fmt(order.subtotal)}</span>
             </div>
-            <div className="flex justify-between text-gray-600">
-              <span>Envío</span>
-              <span>{Number(order.shipping_cost) === 0 ? 'Gratis' : fmt(order.shipping_cost)}</span>
-            </div>
+            {order.shipping_cost != null && Number(order.shipping_cost)>0
+              ? <div className="flex justify-between text-gray-600"><span>Envío registrado anteriormente</span><span>{fmt(order.shipping_cost)}</span></div>
+              : <p className="text-gray-600">El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.</p>}
             <div className="flex justify-between font-bold text-gray-900 text-base border-t border-gray-100 pt-2">
               <span>Total</span><span>{fmt(order.total)}</span>
             </div>

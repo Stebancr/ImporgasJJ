@@ -904,8 +904,6 @@ class ProductReviewDetailView(APIView):
 
 # ─── Orders ───────────────────────────────────────────────────────────────────
 
-SHIPPING_THRESHOLD = 500_000   # COP — envío gratis sobre este valor
-SHIPPING_COST      = 25_000    # COP — costo de envío estándar
 
 
 class OrderListView(APIView):
@@ -934,6 +932,17 @@ class OrderListView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         data       = serializer.validated_data
+        address = None
+        if data.get('address_id'):
+            address = UserAddress.objects.filter(pk=data['address_id'], user=request.user).first()
+            if address is None:
+                return Response({'address_id': 'Selecciona una dirección de tu cuenta.'}, status=400)
+            data.update(customer_name=address.recipient_name, customer_phone=address.phone,
+                shipping_address=address.address, city=address.city, department=address.department,
+                postal_code=address.postal_code, complement=address.complement,
+                neighborhood=address.neighborhood, delivery_instructions=address.delivery_instructions)
+        delivery_details = {key: data.get(key, '') for key in
+            ('complement', 'neighborhood', 'delivery_instructions')}
         if data['payment_method'] == 'cash' and not settings.CASH_ON_DELIVERY_ENABLED:
             return Response({'payment_method': 'El pago contra entrega está deshabilitado.'}, status=400)
         items_data = data['items']
@@ -964,12 +973,11 @@ class OrderListView(APIView):
             products[item['product_id']].price * item['quantity']
             for item in items_data
         )
-        shipping = 0 if subtotal >= SHIPPING_THRESHOLD else SHIPPING_COST
         from .pricing import totals
         # Existing product.price is the actual sale price. No coupon or extra
         # tax engine exists: do not deduct advertised original-price savings
         # twice, or invent a tax rate. Both extra adjustments are server-owned.
-        breakdown = totals(subtotal, shipping)
+        breakdown = totals(subtotal)
         total = breakdown['total']
 
         # Wompi recibe una intención de pago, no una orden. La orden y el
@@ -991,6 +999,8 @@ class OrderListView(APIView):
                         'department': data.get('department', ''),
                         'postal_code': data.get('postal_code', ''),
                         'notes': data.get('notes', ''),
+                        'address_id': address.pk if address else None,
+                        'delivery_details': delivery_details,
                         'items': [{
                             'product_id': item['product_id'], 'quantity': item['quantity'],
                             'product_name': products[item['product_id']].name,
@@ -1006,6 +1016,14 @@ class OrderListView(APIView):
             submitted_items = [(item['product_id'], item['quantity']) for item in items_data]
             if not created and (intent.total != total or existing_items != submitted_items):
                 return Response({'error': 'La referencia de pago ya fue utilizada.'}, status=409)
+            if not created and any(intent.checkout_data.get(key) != value for key, value in {
+                'address_id': address.pk if address else None, 'shipping_address': data['shipping_address'],
+                'city': data.get('city', ''), 'department': data.get('department', ''),
+                'delivery_details': delivery_details,
+                'customer_name': data['customer_name'], 'customer_email': data['customer_email'],
+                'customer_phone': data.get('customer_phone',''), 'postal_code': data.get('postal_code',''),
+            }.items()):
+                return Response({'error': 'La referencia corresponde a otra dirección. Inicia un nuevo pago.'}, status=409)
             amount_in_cents = int(intent.total * 100)
             signature_string = f"{intent.reference}{amount_in_cents}COP{settings.WOMPI_INTEGRITY_SECRET}"
             return Response({'data': {
@@ -1014,7 +1032,7 @@ class OrderListView(APIView):
                 'wompi_public_key': settings.WOMPI_PUBLIC_KEY,
                 'wompi_signature': hashlib.sha256(signature_string.encode()).hexdigest(),
                 'total': str(intent.total),
-                'subtotal': str(intent.subtotal), 'shipping_cost': str(intent.shipping_cost),
+                'subtotal': str(intent.subtotal),
                 'taxes': str(intent.taxes), 'discounts': str(intent.discounts),
                 'payment_status': intent.wompi_status,
             }}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
@@ -1035,7 +1053,9 @@ class OrderListView(APIView):
             subtotal         = subtotal,
             discounts        = breakdown['discounts'],
             taxes            = breakdown['taxes'],
-            shipping_cost    = shipping,
+            shipping_cost    = None,
+            delivery_address = address,
+            delivery_details = delivery_details,
             total            = total,
             payment_method   = data['payment_method'],
             wompi_reference  = data.get('wompi_reference', ''),
@@ -1251,6 +1271,8 @@ def _create_approved_order(intent):
         city=data.get('city', ''), department=data.get('department', ''),
         postal_code=data.get('postal_code', ''), notes=data.get('notes', ''),
         subtotal=intent.subtotal, shipping_cost=intent.shipping_cost, total=intent.total,
+        delivery_address=UserAddress.objects.filter(pk=data.get('address_id'), user=intent.user).first() if data.get('address_id') else None,
+        delivery_details=data.get('delivery_details', {}),
         taxes=intent.taxes, discounts=intent.discounts, paid_total=intent.total,
         payment_method=Order.PaymentMethod.WOMPI, wompi_reference=intent.reference,
         wompi_transaction_id=intent.transaction_id or '', wompi_status=Order.WompiStatus.APPROVED,

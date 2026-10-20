@@ -36,6 +36,7 @@ function CheckoutPage() {
   const [step, setStep] = useState<'info' | 'payment'>('info')
   const [submitting, setSubmitting] = useState(false)
   const paymentLock = useRef(false)
+  const restorePaymentCart = useRef<string|null>(null)
   const [addresses, setAddresses] = useState<UserAddress[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null)
   const [addressEditor,setAddressEditor]=useState<(Partial<CreateAddressPayload>&{id?:number})|null>(null)
@@ -53,6 +54,12 @@ function CheckoutPage() {
     paymentMethod: 'wompi',
   })
   const cartKey=JSON.stringify(items.map(item=>({id:item.product.id,quantity:item.quantity})))
+  useEffect(()=>{
+    if(destinationReady&&items.length&&restorePaymentCart.current){
+      if(restorePaymentCart.current===cartKey)setStep('payment')
+      restorePaymentCart.current=null
+    }
+  },[destinationReady,cartKey])
   useEffect(()=>{
     if(!destinationReady||!user?.id||!items.length)return
     try{sessionStorage.setItem(`delivery-checkout:${user.id}`,JSON.stringify({form,step,cartKey,address_id:selectedAddressId}))}catch{/* Optional browser storage. */}
@@ -88,6 +95,7 @@ function CheckoutPage() {
           setForm(previous=>({...previous,...Object.fromEntries(Object.entries(saved.form).filter(([key,value])=>key in previous&&typeof value==='string')),paymentMethod:'wompi'}))
           setSelectedAddressId(saved.address_id||null)
           if(saved.address_id)applyAddress(data.find(a=>a.id===saved.address_id)!)
+          if(saved.step==='payment'&&typeof saved.cartKey==='string')restorePaymentCart.current=saved.cartKey
           return
         }
       }catch{/* Invalid drafts are ignored. */}
@@ -133,14 +141,13 @@ function CheckoutPage() {
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
     [items]
   )
-  const shipping = subtotal >= 500000 ? 0 : 25000
-  const total = subtotal + shipping
+  const total = subtotal
 
 
   // Unique reference per session
   const reference = useMemo(
     () => `GS-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-    []
+    [cartKey, selectedAddressId, form.address, form.city, form.department, form.complement, form.neighborhood, form.delivery_instructions]
   )
 
   const formatPrice = (price: number) =>
@@ -288,7 +295,7 @@ function CheckoutPage() {
             {step==='info'&&addressEditor&&<DeliveryAddressForm key={addressEditor.id||'new'} initial={addressEditor} onSaved={saveAddress} onCancel={()=>setAddressEditor(null)}/>}
             {step === 'info' && !addressEditor && (
               <form onSubmit={handleSubmitInfo} className="bg-white rounded-xl p-6 shadow-sm">
-                <h2 className="text-xl font-semibold text-gray-900 mb-6">Información de Envío</h2>
+                <h2 className="text-xl font-semibold text-gray-900 mb-6">Dirección de entrega</h2>
                 {addressError&&<p role="alert" className="mb-4 text-red-700">{addressError} <button type="button" className="underline" onClick={loadAddresses}>Reintentar</button></p>}
                 {!destinationReady&&<p role="status">Cargando direcciones de entrega…</p>}
                 <button type="button" className="mb-4 min-h-11 rounded-lg border border-blue-700 px-4 text-blue-800" onClick={()=>setAddressEditor({recipient_name:form.name,phone:form.phone,is_default:addresses.length===0})}>Agregar nueva dirección</button>
@@ -465,7 +472,7 @@ function CheckoutPage() {
                   <div className="mb-4 p-4 bg-blue-50 rounded-xl">
                     <p className="text-sm text-blue-800">
                       Al hacer clic en <strong>"Pagar con Wompi"</strong> abriremos el checkout seguro de Wompi
-                      para completar el pago de <strong>{shipping===null?'pendiente por calcular':formatPrice(total)}</strong>. La orden se confirmará cuando Wompi confirme el pago.
+                      para completar el pago de <strong>{formatPrice(total)}</strong>. La orden se confirmará cuando Wompi confirme el pago.
                     </p>
                     <p className="text-xs text-blue-600 mt-2">
                       Acepta tarjetas crédito/débito, PSE, Nequi, Bancolombia y más.
@@ -548,14 +555,7 @@ function CheckoutPage() {
                 </div>
                 <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(0)}</span></div>
                 <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(0)}</span></div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Envío</span>
-                  {shipping === 0 ? (
-                    <span className="text-green-600 font-medium">Gratis</span>
-                  ) : (
-                    <span className="font-medium">{shipping===null?'Pendiente de cotización':formatPrice(shipping)}</span>
-                  )}
-                </div>
+                <p className="text-sm text-gray-600">El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.</p>
                 <div className="border-t pt-3">
                   <div className="flex justify-between">
                     <span className="text-lg font-semibold text-gray-900">Total</span>
@@ -568,7 +568,7 @@ function CheckoutPage() {
               <div className="mt-6 space-y-3">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Truck className="w-4 h-4 text-blue-600" />
-                  <span>El costo de envío se muestra antes del pago</span>
+                  <span>Las condiciones de entrega serán confirmadas posteriormente</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Shield className="w-4 h-4 text-green-600" />

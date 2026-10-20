@@ -35,7 +35,7 @@ export interface BackendOrder {
   department: string
   postal_code: string
   subtotal: string
-  shipping_cost: string
+  shipping_cost: string | null
   taxes?: string
   discounts?: string
   paid_total?: string | null
