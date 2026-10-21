@@ -30,8 +30,8 @@ def receipt(order):
     story += [table, Spacer(1, 20)]
     for name, value in [('Subtotal',order.subtotal),('Descuentos',order.discounts),('Impuestos',order.taxes),('Total pagado',order.paid_total if order.paid_total is not None else order.total)]:
         story.append(p(f'{name}: {cop(value)}'))
-    if order.shipping_cost is not None and order.shipping_cost > 0:
-        story.append(p(f'Envío registrado anteriormente: {cop(order.shipping_cost)}'))
+    if order.shipping_cost is not None:
+        story.append(p(f'Transporte: {cop(order.shipping_cost)}'))
     else:
         story.append(p('El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.'))
     story += [Spacer(1,20), p('Pago confirmado por Wompi.'), p('Contacto: ventas@imporgasjj.com · 3165266734 / 3176467820')]

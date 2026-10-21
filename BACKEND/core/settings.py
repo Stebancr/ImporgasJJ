@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'usuarios',
     'ecommerce',
+    'shipping',
     'transactional_mail',
     'gestion',
     'crmChat',
@@ -146,6 +147,9 @@ REST_FRAMEWORK = {
         'wompi_webhook': config('THROTTLE_WOMPI_WEBHOOK_RATE', default='240/min'),
         'meta_webhook': config('THROTTLE_META_WEBHOOK_RATE', default='600/min'),
         'meta_admin': config('THROTTLE_META_ADMIN_RATE', default='20/min'),
+        'shipping_quote': config('THROTTLE_SHIPPING_QUOTE_RATE', default='10/min'),
+        'shipping_estimate': config('THROTTLE_SHIPPING_ESTIMATE_RATE', default='60/min'),
+        'shipping_admin': config('THROTTLE_SHIPPING_ADMIN_RATE', default='10/min'),
     },
 }
 
@@ -195,6 +199,7 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_TIMEZONE = 'America/Bogota'
 CELERY_BEAT_SCHEDULE = {
     'recover-transactional-emails': {'task': 'transactional_mail.tasks.recover_pending', 'schedule': timedelta(minutes=2)},
+    'recover-pending-tcc-shipments': {'task': 'shipping.tasks.recover_pending_shipments', 'schedule': timedelta(minutes=5)},
     'recover-stalled-chat-tasks': {'task': 'crmChat.tasks.recover_stalled_chat_tasks', 'schedule': timedelta(seconds=60)},
     'close-inactive-bot-sessions': {
         'task': 'crmChat.tasks.close_inactive_bot_sessions',
@@ -565,3 +570,20 @@ INSTAGRAM_OAUTH_SCOPES = config(
     default='instagram_business_basic,instagram_business_manage_messages',
 )
 INSTAGRAM_OAUTH_STATE_MAX_AGE = config('INSTAGRAM_OAUTH_STATE_MAX_AGE', default=600, cast=int)
+
+# TCC secrets are backend-only. Production requires a separately supplied token
+# and a deliberate approval flag; development credentials never cross over.
+TCC_SHIPPING_ENABLED = config('TCC_SHIPPING_ENABLED', default=False, cast=bool)
+TCC_API_ENVIRONMENT = config('TCC_API_ENVIRONMENT', default='sandbox')
+TCC_DEVELOPMENT_BASE_URL = config('TCC_DEVELOPMENT_BASE_URL', default='https://testsomos.tcc.com.co')
+TCC_PRODUCTION_BASE_URL = config('TCC_PRODUCTION_BASE_URL', default='https://somos.tcc.com.co')
+TCC_API_TOKEN = config('TCC_API_TOKEN', default='')
+TCC_PRODUCTION_API_TOKEN = config('TCC_PRODUCTION_API_TOKEN', default='')
+TCC_PRODUCTION_APPROVED = config('TCC_PRODUCTION_APPROVED', default=False, cast=bool)
+TCC_DISPATCH_ENABLED = config('TCC_DISPATCH_ENABLED', default=False, cast=bool)
+TCC_PQT_ACCOUNT = config('TCC_PQT_ACCOUNT', default='')
+TCC_MSJ_ACCOUNT = config('TCC_MSJ_ACCOUNT', default='')
+TCC_QUOTE_TTL_SECONDS = config('TCC_QUOTE_TTL_SECONDS', default=600, cast=int)
+TCC_ORIGIN_CITY_CODE = config('TCC_ORIGIN_CITY_CODE', default='')
+TCC_SENDER = {key: config('TCC_SENDER_' + key.upper(), default='') for key in
+              ('name', 'company', 'document_type', 'document', 'address', 'phone', 'email')}

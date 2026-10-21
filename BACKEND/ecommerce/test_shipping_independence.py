@@ -8,12 +8,10 @@ from ecommerce.pricing import totals
 
 
 class CarrierIndependenceTests(SimpleTestCase):
-    def test_no_provider_application_or_configuration_loaded(self):
-        self.assertNotIn('shipping', apps.app_configs)
-        self.assertFalse(any(name.startswith('TCC_') for name in dir(settings)))
-        for path in ('/api/shipping/config', '/ecommerce/shipping/quotes', '/api/ecommerce/shipping/cities'):
-            with self.subTest(path=path), self.assertRaises(Resolver404):
-                resolve(path)
+    def test_provider_loaded_but_disabled_by_default(self):
+        self.assertIn('shipping', apps.app_configs)
+        self.assertFalse(settings.TCC_SHIPPING_ENABLED)
+        self.assertFalse(settings.TCC_DISPATCH_ENABLED)
 
     def test_products_only_at_every_purchase_amount(self):
         for subtotal in (125000,499999,500000,2900000):

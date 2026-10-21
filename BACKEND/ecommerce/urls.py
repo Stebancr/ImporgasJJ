@@ -3,6 +3,7 @@ from . import views
 from .product_editor import ProductEditorView
 
 urlpatterns = [
+    path('shipping/', include('shipping.urls')),
     path('cart', views.CartView.as_view(), name='cart'),
     path('cart/<int:product_id>', views.CartItemView.as_view(), name='cart-item'),
     # ── Brands ────────────────────────────────────────────────────────────────

@@ -172,6 +172,34 @@ class Product(models.Model):
         verbose_name_plural = 'Productos'
 
     @property
+    def shipping_ready(self):
+        profile = getattr(self, 'shipping_profile', None)
+        return bool(profile and (not profile.requires_shipping or (
+            1 <= profile.packages_per_unit <= 100 and all(getattr(profile, field) is not None and getattr(profile, field) > 0
+                for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm')) and
+            (self.price * 100 >= profile.packages_per_unit if profile.declared_value_from_price else
+             profile.declared_value is not None and profile.declared_value > 0))))
+
+    @property
+    def shipping_missing_fields(self):
+        profile = getattr(self, 'shipping_profile', None)
+        if profile and not profile.requires_shipping:
+            return []
+        labels = {'weight_kg': 'Peso', 'height_cm': 'Alto', 'width_cm': 'Ancho',
+                  'length_cm': 'Largo', 'packages_per_unit': 'Cantidad de paquetes'}
+        missing = [label for field, label in labels.items()
+                   if not profile or not getattr(profile, field) or getattr(profile, field) <= 0]
+        if profile and profile.packages_per_unit > 100:
+            missing.append('Cantidad de paquetes (máximo 100)')
+        declared = (self.price if profile and profile.declared_value_from_price
+                    else getattr(profile, 'declared_value', None))
+        if not declared or declared <= 0:
+            missing.append('Valor declarado')
+        elif profile and profile.declared_value_from_price and declared * 100 < profile.packages_per_unit:
+            missing.append('Valor declarado insuficiente por paquete')
+        return missing
+
+    @property
     def discount_percentage(self):
         if self.original_price and self.original_price > self.price:
             return round((1 - self.price / self.original_price) * 100)
@@ -563,6 +591,7 @@ class TrackingEvent(models.Model):
 # ─────────────────────────────────────────────
 
 class UserAddress(models.Model):
+    tcc_city_code = models.CharField(max_length=8, blank=True, default='')
     complement = models.CharField(max_length=200, blank=True, default='')
     neighborhood = models.CharField(max_length=100, blank=True, default='')
     delivery_instructions = models.CharField(max_length=300, blank=True, default='')

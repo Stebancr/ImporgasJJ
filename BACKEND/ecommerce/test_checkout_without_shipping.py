@@ -12,7 +12,7 @@ from ecommerce.pricing import totals
 
 
 @override_settings(WOMPI_PUBLIC_KEY='pub_test_synthetic',WOMPI_INTEGRITY_SECRET='synthetic-only',
-    WOMPI_EVENTS_SECRET='events-secret-for-tests',TRANSACTIONAL_EMAIL_ENABLED=False)
+    WOMPI_EVENTS_SECRET='events-secret-for-tests',TRANSACTIONAL_EMAIL_ENABLED=False,TCC_SHIPPING_ENABLED=False)
 class CheckoutWithoutShippingTests(APITestCase):
     def setUp(self):
         profile=Usuario.objects.create(cedula='checkout-qa',nombre_completo='Synthetic client',

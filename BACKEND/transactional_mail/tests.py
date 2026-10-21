@@ -56,7 +56,7 @@ class TransactionalTests(APITestCase):
         message=mail.outbox[0]
         self.assertEqual(message.reply_to,['ventas@imporgasjj.com'])
         self.assertIn('$ 107.000,00 COP',message.body)
-        self.assertIn('Envío registrado anteriormente: $ 10.000,00 COP',message.body)
+        self.assertIn('Transporte: $ 10.000,00 COP',message.body)
         self.assertIn('&lt;script&gt;',message.alternatives[0].content)
         self.assertNotIn('<script>',message.alternatives[0].content)
         delivery.refresh_from_db()
@@ -70,6 +70,20 @@ class TransactionalTests(APITestCase):
         self.assertTrue(b''.join(response.streaming_content).startswith(b'%PDF'))
         self.assertEqual(response['Cache-Control'],'private, no-store')
         self.assertEqual(self.client.get('/media/'+delivery.document.name).status_code,404)
+
+    def test_zero_quoted_shipping_is_distinct_from_unquoted_delivery(self):
+        self.order.shipping_cost=0
+        self.order.total=97000; self.order.paid_total=97000
+        self.order.save()
+        delivery=self.registration('order',self.order)
+        self.assertTrue(send(delivery.pk))
+        self.assertIn('Transporte: $ 0,00 COP', mail.outbox[0].body)
+        self.assertNotIn('no está incluido', mail.outbox[0].body)
+        delivery.refresh_from_db()
+        reader=PdfReader(io.BytesIO(delivery.document.read()))
+        text=' '.join(page.extract_text() for page in reader.pages)
+        self.assertIn('Transporte:',text)
+        self.assertNotIn('no está incluido',text)
 
     def test_new_order_receipt_and_email_do_not_offer_free_delivery(self):
         self.order.shipping_cost=None

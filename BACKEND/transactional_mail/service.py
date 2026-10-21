@@ -64,8 +64,11 @@ def context_for(delivery, source):
                 ('Impuestos',cop(source.taxes)),('Total pagado',cop(source.paid_total if source.paid_total is not None else source.total)),
                 ('Entrega',f'{source.shipping_address}, {source.city}, {source.department}'),('Pago','Wompi'),('Estado',source.get_status_display())],
             order_url=public_url(f'pedido/{source.tracking_code}'))
-        if source.shipping_cost is not None and source.shipping_cost > 0:
-            context['details'].append(('Envío registrado anteriormente',cop(source.shipping_cost)))
+        shipment = getattr(source, 'shipment', None)
+        if shipment and shipment.waybill and shipment.waybill.isalnum():
+            context['tracking_url'] = 'https://www.tcc.com.co/rastreo?tipo=RE&documento=' + shipment.waybill
+        if source.shipping_cost is not None:
+            context['details'].append(('Transporte',cop(source.shipping_cost)))
         else:
             context['details'].append(('Condiciones de entrega','El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.'))
     else:
