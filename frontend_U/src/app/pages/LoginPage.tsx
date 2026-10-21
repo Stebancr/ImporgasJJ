@@ -209,13 +209,12 @@ function LoginPage() {
                     Contrasena
                   </label>
                   {mode === 'login' && (
-                    <button
-                      type="button"
-                      onClick={() => setMode('forgot')}
+                    <Link
+                      to="/recuperar-contrasena"
                       className="text-sm text-[#001575] hover:text-[#00104f] font-medium"
                     >
-                      Olvidaste tu contrasena?
-                    </button>
+                      ¿Olvidaste tu contraseña?
+                    </Link>
                   )}
                 </div>
                 <div className="relative">
