@@ -19,6 +19,7 @@ const ProfilePage = lazy(() => import('./app/pages/ProfilePage'))
 const ContactPage = lazy(() => import('./app/pages/ContactPage'))
 const LoginPage = lazy(() => import('./app/pages/LoginPage'))
 const ResetPasswordPage = lazy(() => import('./app/pages/ResetPasswordPage'))
+const ForgotPasswordPage = lazy(() => import('./app/pages/ForgotPasswordPage'))
 const NosotrosPage = lazy(() => import('./app/pages/NosotrosPage'))
 const DataPolicyPage = lazy(() => import('./app/pages/DataPolicyPage'))
 const TermsPage = lazy(() => import('./app/pages/TermsPage'))
@@ -79,6 +80,8 @@ function StoreRoutes() {
         <Route path="/contacto" element={<ContactPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/restablecer-contrasena/:uid/:token" element={<ResetPasswordPage />} />
+        <Route path="/restablecer-contrasena" element={<ResetPasswordPage />} />
+        <Route path="/recuperar-contrasena" element={<ForgotPasswordPage />} />
         <Route path="/nosotros" element={<NosotrosPage />} />
         <Route path="/politica-tratamiento-datos" element={<DataPolicyPage />} />
         <Route path="/terminos-y-condiciones" element={<TermsPage />} />
@@ -131,6 +134,9 @@ function App() {
             <ScrollToTop />
             <Routes>
               <Route path="/admin/*" element={<div className="admin-theme"><AdminRoutes /></div>} />
+              <Route element={<AdminAuthProvider><AdminProtectedRoute allowedRoles={['admin']}><div className="admin-theme"><DashboardLayout /></div></AdminProtectedRoute></AdminAuthProvider>}>
+                <Route path="/chat/plantillas" element={<Suspense fallback={<CRMPageFallback />}><TemplatesPage /></Suspense>} />
+              </Route>
               {/* Compatibilidad temporal con enlaces administrativos existentes. */}
               <Route path="/dashboard/products" element={<Navigate to="/admin/productos" replace />} />
               <Route path="/dashboard/categories" element={<Navigate to="/admin/categorias" replace />} />

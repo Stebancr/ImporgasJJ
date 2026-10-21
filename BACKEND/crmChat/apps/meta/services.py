@@ -780,6 +780,17 @@ def _dispatch_outbound_message(message):
     """Envía un mensaje por su canal y actualiza su estado sin ocultar fallos."""
 
     session = message.session
+    from crmChat.message_format import validate_message_text
+    try:
+        text = validate_message_text(message.text, session.channel)
+    except ValueError as exc:
+        message.metadata = {**message.metadata, 'error': str(exc)}
+        message.save(update_fields=['metadata'])
+        raise MetaAPIError(str(exc)) from None
+    if text != message.text:
+        message.metadata = {**message.metadata, 'original_text': message.metadata.get('original_text', message.text)}
+        message.text = text
+        message.save(update_fields=['text', 'metadata'])
     if session.channel == ChannelIntegration.CHANNEL_ECOMMERCE:
         message.direction = 'outbound'
         message.status = 'sent'

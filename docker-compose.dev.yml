@@ -22,6 +22,23 @@ services:
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
+      - EMAIL_HOST=${EMAIL_HOST:-mailpit}
+      - EMAIL_PORT=${EMAIL_PORT:-1025}
+      - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-ImporGas JJ <ventas@imporgasjj.com>}
+      - SERVER_EMAIL_APLICACION=${SERVER_EMAIL_APLICACION:-}
+      - SERVER_EMAIL_NOREPLY=${SERVER_EMAIL_NOREPLY:-}
+      - EMAIL_LOGO_URL=${EMAIL_LOGO_URL:-}
+      - PASSWORD_RESET_ALLOWED_RECIPIENTS=${PASSWORD_RESET_ALLOWED_RECIPIENTS:-}
+      - SERVER_EMAIL=${SERVER_EMAIL:-ventas@imporgasjj.com}
+      - EMAIL_TIMEOUT=${EMAIL_TIMEOUT:-20}
+      - TRANSACTIONAL_REPLY_TO=${TRANSACTIONAL_REPLY_TO:-ventas@imporgasjj.com}
+      - TRANSACTIONAL_EMAIL_ENABLED=${TRANSACTIONAL_EMAIL_ENABLED:-False}
+      - TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=${TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS:-}
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
       - CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=${CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:-False}
@@ -29,15 +46,11 @@ services:
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-${FRONTEND_PUBLIC_URL:-http://localhost}/api}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
       # Relay definido en emails/docker-compose.yml; se respeta EMAIL_* si
       # el despliegue aporta credenciales o un proveedor SMTP distinto.
-      - EMAIL_HOST=${EMAIL_HOST:-smtp}
-      - EMAIL_PORT=${EMAIL_PORT:-587}
-      - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
-      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
-      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-no-reply@IMPORGASJJ.com}
     depends_on:
       redis:
         condition: service_healthy
@@ -65,6 +78,23 @@ services:
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
+      - EMAIL_HOST=${EMAIL_HOST:-mailpit}
+      - EMAIL_PORT=${EMAIL_PORT:-1025}
+      - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-ImporGas JJ <ventas@imporgasjj.com>}
+      - SERVER_EMAIL_APLICACION=${SERVER_EMAIL_APLICACION:-}
+      - SERVER_EMAIL_NOREPLY=${SERVER_EMAIL_NOREPLY:-}
+      - EMAIL_LOGO_URL=${EMAIL_LOGO_URL:-}
+      - PASSWORD_RESET_ALLOWED_RECIPIENTS=${PASSWORD_RESET_ALLOWED_RECIPIENTS:-}
+      - SERVER_EMAIL=${SERVER_EMAIL:-ventas@imporgasjj.com}
+      - EMAIL_TIMEOUT=${EMAIL_TIMEOUT:-20}
+      - TRANSACTIONAL_REPLY_TO=${TRANSACTIONAL_REPLY_TO:-ventas@imporgasjj.com}
+      - TRANSACTIONAL_EMAIL_ENABLED=${TRANSACTIONAL_EMAIL_ENABLED:-False}
+      - TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=${TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS:-}
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
       - CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=${CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:-False}
@@ -72,6 +102,7 @@ services:
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-${FRONTEND_PUBLIC_URL:-http://localhost}/api}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
     depends_on:
@@ -99,6 +130,23 @@ services:
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
+      - EMAIL_HOST=${EMAIL_HOST:-mailpit}
+      - EMAIL_PORT=${EMAIL_PORT:-1025}
+      - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-ImporGas JJ <ventas@imporgasjj.com>}
+      - SERVER_EMAIL_APLICACION=${SERVER_EMAIL_APLICACION:-}
+      - SERVER_EMAIL_NOREPLY=${SERVER_EMAIL_NOREPLY:-}
+      - EMAIL_LOGO_URL=${EMAIL_LOGO_URL:-}
+      - PASSWORD_RESET_ALLOWED_RECIPIENTS=${PASSWORD_RESET_ALLOWED_RECIPIENTS:-}
+      - SERVER_EMAIL=${SERVER_EMAIL:-ventas@imporgasjj.com}
+      - EMAIL_TIMEOUT=${EMAIL_TIMEOUT:-20}
+      - TRANSACTIONAL_REPLY_TO=${TRANSACTIONAL_REPLY_TO:-ventas@imporgasjj.com}
+      - TRANSACTIONAL_EMAIL_ENABLED=${TRANSACTIONAL_EMAIL_ENABLED:-False}
+      - TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=${TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS:-}
       - OLLAMA_API_URL=http://ollama:11434/api/chat
       - WOMPI_API_URL=https://sandbox.wompi.co/v1
       - CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED=${CHATBOT_PRODUCT_RECOMMENDATIONS_ENABLED:-False}
@@ -106,6 +154,7 @@ services:
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-60}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-2048}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost}
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-${FRONTEND_PUBLIC_URL:-http://localhost}/api}
       - PRODUCT_URL_TEMPLATE=${PRODUCT_URL_TEMPLATE:-http://localhost/producto/{id}}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
     depends_on:
@@ -132,6 +181,23 @@ services:
       - CHANNEL_REDIS_URL=redis://redis:6379/2
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
+      - EMAIL_HOST=${EMAIL_HOST:-mailpit}
+      - EMAIL_PORT=${EMAIL_PORT:-1025}
+      - EMAIL_USE_SSL=${EMAIL_USE_SSL:-False}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS:-False}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL:-ImporGas JJ <ventas@imporgasjj.com>}
+      - SERVER_EMAIL_APLICACION=${SERVER_EMAIL_APLICACION:-}
+      - SERVER_EMAIL_NOREPLY=${SERVER_EMAIL_NOREPLY:-}
+      - EMAIL_LOGO_URL=${EMAIL_LOGO_URL:-}
+      - PASSWORD_RESET_ALLOWED_RECIPIENTS=${PASSWORD_RESET_ALLOWED_RECIPIENTS:-}
+      - SERVER_EMAIL=${SERVER_EMAIL:-ventas@imporgasjj.com}
+      - EMAIL_TIMEOUT=${EMAIL_TIMEOUT:-20}
+      - TRANSACTIONAL_REPLY_TO=${TRANSACTIONAL_REPLY_TO:-ventas@imporgasjj.com}
+      - TRANSACTIONAL_EMAIL_ENABLED=${TRANSACTIONAL_EMAIL_ENABLED:-False}
+      - TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=${TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS:-}
       - EXTERNAL_PRODUCT_URL_TEMPLATE=${EXTERNAL_PRODUCT_URL_TEMPLATE:-https://www.imporgasjj.com/producto/{id}}
     depends_on:
       backend:
@@ -167,6 +233,9 @@ services:
         format: raw
     environment:
       - WHATSAPP_GATEWAY_ENV=development
+      # Shipping credentials belong only to Django/Celery, not this gateway.
+      - TCC_API_TOKEN=
+      - TCC_PRODUCTION_API_TOKEN=
       - WHATSAPP_GATEWAY_PORT=3001
       - CRM_API_URL=http://backend:8000
       - REDIS_URL=redis://redis:6379/1
@@ -197,6 +266,8 @@ services:
         format: raw
     environment:
       - WHATSAPP_GATEWAY_ENV=test
+      - TCC_API_TOKEN=
+      - TCC_PRODUCTION_API_TOKEN=
       - CRM_API_URL=http://backend:8000
       - REDIS_URL=redis://redis:6379/1
       - WHATSAPP_AUTH_DIR=/tmp/whatsapp-auth

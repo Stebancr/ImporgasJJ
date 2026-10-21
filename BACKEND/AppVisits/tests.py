@@ -282,7 +282,8 @@ class VisitCompletionTests(APITestCase):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.get(reverse('visitas-pdf', args=[self.visit.pk]))
         self.assertEqual(response.status_code, 200)
-        response.close()
+        # Consume the stream without request_finished closing the TestCase transaction.
+        b''.join(response.streaming_content)
         self.visit.refresh_from_db()
         self.assertTrue(self.visit.pdf_final)
         self.assertEqual(len(mail.outbox), 0)
@@ -615,14 +616,18 @@ class VisitCompletionTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.visit.refresh_from_db()
         self.assertTrue(self.visit.pdf_final)
+        from transactional_mail.models import Delivery
+        from transactional_mail.service import send
+        with override_settings(SERVER_EMAIL_APLICACION='technical@example.invalid',TRANSACTIONAL_EMAIL_ENABLED=True,DEBUG=True,FRONTEND_PUBLIC_URL='http://localhost',PUBLIC_API_URL='http://localhost/api',TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=['cliente@example.com']):
+            self.assertTrue(send(Delivery.objects.get(kind='visit',object_id=self.visit.pk).pk))
         self.visit.refresh_from_db()
         self.assertIsNotNone(self.visit.correo_completada_en)
         self.assertEqual(len(mail.outbox), 1)
-        attachment = mail.outbox[0].attachments[0]
-        self.assertEqual(attachment.mimetype, 'application/pdf')
+        self.assertTrue(all(attachment.get_content_type()=='image/png' for attachment in mail.outbox[0].attachments))
+        self.assertIn('Ver informe de servicio técnico',mail.outbox[0].body)
         with self.visit.pdf_final.open('rb') as saved_pdf:
-            self.assertEqual(attachment.content, saved_pdf.read())
-        text = ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(attachment.content)).pages)
+            content=saved_pdf.read()
+        text = ''.join(page.extract_text() or '' for page in PdfReader(BytesIO(content)).pages)
         self.assertIn(f'Tarea {self.visit.numero_tarea}', text)
         self.assertIn('Firma cliente', text)
 

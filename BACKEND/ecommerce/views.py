@@ -37,6 +37,7 @@ from .serializers import (
 )
 from .firebase_service import send_push_to_user
 from .email_service import send_order_payment_confirmation
+from shipping.policy import order_shipping_fields
 
 logger = logging.getLogger(__name__)
 
@@ -490,9 +491,23 @@ class ProductListView(APIView):
         return [IsAdminUser()]
 
     def get(self, request):
-        qs = Product.objects.select_related('category', 'brand').prefetch_related('images')
+        qs = Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related('images')
 
         # Filtros
+        shipping_status = request.query_params.get('shipping_status')
+        if shipping_status:
+            if shipping_status not in ('complete', 'incomplete'):
+                return Response({'shipping_status': 'Selecciona completo o incompleto.'}, status=400)
+            from django.db.models import F
+            complete = Q(shipping_profile__requires_shipping=False) | (
+                Q(shipping_profile__requires_shipping=True,
+                  shipping_profile__weight_kg__gt=0, shipping_profile__height_cm__gt=0,
+                  shipping_profile__width_cm__gt=0, shipping_profile__length_cm__gt=0,
+                  shipping_profile__packages_per_unit__gte=1, shipping_profile__packages_per_unit__lte=100)
+                & (Q(shipping_profile__declared_value_from_price=False, shipping_profile__declared_value__gt=0)
+                   | Q(shipping_profile__declared_value_from_price=True,
+                       price__gte=F('shipping_profile__packages_per_unit') / 100.0)))
+            qs = qs.filter(complete) if shipping_status == 'complete' else qs.exclude(complete)
         if request.query_params.get('category_id'):
             qs = qs.filter(category_id=request.query_params['category_id'])
         if request.query_params.get('brand_id'):
@@ -592,7 +607,7 @@ class ProductDetailView(APIView):
 
     def _get(self, pk):
         try:
-            return Product.objects.select_related('category', 'brand').prefetch_related(
+            return Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related(
                 'images', 'specifications__attribute', 'stock_entries__location'
             ).get(pk=pk)
         except Product.DoesNotExist:
@@ -628,7 +643,11 @@ class ProductDetailView(APIView):
         obj = self._get(pk)
         if not obj:
             return Response({'error': 'Not found'}, status=404)
-        obj.delete()
+        try:
+            with transaction.atomic():
+                obj.delete()
+        except (ProtectedError, IntegrityError):
+            return Response({'error': 'El producto tiene registros históricos asociados. Puedes desactivarlo sin eliminar sus datos.'}, status=409)
         return Response(status=204)
 
 
@@ -638,7 +657,7 @@ class ProductSlugView(APIView):
 
     def get(self, request, slug):
         try:
-            product = Product.objects.select_related('category', 'brand').prefetch_related(
+            product = Product.objects.select_related('category', 'brand', 'shipping_profile').prefetch_related(
                 'images', 'specifications__attribute', 'stock_entries__location'
             ).get(slug=slug, is_available=True)
         except Product.DoesNotExist:
@@ -669,7 +688,7 @@ class ProductImageListView(APIView):
 
         serializer = ProductImageUploadSerializer(data=request.data)
         if serializer.is_valid():
-            image = serializer.save(product=product)
+            image = serializer.save(product=product, is_primary=serializer.validated_data.get('is_primary', False) or not product.images.filter(is_primary=True).exists())
             return Response(
                 {'data': ProductImageSerializer(image, context={'request': request}).data},
                 status=201,
@@ -698,6 +717,10 @@ class ProductImageDetailView(APIView):
         serializer = ProductImageUploadSerializer(obj, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            if not obj.product.images.filter(is_primary=True).exists():
+                alternative = obj.product.images.order_by('order', 'id').first()
+                alternative.is_primary = True
+                alternative.save(update_fields=['is_primary'])
             return Response({'data': ProductImageSerializer(obj, context={'request': request}).data})
         return Response(serializer.errors, status=400)
 
@@ -708,7 +731,7 @@ class ProductImageDetailView(APIView):
         obj = self._get(product_id, image_id)
         if not obj:
             return Response({'error': 'Not found'}, status=404)
-        obj.image.delete(save=False)
+        # Keep the blob: filesystem deletion cannot roll back with this transaction.
         obj.delete()
         remaining = ProductImage.objects.filter(product_id=product_id)
         if not remaining.filter(is_primary=True).exists():
@@ -896,8 +919,6 @@ class ProductReviewDetailView(APIView):
 
 # ─── Orders ───────────────────────────────────────────────────────────────────
 
-SHIPPING_THRESHOLD = 500_000   # COP — envío gratis sobre este valor
-SHIPPING_COST      = 25_000    # COP — costo de envío estándar
 
 
 class OrderListView(APIView):
@@ -909,8 +930,8 @@ class OrderListView(APIView):
 
     def get(self, request):
         qs = Order.objects.filter(user=request.user).prefetch_related(
-            'items__product__images', 'tracking_history'
-        )
+            'items__product__images', 'tracking_history', 'shipment__events'
+        ).select_related('shipment__quote')
         return paginate(qs, request, OrderSerializer)
 
     @transaction.atomic
@@ -926,6 +947,17 @@ class OrderListView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         data       = serializer.validated_data
+        address = None
+        if data.get('address_id'):
+            address = UserAddress.objects.filter(pk=data['address_id'], user=request.user).first()
+            if address is None:
+                return Response({'address_id': 'Selecciona una dirección de tu cuenta.'}, status=400)
+            data.update(customer_name=address.recipient_name, customer_phone=address.phone,
+                shipping_address=address.address, city=address.city, department=address.department,
+                postal_code=address.postal_code, complement=address.complement,
+                neighborhood=address.neighborhood, delivery_instructions=address.delivery_instructions)
+        delivery_details = {key: data.get(key, '') for key in
+            ('complement', 'neighborhood', 'delivery_instructions')}
         if data['payment_method'] == 'cash' and not settings.CASH_ON_DELIVERY_ENABLED:
             return Response({'payment_method': 'El pago contra entrega está deshabilitado.'}, status=400)
         items_data = data['items']
@@ -938,7 +970,7 @@ class OrderListView(APIView):
         # ── 1. Cargar productos y validar stock ───────────────────────────────
         products = {}
         errors   = []
-        for item in items_data:
+        for item in sorted(items_data, key=lambda row: row['product_id']):
             pid = item['product_id']
             try:
                 p = Product.objects.select_for_update().get(pk=pid, is_available=True)
@@ -956,8 +988,30 @@ class OrderListView(APIView):
             products[item['product_id']].price * item['quantity']
             for item in items_data
         )
-        shipping = 0 if subtotal >= SHIPPING_THRESHOLD else SHIPPING_COST
-        total    = subtotal + shipping
+        shipping = None
+        shipping_quote = None
+        if settings.TCC_SHIPPING_ENABLED:
+            if not data.get('shipping_quote_id'):
+                return Response({'error': 'Cotiza el transporte antes de pagar.'}, status=400)
+            from shipping.services import validate_checkout_quote
+            from shipping.tcc import TCCError
+            try:
+                shipping_quote = validate_checkout_quote(request.user, data['shipping_quote_id'], items_data, data)
+            except TCCError as exc:
+                return Response({'error': str(exc), 'code': exc.code}, status=503)
+            shipping = shipping_quote.total
+            destination = shipping_quote.snapshot['address']
+            data.update(customer_name=destination['recipient_name'], customer_phone=destination['phone'],
+                        shipping_address=destination['address'], city=destination['city'], department=destination['department'],
+                        postal_code=destination['postal_code'])
+        elif data.get('shipping_quote_id'):
+            return Response({'error': 'La configuración de transporte cambió. Actualiza el checkout.'}, status=409)
+        from .pricing import totals
+        # Existing product.price is the actual sale price. No coupon or extra
+        # tax engine exists: do not deduct advertised original-price savings
+        # twice, or invent a tax rate. Both extra adjustments are server-owned.
+        breakdown = totals(subtotal, shipping)
+        total = breakdown['total']
 
         # Wompi recibe una intención de pago, no una orden. La orden y el
         # descuento de inventario ocurren únicamente tras la aprobación oficial.
@@ -978,13 +1032,16 @@ class OrderListView(APIView):
                         'department': data.get('department', ''),
                         'postal_code': data.get('postal_code', ''),
                         'notes': data.get('notes', ''),
+                        'address_id': address.pk if address else None,
+                        'delivery_details': delivery_details,
+                        **({'tcc_quote_id': str(shipping_quote.pk), 'shipping_policy': shipping_quote.snapshot.get('shipping_policy', {})} if shipping_quote else {}),
                         'items': [{
                             'product_id': item['product_id'], 'quantity': item['quantity'],
                             'product_name': products[item['product_id']].name,
                             'unit_price': str(products[item['product_id']].price),
                         } for item in items_data],
                     },
-                    'subtotal': subtotal, 'shipping_cost': shipping, 'total': total,
+                    **breakdown,
                 },
             )
             if not created and intent.user_id != request.user.id:
@@ -993,6 +1050,19 @@ class OrderListView(APIView):
             submitted_items = [(item['product_id'], item['quantity']) for item in items_data]
             if not created and (intent.total != total or existing_items != submitted_items):
                 return Response({'error': 'La referencia de pago ya fue utilizada.'}, status=409)
+            if not created and any(intent.checkout_data.get(key) != value for key, value in {
+                'address_id': address.pk if address else None, 'shipping_address': data['shipping_address'],
+                'city': data.get('city', ''), 'department': data.get('department', ''),
+                'delivery_details': delivery_details,
+                'customer_name': data['customer_name'], 'customer_email': data['customer_email'],
+                'customer_phone': data.get('customer_phone',''), 'postal_code': data.get('postal_code',''),
+            }.items()):
+                return Response({'error': 'La referencia corresponde a otra dirección. Inicia un nuevo pago.'}, status=409)
+            if not created and shipping_quote and intent.checkout_data.get('tcc_quote_id') != str(shipping_quote.pk):
+                return Response({'error': 'La referencia está vinculada a otra cotización.'}, status=409)
+            if shipping_quote:
+                from shipping.services import create_draft_order
+                create_draft_order(intent, shipping_quote)
             amount_in_cents = int(intent.total * 100)
             signature_string = f"{intent.reference}{amount_in_cents}COP{settings.WOMPI_INTEGRITY_SECRET}"
             return Response({'data': {
@@ -1001,6 +1071,9 @@ class OrderListView(APIView):
                 'wompi_public_key': settings.WOMPI_PUBLIC_KEY,
                 'wompi_signature': hashlib.sha256(signature_string.encode()).hexdigest(),
                 'total': str(intent.total),
+                'subtotal': str(intent.subtotal),
+                **({'shipping_cost': str(intent.shipping_cost)} if intent.shipping_cost is not None else {}),
+                'taxes': str(intent.taxes), 'discounts': str(intent.discounts),
                 'payment_status': intent.wompi_status,
             }}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -1018,7 +1091,12 @@ class OrderListView(APIView):
             department       = data.get('department', ''),
             postal_code      = data.get('postal_code', ''),
             subtotal         = subtotal,
+            discounts        = breakdown['discounts'],
+            taxes            = breakdown['taxes'],
             shipping_cost    = shipping,
+            delivery_address = address,
+            delivery_details = delivery_details,
+            **(order_shipping_fields(shipping_quote.snapshot.get('shipping_policy', {})) if shipping_quote else {}),
             total            = total,
             payment_method   = data['payment_method'],
             wompi_reference  = data.get('wompi_reference', ''),
@@ -1026,6 +1104,13 @@ class OrderListView(APIView):
             status           = Order.Status.PENDING,
             wompi_status     = Order.WompiStatus.PENDING if data['payment_method'] == 'wompi' else '',
         )
+        if shipping_quote and shipping_quote.snapshot['packages']:
+            from shipping.models import Shipment, ShipmentEvent
+            shipment = Shipment.objects.create(order=order, quote=shipping_quote)
+            ShipmentEvent.objects.create(shipment=shipment, event_key='awaiting-payment', state=shipment.state,
+                description='Pedido registrado. No se creará remesa antes de confirmar el pago.')
+            shipping_quote.reference = 'cash:' + str(order.pk)
+            shipping_quote.save(update_fields=['reference'])
 
         # ── 4. Crear ítems y descontar stock ──────────────────────────────────
         for item in items_data:
@@ -1088,7 +1173,7 @@ class OrderDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            qs = Order.objects.prefetch_related('items__product__images', 'tracking_history')
+            qs = Order.objects.select_related('shipment__quote').prefetch_related('items__product__images', 'tracking_history', 'shipment__events')
             # Soporte para buscar por UUID de tracking (desde el frontend de seguimiento)
             try:
                 import uuid as _uuid
@@ -1116,8 +1201,8 @@ class OrderByTrackingView(APIView):
 
     def get(self, request, tracking_code):
         try:
-            order = Order.objects.prefetch_related(
-                'items__product__images', 'tracking_history'
+            order = Order.objects.select_related('shipment__quote').prefetch_related(
+                'items__product__images', 'tracking_history', 'shipment__events'
             ).get(tracking_code=tracking_code)
         except Order.DoesNotExist:
             return Response({'error': 'Pedido no encontrado'}, status=404)
@@ -1205,6 +1290,11 @@ def _valid_wompi_event(payload, header_checksum=''):
 
 
 def _validate_wompi_intent(intent, transaction_data):
+    from .pricing import valid_breakdown
+    if not valid_breakdown(intent):
+        return False
+    if intent.order_id and (not valid_breakdown(intent.order) or intent.order.total != intent.total):
+        return False
     try:
         amount_matches = int(transaction_data.get('amount_in_cents', -1)) == int(intent.total * 100)
     except (TypeError, ValueError):
@@ -1220,27 +1310,40 @@ def _validate_wompi_intent(intent, transaction_data):
 
 def _create_approved_order(intent):
     """Materializa una intención aprobada una sola vez, bajo bloqueo de fila."""
-    if intent.order_id:
+    tcc_draft = bool(intent.order_id and not intent.processed_at)
+    if intent.order_id and not tcc_draft:
         return intent.order
     data = intent.checkout_data
-    order = Order.objects.create(
+    order = intent.order if tcc_draft else Order.objects.create(
         user=intent.user, customer_name=data['customer_name'], customer_email=data['customer_email'],
         customer_phone=data.get('customer_phone', ''), shipping_address=data['shipping_address'],
         city=data.get('city', ''), department=data.get('department', ''),
         postal_code=data.get('postal_code', ''), notes=data.get('notes', ''),
         subtotal=intent.subtotal, shipping_cost=intent.shipping_cost, total=intent.total,
+        delivery_address=UserAddress.objects.filter(pk=data.get('address_id'), user=intent.user).first() if data.get('address_id') else None,
+        delivery_details=data.get('delivery_details', {}),
+        taxes=intent.taxes, discounts=intent.discounts, paid_total=intent.total,
+        **order_shipping_fields(data.get('shipping_policy', {})),
         payment_method=Order.PaymentMethod.WOMPI, wompi_reference=intent.reference,
         wompi_transaction_id=intent.transaction_id or '', wompi_status=Order.WompiStatus.APPROVED,
         status=Order.Status.PAID,
     )
+    if tcc_draft:
+        if order.status != Order.Status.CANCELLED:
+            order.status = Order.Status.PAID
+        order.wompi_status = Order.WompiStatus.APPROVED
+        order.paid_total = intent.total
+        order.wompi_transaction_id = intent.transaction_id or ''
+        order.save(update_fields=['status', 'wompi_status', 'wompi_transaction_id', 'paid_total', 'updated_at'])
     needs_assignment = False
     for item in data['items']:
         product = Product.objects.select_for_update().get(pk=item['product_id'])
         quantity = item['quantity']
-        OrderItem.objects.create(
-            order=order, product=product, quantity=quantity,
-            unit_price=item.get('unit_price', product.price),
-        )
+        if not tcc_draft:
+            OrderItem.objects.create(
+                order=order, product=product, quantity=quantity,
+                unit_price=item.get('unit_price', product.price),
+            )
         remaining = quantity
         for stock_entry in ProductStock.objects.filter(product=product, quantity__gt=0).order_by('-quantity', 'pk').select_for_update():
             deduct = min(stock_entry.quantity, remaining)
@@ -1269,7 +1372,10 @@ def _create_approved_order(intent):
     intent.order = order
     intent.processed_at = timezone.now()
     intent.save(update_fields=['order', 'processed_at', 'updated_at'])
-    transaction.on_commit(lambda order_id=order.pk: send_order_payment_confirmation(order_id))
+    if data.get('tcc_quote_id'):
+        from shipping.services import mark_paid
+        mark_paid(order)
+    send_order_payment_confirmation(order.pk)
     return order
 
 
@@ -1287,6 +1393,8 @@ def _apply_wompi_intent_status(intent, transaction_data):
     if tx_status == Order.WompiStatus.APPROVED:
         intent.approved_at = intent.approved_at or timezone.now()
     intent.save(update_fields=['transaction_id', 'wompi_status', 'provider_payload', 'approved_at', 'updated_at'])
+    if intent.checkout_data.get('tcc_quote_id') and intent.order_id and tx_status != 'APPROVED':
+        Order.objects.filter(pk=intent.order_id).update(wompi_status=tx_status)
     return _create_approved_order(intent) if tx_status == Order.WompiStatus.APPROVED else None
 
 
@@ -1374,10 +1482,15 @@ class OrderAdminListView(APIView):
     """Vista para administradores — lista y gestiona todos los pedidos."""
     permission_classes = [IsAdminUser]
 
-    def get(self, request):
+    def get(self, request, pk=None):
         qs = Order.objects.all().prefetch_related(
-            'items__product__images', 'tracking_history'
-        ).select_related('user')
+            'items__product__images', 'tracking_history', 'shipment__events'
+        ).select_related('user', 'shipment__quote')
+        if pk is not None:
+            order = qs.filter(pk=pk).first()
+            if order is None:
+                return Response({'error': 'Pedido no encontrado'}, status=404)
+            return Response({'data': OrderSerializer(order, context={'request': request}).data})
 
         if request.query_params.get('status'):
             qs = qs.filter(status=request.query_params['status'])
@@ -1405,6 +1518,10 @@ class OrderAdminListView(APIView):
 
         new_status = request.data.get('status')
         if new_status and new_status in dict(Order.Status.choices):
+            if (new_status == 'paid' and order.payment_method == 'wompi') or (
+                hasattr(order, 'shipment') and new_status in ('delivered', 'installed')
+            ):
+                return Response({'error': 'Los pagos TCC/Wompi requieren confirmación oficial; la entrega requiere el contrato de seguimiento TCC.'}, status=409)
             order.status = new_status
             order.save()
             TrackingEvent.objects.create(
@@ -1413,9 +1530,26 @@ class OrderAdminListView(APIView):
                 description = request.data.get('description', f'Estado actualizado a {new_status}'),
                 location    = request.data.get('location', ''),
             )
+            if new_status == 'paid' and hasattr(order, 'shipment'):
+                from shipping.services import mark_paid
+                with transaction.atomic():
+                    mark_paid(order)
         return Response({'data': OrderSerializer(order, context={'request': request}).data})
 
 # --- User Addresses -----------------------------------------------------------
+
+def address_identity(data):
+    """Compare delivery details, not the display label, without changing history."""
+    import unicodedata
+    fields = ('recipient_name', 'phone', 'address', 'city', 'department', 'postal_code',
+              'complement', 'neighborhood', 'delivery_instructions')
+    return tuple(' '.join(unicodedata.normalize('NFKC', str(data.get(field) or '')).casefold().split()) for field in fields)
+
+
+def matching_address(user, data, exclude=None):
+    identity = address_identity(data)
+    return next((address for address in UserAddress.objects.filter(user=user).exclude(pk=exclude)
+                 if address_identity(address.__dict__) == identity), None)
 
 class UserAddressListView(APIView):
     permission_classes = [IsAuthenticatedUser]
@@ -1425,12 +1559,27 @@ class UserAddressListView(APIView):
         serializer = UserAddressSerializer(addresses, many=True)
         return Response({'data': serializer.data})
 
+    @transaction.atomic
     def post(self, request):
+        # Serialize writes per account: concurrent retries cannot create copies
+        # or leave two default addresses. No volume or historical row is removed.
+        get_user_model().objects.select_for_update().get(pk=request.user.pk)
         serializer = UserAddressSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(user=request.user)
-            return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        existing = matching_address(request.user, serializer.validated_data)
+        if existing:
+            enrich_code = not existing.tcc_city_code and serializer.validated_data.get('tcc_city_code')
+            if enrich_code:
+                existing.tcc_city_code = enrich_code
+            if serializer.validated_data.get('is_default') and not existing.is_default:
+                existing.is_default = True
+                existing.save()
+            elif enrich_code:
+                existing.save()
+            return Response({'data': UserAddressSerializer(existing).data})
+        serializer.save(user=request.user, is_default=serializer.validated_data.get('is_default', False)
+                        or not UserAddress.objects.filter(user=request.user).exists())
+        return Response({'data': serializer.data}, status=status.HTTP_201_CREATED)
 
 
 class UserAddressDetailView(APIView):
@@ -1448,12 +1597,16 @@ class UserAddressDetailView(APIView):
             return Response({'error': 'Not found'}, status=404)
         return Response({'data': UserAddressSerializer(addr).data})
 
+    @transaction.atomic
     def put(self, request, pk):
+        get_user_model().objects.select_for_update().get(pk=request.user.pk)
         addr = self._get(request.user, pk)
         if not addr:
             return Response({'error': 'Not found'}, status=404)
-        serializer = UserAddressSerializer(addr, data=request.data)
+        serializer = UserAddressSerializer(addr, data=request.data, partial=True)
         if serializer.is_valid():
+            if matching_address(request.user, {**addr.__dict__, **serializer.validated_data}, exclude=addr.pk):
+                return Response({'address': 'Ya tienes guardada esta dirección de entrega.'}, status=400)
             serializer.save()
             return Response({'data': serializer.data})
         return Response(serializer.errors, status=400)

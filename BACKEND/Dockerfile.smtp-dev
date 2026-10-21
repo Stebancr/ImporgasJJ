@@ -1,0 +1,9 @@
+# Opt-in development only. The base image must already contain public roots/OpenSSL.
+ARG SMTP_BASE_IMAGE=frontend-backend:latest
+FROM ${SMTP_BASE_IMAGE}
+ARG SMTP_LOCAL_CA_SHA256
+COPY scripts/install_smtp_ca.py /usr/local/bin/install-smtp-ca.py
+RUN --mount=type=secret,id=smtp_local_ca,required=true \
+    python /usr/local/bin/install-smtp-ca.py \
+      --certificate /run/secrets/smtp_local_ca --sha256 "$SMTP_LOCAL_CA_SHA256" --install \
+    && update-ca-certificates

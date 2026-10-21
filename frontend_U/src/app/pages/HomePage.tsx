@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ThermometerSun, Gauge, PenToolIcon as Tool, ChevronLeft, ChevronRight, Flame, Utensils } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import GoogleMap from '../../components/GoogleMap'
+import {useShippingConfig} from '../../hooks/useShippingConfig'
 import { Product } from '../../types'
 import { productsService } from '../../services/products'
 import { locationsService, ApiLocation } from '../../services/locations'
@@ -40,8 +41,8 @@ const categories = [
 const features = [
   {
     icon: Truck,
-    title: 'Envio Gratis',
-    description: 'En compras mayores a $500.000',
+    title: 'Envíos',
+    description: 'Consulta el costo de entrega al comprar',
     color: 'text-[#001575]',
     bgColor: 'bg-[#e8ecff]'
   },
@@ -115,6 +116,7 @@ const services = [
 ]
 
 function HomePage() {
+  const shippingConfig=useShippingConfig()
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([])
   const [productsError, setProductsError] = useState(false)
   const [reloadProducts, setReloadProducts] = useState(0)
@@ -169,6 +171,7 @@ function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#FAFBFC]">
+      {shippingConfig.enabled&&shippingConfig.freeShippingThreshold&&<aside className="flex items-center justify-center gap-2 bg-[#001575] px-4 py-3 text-center text-sm font-semibold text-white"><Truck aria-hidden="true" className="h-4 w-4"/>Envío gratis en compras desde {Number(shippingConfig.freeShippingThreshold).toLocaleString('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0})}<span className="sr-only">Sujeto a cobertura y cotización de entrega.</span></aside>}
       {/* ── Hero Carousel ──────────────────────────────────────────────── */}
       <section
         className="relative grid overflow-hidden select-none"

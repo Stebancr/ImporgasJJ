@@ -1,6 +1,8 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 interface RequestOptions {
+  responseType?: 'blob'
+  signal?: AbortSignal
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
   body?: unknown
   headers?: Record<string, string>
@@ -61,15 +63,16 @@ async function tryRefreshToken(): Promise<string | null> {
 }
 
 function buildConfig(method: string, body: unknown, headers: Record<string, string>, token: string | null): RequestInit {
+  const multipart = body instanceof FormData
   const config: RequestInit = {
     method,
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(multipart ? 60000 : 20000),
     headers: {
-      'Content-Type': 'application/json',
+      ...(multipart ? {} : {'Content-Type': 'application/json'}),
       ...headers,
     },
   }
-  if (body) config.body = JSON.stringify(body)
+  if (body) config.body = multipart ? body as FormData : JSON.stringify(body)
   if (token) {
     config.headers = { ...config.headers, Authorization: `Bearer ${token}` }
   }
@@ -81,6 +84,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
 
   const token = localStorage.getItem('authToken')
   const config = buildConfig(method, body, headers, token)
+  if (options.signal) config.signal = AbortSignal.any([options.signal, config.signal as AbortSignal])
 
   let response = await fetch(`${API_BASE_URL}${endpoint}`, config)
 
@@ -102,16 +106,18 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
 
     if (newToken) {
       const retryConfig = buildConfig(method, body, headers, newToken)
+      if (options.signal) retryConfig.signal = AbortSignal.any([options.signal, retryConfig.signal as AbortSignal])
       response = await fetch(`${API_BASE_URL}${endpoint}`, retryConfig)
     }
   }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Error de conexión' }))
-    throw new Error(errorMessage(error) || 'Error en la solicitud')
+    throw Object.assign(new Error(errorMessage(error) || 'Error en la solicitud'), {status:response.status,code:typeof error.code==='string'?error.code:undefined, fields:error})
   }
 
   if (response.status === 204) return undefined as T
+  if (options.responseType === 'blob') return response.blob() as Promise<T>
   return response.json()
 }
 
@@ -126,8 +132,9 @@ function read<T>(endpoint: string): Promise<T> {
 }
 
 export const api = {
+  blob: (endpoint: string) => request<Blob>(endpoint, {responseType:'blob'}),
   get: <T>(endpoint: string) => read<T>(endpoint),
-  post: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: 'POST', body }),
+  post: <T>(endpoint: string, body: unknown, signal?: AbortSignal) => request<T>(endpoint, { method: 'POST', body, signal }),
   put: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: 'PUT', body }),
   patch: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: 'PATCH', body }),
   delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' }),

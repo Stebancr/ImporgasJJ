@@ -172,6 +172,34 @@ class Product(models.Model):
         verbose_name_plural = 'Productos'
 
     @property
+    def shipping_ready(self):
+        profile = getattr(self, 'shipping_profile', None)
+        return bool(profile and (not profile.requires_shipping or (
+            1 <= profile.packages_per_unit <= 100 and all(getattr(profile, field) is not None and getattr(profile, field) > 0
+                for field in ('weight_kg', 'height_cm', 'width_cm', 'length_cm')) and
+            (self.price * 100 >= profile.packages_per_unit if profile.declared_value_from_price else
+             profile.declared_value is not None and profile.declared_value > 0))))
+
+    @property
+    def shipping_missing_fields(self):
+        profile = getattr(self, 'shipping_profile', None)
+        if profile and not profile.requires_shipping:
+            return []
+        labels = {'weight_kg': 'Peso', 'height_cm': 'Alto', 'width_cm': 'Ancho',
+                  'length_cm': 'Largo', 'packages_per_unit': 'Cantidad de paquetes'}
+        missing = [label for field, label in labels.items()
+                   if not profile or not getattr(profile, field) or getattr(profile, field) <= 0]
+        if profile and profile.packages_per_unit > 100:
+            missing.append('Cantidad de paquetes (máximo 100)')
+        declared = (self.price if profile and profile.declared_value_from_price
+                    else getattr(profile, 'declared_value', None))
+        if not declared or declared <= 0:
+            missing.append('Valor declarado')
+        elif profile and profile.declared_value_from_price and declared * 100 < profile.packages_per_unit:
+            missing.append('Valor declarado insuficiente por paquete')
+        return missing
+
+    @property
     def discount_percentage(self):
         if self.original_price and self.original_price > self.price:
             return round((1 - self.price / self.original_price) * 100)
@@ -196,6 +224,14 @@ class Product(models.Model):
 #  PRODUCT IMAGE
 # ─────────────────────────────────────────────
 
+class ProductEditorOperation(models.Model):
+    key = models.UUIDField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    fingerprint = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class ProductImage(models.Model):
     product    = models.ForeignKey(
         Product,
@@ -211,6 +247,7 @@ class ProductImage(models.Model):
     class Meta:
         db_table = 'product_images'
         ordering = ['order']
+        constraints = [models.UniqueConstraint(fields=['product'], condition=models.Q(is_primary=True), name='uniq_product_primary_image')]
         verbose_name = 'Imagen de producto'
         verbose_name_plural = 'Imágenes de producto'
 
@@ -401,7 +438,17 @@ class Order(models.Model):
 
     # ── Contabilidad ──────────────────────────────────────────────────────────
     subtotal      = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Subtotal")
-    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Costo de envío")
+    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=None, verbose_name="Costo de envío histórico")
+    delivery_address = models.ForeignKey('UserAddress', null=True, blank=True, on_delete=models.SET_NULL, related_name='orders')
+    delivery_details = models.JSONField(default=dict, blank=True)
+    # NULL means not recorded for historical orders; never infer a carrier rate.
+    carrier_shipping_cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    shipping_discount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    free_shipping_applied = models.BooleanField(null=True, blank=True)
+    free_shipping_threshold = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    discounts     = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Descuentos adicionales")
+    taxes         = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Impuestos adicionales")
+    paid_total    = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, verbose_name="Total pagado confirmado")
     total         = models.DecimalField(max_digits=14, decimal_places=2, verbose_name="Total")
 
     # ── Pago ──────────────────────────────────────────────────────────────────
@@ -472,7 +519,9 @@ class WompiPaymentIntent(models.Model):
     )
     checkout_data = models.JSONField(default=dict)
     subtotal = models.DecimalField(max_digits=14, decimal_places=2)
-    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2)
+    shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, default=None)
+    discounts = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    taxes = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3, default='COP')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
@@ -547,6 +596,10 @@ class TrackingEvent(models.Model):
 # ─────────────────────────────────────────────
 
 class UserAddress(models.Model):
+    tcc_city_code = models.CharField(max_length=8, blank=True, default='')
+    complement = models.CharField(max_length=200, blank=True, default='')
+    neighborhood = models.CharField(max_length=100, blank=True, default='')
+    delivery_instructions = models.CharField(max_length=300, blank=True, default='')
     user           = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

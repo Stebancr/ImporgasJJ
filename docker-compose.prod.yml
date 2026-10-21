@@ -138,6 +138,9 @@ services:
       - ${PROD_ENV_FILE:-.env.prod}
     environment:
       WHATSAPP_GATEWAY_ENV: production
+      # Do not inherit carrier credentials from the shared private env file.
+      TCC_API_TOKEN: ""
+      TCC_PRODUCTION_API_TOKEN: ""
       WHATSAPP_GATEWAY_PORT: "3001"
       CRM_API_URL: http://backend:8001
       REDIS_URL: redis://redis:6379/1

@@ -6,11 +6,25 @@ from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 
 from usuarios.models import Credenciales, Usuario
+from django.core.cache import cache
+from unittest.mock import patch
+from usuarios.password_recovery import deliver
 
 
-@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+def reset_link(message):
+    from urllib.parse import urlsplit, parse_qs
+    url = re.search(r'https?://[^\s]+#uid=[^\s]+', message.body).group()
+    fields = parse_qs(urlsplit(url).fragment)
+    return fields['uid'][0], fields['token'][0]
+
+
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend', SERVER_EMAIL_NOREPLY='reset@example.invalid', DEBUG=True, FRONTEND_PUBLIC_URL='http://localhost')
 class CustomerAccountTests(APITestCase):
     def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.addCleanup(patch.stopall)
+        patch('usuarios.password_recovery.enqueue', side_effect=deliver).start()
         profile = Usuario.objects.create(
             cedula='account-123', nombre_completo='Cliente Ejemplo',
             correo='account@example.com', telefono='3001234567', sede='Interna',
@@ -74,12 +88,13 @@ class CustomerAccountTests(APITestCase):
 
     def test_reset_email_is_generic_and_token_is_one_use(self):
         url = reverse('customer-password-reset-request')
-        missing = self.client.post(url, {'email': 'missing@example.com'}, format='json')
-        existing = self.client.post(url, {'email': 'account@example.com'}, format='json')
+        with self.captureOnCommitCallbacks(execute=True):
+            missing = self.client.post(url, {'email': 'missing@example.com'}, format='json')
+            existing = self.client.post(url, {'email': 'account@example.com'}, format='json')
         self.assertEqual(missing.status_code, existing.status_code)
         self.assertEqual(missing.data, existing.data)
         self.assertEqual(len(mail.outbox), 1)
-        uid, token = re.search(r'/restablecer-contrasena/([^/]+)/([^\s/]+)', mail.outbox[0].body).groups()
+        uid, token = reset_link(mail.outbox[0])
         payload = {'uid': uid, 'token': token, 'new_password': 'Reset-safe-password-456',
                    'confirm_password': 'Reset-safe-password-456'}
         confirm_url = reverse('customer-password-reset-confirm')
@@ -89,12 +104,13 @@ class CustomerAccountTests(APITestCase):
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password(payload['new_password']))
 
-    @override_settings(PASSWORD_RESET_TIMEOUT=-1)
     def test_expired_token_is_rejected(self):
-        self.client.post(reverse('customer-password-reset-request'), {'email': 'account@example.com'}, format='json')
-        uid, token = re.search(r'/restablecer-contrasena/([^/]+)/([^\s/]+)', mail.outbox[0].body).groups()
-        result = self.client.post(reverse('customer-password-reset-confirm'), {
-            'uid': uid, 'token': token, 'new_password': 'Reset-safe-password-456',
-            'confirm_password': 'Reset-safe-password-456',
-        }, format='json')
+        with self.captureOnCommitCallbacks(execute=True):
+            self.client.post(reverse('customer-password-reset-request'), {'email': 'account@example.com'}, format='json')
+        uid, token = reset_link(mail.outbox[0])
+        with override_settings(PASSWORD_RESET_TIMEOUT=-1):
+            result = self.client.post(reverse('customer-password-reset-confirm'), {
+                'uid': uid, 'token': token, 'new_password': 'Reset-safe-password-456',
+                'confirm_password': 'Reset-safe-password-456',
+            }, format='json')
         self.assertEqual(result.status_code, 400)

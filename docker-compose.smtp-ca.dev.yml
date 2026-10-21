@@ -1,0 +1,27 @@
+# Explicit opt-in for an independently verified local CA. Never use in production.
+x-smtp-ca-build: &smtp-ca-build
+  context: ./BACKEND
+  dockerfile: Dockerfile.smtp-dev
+  args:
+    SMTP_BASE_IMAGE: ${SMTP_BASE_IMAGE:-frontend-backend:latest}
+    SMTP_LOCAL_CA_SHA256: ${SMTP_LOCAL_CA_SHA256:?Provide the independently verified CA fingerprint}
+  secrets:
+    - smtp_local_ca
+
+services:
+  backend:
+    image: imporgas-smtp-trusted-dev:local
+    build: *smtp-ca-build
+  celery-worker:
+    image: imporgas-smtp-trusted-dev:local
+    build: *smtp-ca-build
+  celery-chatbot:
+    image: imporgas-smtp-trusted-dev:local
+    build: *smtp-ca-build
+  celery-beat:
+    image: imporgas-smtp-trusted-dev:local
+    build: *smtp-ca-build
+
+secrets:
+  smtp_local_ca:
+    file: ${SMTP_LOCAL_CA_PATH:?Provide the officially exported public PEM certificate}

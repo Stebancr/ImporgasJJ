@@ -28,6 +28,7 @@ urlpatterns = [
     path('auth/token/refresh/', PasswordVersionRefreshView.as_view(), name='token_refresh'),
     path('auth/token/refresh', PasswordVersionRefreshView.as_view(), name='token_refresh_no_slash'),
     path('user/', include('usuarios.urls')),
+    path('mail/', include('transactional_mail.urls')),
     path('ecommerce/', include('ecommerce.urls')),  # kept for legacy
     path('', include('ecommerce.urls')),            # root-level — /products, /brands, etc.
     path('gestion/', include('gestion.urls')),
@@ -47,7 +48,7 @@ urlpatterns = [
     path('visits/', include('AppVisits.urls')),
     # Los PDF de visitas solo se entregan por la vista con token firmado.
     # Esta ruta debe preceder al servidor genérico de media usado con DEBUG.
-    re_path(r'^media/(?:crm_chat|crm_gateway|crm_templates|visitas_pdf|evidencias|evidencias_temporales|firmas)(?:/.*)?$', lambda request: HttpResponseNotFound()),
+    re_path(r'^media/(?:private_receipts|crm_chat|crm_gateway|crm_templates|visitas_pdf|evidencias|evidencias_temporales|firmas)(?:/.*)?$', lambda request: HttpResponseNotFound()),
     path('', api_root, name='api-root'),
 ]
 

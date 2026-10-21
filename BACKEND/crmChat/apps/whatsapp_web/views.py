@@ -38,6 +38,31 @@ ALLOWED_EVENT_SOURCES = {'notify', 'append', 'history'}
 logger = logging.getLogger(__name__)
 
 
+def _attach_gateway_media(message, data):
+    """Recover media on repeated events without creating a second message."""
+    media_id = str((data.get('media') or {}).get('media_id') or '')
+    media = cache.get(f'whatsapp-web-media:{media_id}') if media_id else None
+    with transaction.atomic():
+        ChatMessage.objects.select_for_update().get(pk=message.pk)
+        if media:
+            attachment = message.attachments.filter(external_media_id=media_id).first()
+            attachment = attachment or message.attachments.filter(metadata__gateway_failed=True).first()
+            attachment = attachment or ChatAttachment(message=message)
+            attachment.external_media_id = media_id
+            attachment.original_name = media['name']
+            attachment.mime_type = media['mime_type']
+            attachment.size = media['size']
+            attachment.metadata = {'protected': True, 'gateway': True, 'sha256': media.get('sha256', ''),
+                                   'channel': 'whatsapp_web', 'state': 'stored'}
+            attachment.file.name = media['path']
+            attachment.save()
+            cache.delete(f'whatsapp-web-media:{media_id}')
+        elif data.get('media_error') and not message.attachments.exists():
+            ChatAttachment.objects.create(message=message, original_name='Adjunto no disponible',
+                metadata={'gateway_failed': True, 'state': 'failed',
+                          'error': 'No fue posible descargar el archivo. Solicita al remitente que lo reenvíe.'})
+
+
 def _integration(connection_id, create=False):
     query = ChannelIntegration.objects.filter(channel=ChannelIntegration.CHANNEL_WHATSAPP_WEB, external_account_id=connection_id)
     integration = query.first()
@@ -196,6 +221,8 @@ class InternalWebhookView(InternalAPIView):
                 existing.external_message_id = key
                 update_fields.append('external_message_id')
             existing.save(update_fields=update_fields)
+            _attach_gateway_media(existing, data)
+            publish_crm_event('message.updated', session_id=existing.session_id, message_id=existing.pk)
             logger.info(
                 'WhatsApp Web deduplicado: message_id=%s session_id=%s origin=%s source=%s.',
                 existing.pk, existing.session_id, origin, event_source,
@@ -333,7 +360,7 @@ class InternalWebhookView(InternalAPIView):
                         'origin': origin,
                         'event_source': event_source,
                         'experimental': True,
-                        **({'media_error': str(data.get('media_error'))[:200]} if data.get('media_error') else {}),
+                        **({'media_error': 'Descarga de adjunto fallida.'} if data.get('media_error') else {}),
                     },
                 )
         except IntegrityError:
@@ -344,22 +371,13 @@ class InternalWebhookView(InternalAPIView):
             message = ChatMessage.objects.filter(recovery_query).order_by('id').first()
             if message is None:
                 raise
+            _attach_gateway_media(message, data)
             logger.info(
                 'WhatsApp Web recuperó colisión idempotente: message_id=%s session_id=%s origin=%s.',
                 message.pk, message.session_id, origin,
             )
             return Response({'created': False, 'message_id': message.pk})
-        media_id = str((data.get('media') or {}).get('media_id') or '')
-        media = cache.get(f'whatsapp-web-media:{media_id}') if media_id else None
-        if media:
-            attachment = ChatAttachment.objects.create(
-                message=message, external_media_id=media_id, original_name=media['name'], mime_type=media['mime_type'],
-                size=media['size'], metadata={'protected': True, 'gateway': True, 'sha256': media.get('sha256', ''),
-                                             'channel': 'whatsapp_web', 'state': 'stored'},
-            )
-            attachment.file.name = media['path']
-            attachment.save(update_fields=['file'])
-            cache.delete(f'whatsapp-web-media:{media_id}')
+        _attach_gateway_media(message, data)
         if origin == 'customer':
             if not session.last_customer_message_at or timestamp > session.last_customer_message_at:
                 session.last_customer_message_at = timestamp
@@ -384,9 +402,9 @@ class InternalWebhookView(InternalAPIView):
             origin, event_source, 'queued' if bot_allowed else 'skipped',
         )
         if bot_allowed:
-            from crmChat.tasks import generate_omnichannel_bot_reply
+            from crmChat.tasks import enqueue_bot_reply
             ChatMessage.objects.filter(pk=message.pk).update(status='queued')
-            transaction.on_commit(lambda: generate_omnichannel_bot_reply.delay(message.pk))
+            transaction.on_commit(lambda: enqueue_bot_reply(message.pk))
         return Response({'created': True, 'message_id': message.pk}, status=201)
 
 

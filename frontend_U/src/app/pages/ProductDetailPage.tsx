@@ -4,6 +4,7 @@ import { ShoppingCart, Heart, Share2, Star, ChevronLeft, ChevronRight, Minus, Pl
 import ProductDescription from '../../components/ProductDescription'
 import ProductCard from '../../components/ProductCard'
 import ProductReviews from '../../components/ProductReviews'
+import ShippingCalculator from '../../components/ShippingCalculator'
 import { Product } from '../../types'
 import { productsService } from '../../services/products'
 import { useAuth } from '../../context/AuthContext'
@@ -251,6 +252,7 @@ function ProductDetailPage() {
               </div>
 
               {/* Stock Status */}
+              <ShippingCalculator items={[{product_id:Number(product.id),quantity}]} productPrice={product.price} shippingReady={product.shippingReady} missingFields={product.shippingMissingFields}/>
               <div className="flex items-center gap-2 mb-6">
                 {isLoading ? (
                   <span className="text-gray-500">Cargando disponibilidad...</span>
@@ -303,6 +305,7 @@ function ProductDetailPage() {
 
             </div>
           </div>
+
 
           {/* Tabs */}
           <div className="border-t">

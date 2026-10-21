@@ -70,6 +70,7 @@ function LoginPage() {
           termsVersion,
           termsAccepted,
         })
+        try { sessionStorage.setItem('delivery-address-invitation','yes') } catch { /* Optional invitation. */ }
         await login(form.email, form.password)
         const requested = searchParams.get('redirect') || '/'
         const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
@@ -208,13 +209,12 @@ function LoginPage() {
                     Contrasena
                   </label>
                   {mode === 'login' && (
-                    <button
-                      type="button"
-                      onClick={() => setMode('forgot')}
+                    <Link
+                      to="/recuperar-contrasena"
                       className="text-sm text-[#001575] hover:text-[#00104f] font-medium"
                     >
-                      Olvidaste tu contrasena?
-                    </button>
+                      ¿Olvidaste tu contraseña?
+                    </Link>
                   )}
                 </div>
                 <div className="relative">
@@ -350,7 +350,7 @@ function LoginPage() {
             <div className="grid grid-cols-3 gap-4">
               {[
                 { icon: Shield, label: 'Garantia 5 anos' },
-                { icon: Truck, label: 'Envio gratis' },
+                { icon: Truck, label: 'Envíos' },
                 { icon: Headphones, label: 'Soporte 24/7' },
               ].map((feature, idx) => (
                 <div key={idx} className="bg-white/10 backdrop-blur rounded-xl p-4 border border-white/10">

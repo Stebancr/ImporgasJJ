@@ -2,6 +2,7 @@ import { ReactNode } from 'react'
 import Header from './Header'
 import Footer from './Footer'
 import Chatbot from './Chatbot'
+import DeliveryAddressInvitation from './DeliveryAddressInvitation'
 import { useLocation } from 'react-router-dom'
 
 interface LayoutProps {
@@ -16,6 +17,7 @@ function Layout({ children }: LayoutProps) {
       <a href="#main-content" className="sr-only focus:not-sr-only focus:p-3 focus:bg-white focus:text-primary">Saltar al contenido</a>
       <Header />
       <main id="main-content" className="min-w-0 flex-1">
+        <DeliveryAddressInvitation />
         {children}
       </main>
       <Footer />

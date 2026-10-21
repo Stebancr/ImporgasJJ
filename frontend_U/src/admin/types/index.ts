@@ -80,6 +80,9 @@ export interface SpecAttribute {
 
 // Product Types
 export interface Product {
+  shipping_profile?: import('../../services/shipping').ShippingProfile | null
+  shipping_ready?: boolean
+  shipping_missing_fields?: string[]
   id: number
   name: string
   slug: string
@@ -151,6 +154,7 @@ export interface Review {
 export type OrderStatus = 'pending' | 'paid' | 'preparing' | 'shipping' | 'delivered' | 'installed' | 'cancelled'
 
 export interface Order {
+  shipment?: import('../../services/shipping').ShipmentInfo | null
   id: number
   order_number: string
   tracking_code: string | null
@@ -163,12 +167,19 @@ export interface Order {
   department: string
   postal_code: string
   subtotal: number
-  shipping_cost: number
+  shipping_cost: number | null
+  carrier_shipping_cost?:number|string|null
+  shipping_discount?:number|string|null
+  free_shipping_applied?:boolean|null
+  taxes?: number | string
+  discounts?: number | string
+  paid_total?: number | string | null
   total: number
   status: OrderStatus
   payment_method: 'wompi' | 'cash'
   wompi_transaction_id: string
   wompi_reference: string
+  wompi_status?: string
   notes: string
   created_at: string
   updated_at: string

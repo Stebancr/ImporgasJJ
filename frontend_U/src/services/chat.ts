@@ -9,6 +9,8 @@ export interface ChatSession {
 }
 
 export interface ChatMessageData {
+  attachments?: import('../components/chat/ChatAttachmentView').AttachmentData[]
+  normalized_text?: string
   id: number
   text: string
   sender_type: 'user' | 'bot' | 'agent'
@@ -44,8 +46,12 @@ export const chatService = {
       `/crm-chat/sessions/${sessionId}/messages/${afterId != null ? `?after=${afterId}` : ''}`
     ),
 
-  sendMessage: (sessionId: number, text: string): Promise<ChatMessageData> =>
-    api.post<ChatMessageData>(`/crm-chat/sessions/${sessionId}/messages/`, { text }),
+  sendMessage: (sessionId: number, text: string, clientMessageId: string = crypto.randomUUID(), file?: File): Promise<ChatMessageData> => {
+    const data=new FormData();data.append('text',text);data.append('client_message_id',clientMessageId)
+    if(file)data.append('file',file)
+    return api.post<ChatMessageData>(`/crm-chat/sessions/${sessionId}/messages/`, data)
+  },
+  getAttachmentBlob: (url: string) => api.blob(url.replace(/^\/api/,'')),
 
   closeSession: (sessionId: number): Promise<ChatSession> =>
     api.patch<ChatSession>(`/crm-chat/sessions/${sessionId}/`, { status: 'closed' }),

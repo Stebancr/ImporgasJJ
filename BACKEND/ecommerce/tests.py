@@ -95,7 +95,7 @@ class ProductReviewAPITests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
 
-@override_settings(CASH_ON_DELIVERY_ENABLED=True)
+@override_settings(CASH_ON_DELIVERY_ENABLED=True, TCC_SHIPPING_ENABLED=False)
 class EcommercePurchaseFlowTests(APITestCase):
     def setUp(self):
         profile = Usuario.objects.create(
@@ -210,6 +210,7 @@ class EcommercePurchaseFlowTests(APITestCase):
     WOMPI_INTEGRITY_SECRET='integrity-secret-for-tests',
     WOMPI_API_URL='https://sandbox.wompi.co/v1',
     WOMPI_HTTP_TIMEOUT=2,
+    TCC_SHIPPING_ENABLED=False,
 )
 class WompiPaymentTests(APITestCase):
     def setUp(self):
@@ -382,6 +383,10 @@ class PaymentConfirmationEmailTests(APITestCase):
         )
         self.assertTrue(send_order_payment_confirmation(order.pk))
         self.assertFalse(send_order_payment_confirmation(order.pk))
+        from transactional_mail.models import Delivery
+        from transactional_mail.service import send
+        with override_settings(TRANSACTIONAL_EMAIL_ENABLED=True,DEBUG=True,FRONTEND_PUBLIC_URL='http://localhost',PUBLIC_API_URL='http://localhost/api',TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=['cliente@example.com']):
+            self.assertTrue(send(Delivery.objects.get(kind='order',object_id=order.pk).pk))
         order.refresh_from_db()
         self.assertIsNotNone(order.payment_confirmation_email_sent_at)
         self.assertEqual(len(mail.outbox), 1)

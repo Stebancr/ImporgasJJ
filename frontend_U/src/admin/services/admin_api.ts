@@ -38,6 +38,11 @@ api.interceptors.response.use(
           return api(error.config)
         }
       }
+      // The editor retains its pending files and reports the expired session inline.
+      // Authentication is still enforced by the server; no request is replayed unauthenticated.
+      if (/\/products\/(?:\d+\/)?editor$/.test(error.config?.url || '')) {
+        return Promise.reject(error)
+      }
       localStorage.removeItem('token')
       localStorage.removeItem('adminUser')
       localStorage.removeItem('refresh')

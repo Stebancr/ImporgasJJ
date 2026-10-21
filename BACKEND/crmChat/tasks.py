@@ -43,6 +43,21 @@ logger = logging.getLogger(__name__)
 INACTIVITY_WARNING_TEXT = 'Este chat se cerrará por inactividad en 1 minuto. Si necesitas continuar, envía un mensaje.'
 
 
+def enqueue_bot_reply(message_id):
+    """Persist the pending job if the broker is unavailable; Beat can recover it."""
+    try:
+        return generate_omnichannel_bot_reply.delay(message_id)
+    except Exception as exc:
+        message = ChatMessage.objects.filter(pk=message_id).first()
+        if message is not None:
+            ChatMessage.objects.filter(pk=message_id).update(metadata={
+                **message.metadata, 'error': 'Respuesta pendiente: el procesador no está disponible temporalmente.',
+            })
+            publish_crm_event('message.updated', session_id=message.session_id, message_id=message_id)
+        logger.warning('Bot enqueue unavailable message_id=%s reason=%s', message_id, type(exc).__name__)
+        return None
+
+
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=5)
 def process_meta_webhook_task(self, event_id):
     """Procesa un envelope Meta una sola vez y programa respuestas del bot."""
@@ -64,22 +79,14 @@ def process_meta_webhook_task(self, event_id):
         raise
     for message in messages:
         publish_crm_event('message.created', session_id=message.session_id, message_id=message.id)
-        for attachment in message.attachments.all():
-            download_meta_attachment.delay(attachment.id)
-        if message.direction == 'inbound':
-            receipt_task = send_meta_read_receipt.delay(message.id)
-            logger.info(
-                'Confirmación de lectura encolada: message_id=%s channel=%s task_id=%s.',
-                message.id, message.session.channel, receipt_task.id,
-            )
         integration = message.session.integration
         bot_enabled = bool(integration and integration.configuration.get('bot_enabled', False))
         if message.sender_type == 'user' and message.session.status == 'bot' and bot_enabled:
             ChatMessage.objects.filter(pk=message.pk).update(status='queued')
-            bot_task = generate_omnichannel_bot_reply.delay(message.id)
+            bot_task = enqueue_bot_reply(message.id)
             logger.info(
                 'Respuesta bot programada message_id=%s session_id=%s channel=%s task_id=%s.',
-                message.id, message.session_id, message.session.channel, bot_task.id,
+                message.id, message.session_id, message.session.channel, getattr(bot_task, 'id', None),
             )
         else:
             reason = (
@@ -91,6 +98,14 @@ def process_meta_webhook_task(self, event_id):
                 'Respuesta bot omitida message_id=%s session_id=%s channel=%s reason=%s.',
                 message.id, message.session_id, message.session.channel, reason,
             )
+        try:
+            for attachment in message.attachments.all():
+                download_meta_attachment.delay(attachment.id)
+            if message.direction == 'inbound':
+                send_meta_read_receipt.delay(message.id)
+        except Exception as exc:
+            logger.warning('Meta auxiliary enqueue unavailable message_id=%s reason=%s',
+                           message.id, type(exc).__name__)
     logger.info(
         'Tarea webhook Meta completada: event_id=%s channel=%s messages=%s.',
         event_id, event.channel, len(messages),
@@ -113,8 +128,11 @@ def send_meta_read_receipt(message_id):
 
 def _assert_public_https(url):
     parsed = urlparse(url)
-    if parsed.scheme != 'https' or not parsed.hostname:
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None, 443):
         raise ValueError('La URL del adjunto no es HTTPS.')
+    host = parsed.hostname.lower()
+    if not any(host == domain or host.endswith('.' + domain) for domain in ('fbcdn.net','fbsbx.com','cdninstagram.com','facebook.com','whatsapp.net')):
+        raise ValueError('La fuente del adjunto no pertenece a un proveedor permitido.')
     for address in socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM):
         ip = ipaddress.ip_address(address[4][0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
@@ -169,13 +187,37 @@ def _validate_attachment_content_type(value):
     return content_type
 
 
-@shared_task(bind=True, autoretry_for=(requests.RequestException,), retry_backoff=True, retry_jitter=True, max_retries=4)
+@shared_task(bind=True, max_retries=4)
 def download_meta_attachment(self, attachment_id):
+    from django.core.cache import cache
+    key = f'crm-attachment-download:{attachment_id}'
+    if not cache.add(key, True, timeout=120):
+        return {'pending': True}
+    try:
+        return _download_meta_attachment(attachment_id)
+    except Exception as exc:
+        attachment = ChatAttachment.objects.filter(pk=attachment_id).first()
+        if attachment:
+            transient = isinstance(exc, (requests.RequestException, OSError))
+            attachment.metadata = {**attachment.metadata, 'state': 'failed' if transient else 'rejected',
+                'error': 'No fue posible descargar el archivo. Reintentar.' if transient else 'Archivo no verificable, vencido o fuente no permitida.'}
+            attachment.save(update_fields=['metadata'])
+            publish_crm_event('attachment.failed', session_id=attachment.message.session_id, message_id=attachment.message_id)
+            if transient and self.request.retries < self.max_retries:
+                raise self.retry(exc=RuntimeError('Descarga de adjunto temporalmente no disponible.'), countdown=30*(self.request.retries+1)) from None
+        return {'failed': True}
+    finally:
+        cache.delete(key)
+
+
+def _download_meta_attachment(attachment_id):
     """Descarga un adjunto Meta con límite de tamaño y protección SSRF."""
 
     attachment = ChatAttachment.objects.select_related('message__session__integration').get(pk=attachment_id)
     if attachment.file:
         return {'duplicate': True}
+    attachment.metadata = {**attachment.metadata, 'state': 'downloading', 'error': ''}
+    attachment.save(update_fields=['metadata'])
     integration = attachment.message.session.integration
     if not integration:
         raise ValueError('Adjunto sin integración.')
@@ -188,19 +230,33 @@ def download_meta_attachment(self, attachment_id):
         headers['Authorization'] = f"Bearer {secret_store.decrypt(integration.access_token_encrypted)}"
     maximum = getattr(settings, 'CRM_ATTACHMENT_MAX_BYTES', 25 * 1024 * 1024)
     final_url, response = _open_public_stream(url, headers)
-    response.raise_for_status()
-    response_type = _validate_attachment_content_type(response.headers.get('Content-Type', ''))
-    declared = int(response.headers.get('Content-Length') or 0)
-    if declared > maximum:
-        raise ValueError('El adjunto supera el tamaño permitido.')
-    content = bytearray()
-    for chunk in response.iter_content(64 * 1024):
-        content.extend(chunk)
-        if len(content) > maximum:
+    try:
+        response.raise_for_status()
+        response_type = _validate_attachment_content_type(response.headers.get('Content-Type', ''))
+        declared = int(response.headers.get('Content-Length') or 0)
+        if declared > maximum:
             raise ValueError('El adjunto supera el tamaño permitido.')
-    extension = Path(urlparse(final_url).path).suffix[:12]
-    name = Path(attachment.original_name).name or f'meta-{attachment.id}{extension or mimetypes.guess_extension(response_type) or ""}'
-    attachment.mime_type = attachment.mime_type or response_type
+        content = bytearray()
+        started = time.monotonic()
+        for chunk in response.iter_content(64 * 1024):
+            content.extend(chunk)
+            if len(content) > maximum or time.monotonic() - started > 60:
+                raise ValueError('El adjunto supera el límite de tamaño o tiempo.')
+    finally:
+        response.close()
+    from io import BytesIO
+    from PIL import Image
+    try:
+        detected = Image.open(BytesIO(content)).format
+        response_type = {'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp','GIF':'image/gif'}.get(detected, response_type)
+    except Exception:
+        if content.startswith(b'%PDF-'):
+            response_type = 'application/pdf'
+    extension = {'image/jpeg': '.jpg', 'audio/ogg': '.ogg', 'application/ogg': '.ogg',
+                 'audio/mp4': '.m4a', 'audio/mpeg': '.mp3', 'audio/x-wav': '.wav'}.get(response_type)
+    extension = extension or mimetypes.guess_extension(response_type) or Path(urlparse(final_url).path).suffix[:12]
+    name = Path(attachment.original_name).name or f'meta-{attachment.id}{extension}'
+    attachment.mime_type = response_type
     attachment.size = len(content)
     from django.core.files.uploadedfile import SimpleUploadedFile
     from .attachment_validation import validate_chat_upload
@@ -214,7 +270,8 @@ def download_meta_attachment(self, attachment_id):
     attachment.original_name = name
     attachment.metadata = {**attachment.metadata, 'sha256': hashlib.sha256(content).hexdigest(),
                            'channel': attachment.message.session.channel, 'state': 'stored'}
-    attachment.file.save(name, ContentFile(bytes(content)), save=False)
+    import uuid
+    attachment.file.save(uuid.uuid4().hex + Path(name).suffix, ContentFile(bytes(content)), save=False)
     attachment.save(update_fields=['file', 'mime_type', 'size', 'metadata', 'original_name'])
     publish_crm_event('attachment.ready', session_id=attachment.message.session_id, message_id=attachment.message_id)
     return {'attachment_id': attachment.id, 'size': attachment.size}
@@ -436,7 +493,7 @@ def _generate_bot_reply(user_message_id):
             from .assignment import assign_session_automatically
             if session.assigned_to_id is None:
                 assign_session_automatically(session)
-            publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id)
+            transaction.on_commit(lambda: publish_crm_event('session.pending', session_id=session.id, message_id=user_message.id))
     try:
         dispatch_outbound_message(reply)
     except Exception:
@@ -464,10 +521,11 @@ def recover_stalled_chat_tasks():
         count = int(message.metadata.get('recovery_attempts', 0))
         if count >= 2:
             ChatMessage.objects.filter(pk=message.pk).update(status='failed', bot_processing_at=None)
+            publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
             continue
         ChatMessage.objects.filter(pk=message.pk).update(status='queued', bot_processing_at=None,
             metadata={**message.metadata, 'recovery_attempts': count + 1})
-        generate_omnichannel_bot_reply.delay(message.pk)
+        enqueue_bot_reply(message.pk)
         recovered += 1
     # Sending without confirmation may have reached Meta. Never replay that automatically.
     for message in ChatMessage.objects.filter(direction='outbound', status='processing', created_at__lt=cutoff):
