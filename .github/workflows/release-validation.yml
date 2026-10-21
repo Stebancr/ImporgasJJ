@@ -1,0 +1,44 @@
+name: Development release validation
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production backend image
+        run: docker compose -f docker-compose.ci.yml build backend
+      - name: Validate migrations and PostgreSQL regression suite
+        run: |
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py makemigrations --check --dry-run
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py migrate --plan
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py migrate --noinput
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py showmigrations
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py test --noinput
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint, typecheck, build and dependency audit in Docker
+        run: >-
+          docker run --rm -v "$PWD/frontend_U:/app" -w /app node:20
+          sh -c 'npm ci --legacy-peer-deps && npm run lint && npx tsc --noEmit && npm run build && npm audit --omit=dev'
+  whatsapp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build gateway without customer sessions
+        run: |
+          export CRM_INTERNAL_SERVICE_TOKEN="$(openssl rand -hex 32)"
+          docker run --rm -v "$PWD/whatsapp-gateway:/app" -w /app \
+            -e CRM_INTERNAL_SERVICE_TOKEN -e CRM_API_URL=http://backend.invalid \
+            -e WHATSAPP_GATEWAY_ENV=test -e TCC_API_TOKEN= -e TCC_PRODUCTION_API_TOKEN= \
+            node:22 sh -c 'npm ci && npm test && npm run build'
