@@ -27,6 +27,11 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# SMTP uses Python/OpenSSL's system trust store, not Requests' certifi bundle.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 EXPOSE 8000

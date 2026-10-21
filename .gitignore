@@ -20,6 +20,8 @@ whatsapp-gateway/auth/
 whatsapp-gateway/media/
 backups/
 .artifacts/
+.local-certs/
+BACKEND/certs/local/
 .codex-pre-fix-*/
 docs/
 **/docs/

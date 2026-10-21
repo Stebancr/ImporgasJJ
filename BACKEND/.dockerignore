@@ -11,3 +11,5 @@ media/
 staticfiles/
 output/
 venv/
+certs/local/
+.local-certs/
