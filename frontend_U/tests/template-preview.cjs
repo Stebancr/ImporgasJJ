@@ -43,7 +43,7 @@ const assert=require('node:assert/strict')
   }
   for(const width of [1280,768,390]){
    await page.setViewportSize({width,height:1000})
-   assert(await page.getByRole('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth),`dialog overflow ${channel} ${width}`)
+   assert(await page.getByRole('region',{name:'Administración de plantillas'}).evaluate(el=>el.scrollWidth<=el.clientWidth),`page overflow ${channel} ${width}`)
    assert(await preview.evaluate(el=>el.scrollWidth<=el.clientWidth),`preview overflow ${channel} ${width}`)
   }
   await page.getByRole('listbox').waitFor({state:'hidden'})
@@ -62,7 +62,7 @@ const assert=require('node:assert/strict')
   await page.setViewportSize({width,height:1000})
   assert(await page.getByRole('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth),`editor overflow ${width}`)
  }
- await page.getByRole('button',{name:'Cancelar',exact:true}).click()
+ await page.getByRole('button',{name:'Cancelar',exact:true}).click(); await page.getByRole('button',{name:'Descartar cambios',exact:true}).click()
  await page.getByRole('button',{name:pdf.name,exact:true}).click()
  await preview.getByText('Informe.pdf',{exact:true}).waitFor()
  await preview.getByText('No se pudo mostrar el adjunto. El archivo sigue asociado a la plantilla.').waitFor()

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Box, Button, Chip, Dialog, DialogContent, DialogTitle, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import api from '../services/admin_api'
@@ -23,12 +23,18 @@ const example=(text:string)=>text.replace(/{{\s*([a-z_]+)\s*}}/g,(_,key)=>sample
 type Draft = { name: string; category: string; text: string; channels: string[]; active: boolean; id?: number; attachment_url?: string; attachment_metadata?: QuickReply['attachment_metadata'] }
 const empty: Draft = { name: '', category: '', text: '', channels: ['whatsapp_web', 'facebook', 'instagram', 'ecommerce'], active: true }
 
-export default function TemplateDialog({ open, onClose, session, initialText = '', onInsert }: {
+export default function TemplateDialog({ open, onClose, session, initialText = '', onInsert, presentation='dialog' }: {
   open: boolean; onClose: () => void; session?: ChatSession; initialText?: string
+  presentation?: 'dialog' | 'page'
   onInsert?: (text: string, template: QuickReply, values: Record<string, string>, file?: File) => void
 }) {
   const cache = useQueryClient()
+  const page=presentation==='page'
+  const opener=useRef<HTMLElement|null>(null)
+  const initialDraft=useRef('')
+  const [confirmDiscard,setConfirmDiscard]=useState(false)
   const contentRef = useRef<HTMLTextAreaElement>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
   const { user } = useAuth()
   const canManage = user?.tipo_usuario === 4
   const [search, setSearch] = useState('')
@@ -38,6 +44,9 @@ export default function TemplateDialog({ open, onClose, session, initialText = '
   const [values, setValues] = useState<Record<string, string>>({})
   const [preview, setPreview] = useState('')
   const [draft, setDraft] = useState<Draft | null>(null)
+  const openDraft=(value:Draft)=>{opener.current=document.activeElement as HTMLElement;initialDraft.current=JSON.stringify(value);setDraft(value);setFile(undefined);setError('');setNotice('');setFieldErrors({});setConfirmDiscard(false)}
+  const closeDraft=()=>{setDraft(null);setFile(undefined);setSelected(null);setPreview('');setVariable('');setConfirmDiscard(false);setError('');setFieldErrors({});requestAnimationFrame(()=>opener.current?.focus())}
+  const requestCloseDraft=()=>{if(busyRef.current)return;if(draft&&(JSON.stringify(draft)!==initialDraft.current||file))setConfirmDiscard(true);else closeDraft()}
   const [file, setFile] = useState<File>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -49,10 +58,14 @@ export default function TemplateDialog({ open, onClose, session, initialText = '
   const [notice,setNotice]=useState('')
   const [previewChannel,setPreviewChannel]=useState('whatsapp_web')
   const [deleting,setDeleting]=useState<QuickReply|null>(null)
-  const list = useQuery({ queryKey: ['crm-templates', search, session?.channel], enabled: open,
+  const [listPage,setListPage]=useState(1)
+  useEffect(()=>{setListPage(1)},[search,channel,status,category,view])
+  useEffect(()=>{if(!open){setDraft(null);setSelected(null);setFile(undefined);setError('');setConfirmDiscard(false)}},[open])
+  const list = useQuery({ queryKey: ['crm-templates', search, session?.channel], enabled: open, retry:false, refetchOnWindowFocus:false,
     queryFn: async () => (await api.get<QuickReply[]>('/crm-chat/templates/', { params: { search, channel: session?.channel } })).data })
   const items = (list.data || []).filter(t => (!channel||t.channels.includes(channel))&&(!status||String(t.active)===status)&&(!category || JSON.stringify(t.category) === category) && (view !== 'favorites' || t.favorite) && (view !== 'recent' || t.last_used_at))
     .sort((a, b) => view === 'recent' ? (b.last_used_at || '').localeCompare(a.last_used_at || '') : a.name.localeCompare(b.name))
+  useEffect(()=>{setListPage(n=>Math.min(n,Math.max(1,Math.ceil(items.length/10))))},[items.length])
   const run = async (fn: () => Promise<void>) => {
     if(busyRef.current)return
     busyRef.current=true;setBusy(true);setError('');setNotice('');setFieldErrors({})
@@ -81,7 +94,7 @@ export default function TemplateDialog({ open, onClose, session, initialText = '
     data.append('channels', JSON.stringify(draft.channels)); data.append('active', String(draft.active))
     if (file) data.append('file', file)
     await api.post(`/crm-chat/templates/${draft.id ? `${draft.id}/` : ''}`, data, { headers: { 'Content-Type': undefined } })
-    setDraft(null); setFile(undefined); refresh()
+    closeDraft(); await refresh()
   })
   const select = (template: QuickReply) => {
     setSelected(template); setPreview(''); setError('')
@@ -99,17 +112,9 @@ export default function TemplateDialog({ open, onClose, session, initialText = '
     }
     onInsert(preview, selected, values, attachment); onClose(); setSelected(null); setPreview('')
   })
-  return <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth={draft ? 'lg' : 'md'}>
-    <DialogTitle>Plantillas internas del CRM</DialogTitle>
-    <DialogContent>
-      <Alert severity="info" sx={{ mb: 2 }}>Respuestas reutilizables. Insertar prepara un borrador editable; no envía mensajes ni utiliza plantillas de pago de Meta.</Alert>
-      {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
-      {notice&&<Alert severity="success" sx={{mb:1}}>{notice}</Alert>}
-      {list.isError&&<Alert severity="error">No fue posible cargar las plantillas. <Button onClick={()=>list.refetch()}>Reintentar</Button></Alert>}
-      {list.isLoading&&<Typography role="status">Cargando plantillas…</Typography>}
-      {draft ? <Box sx={{display:'grid',gridTemplateColumns:{xs:'minmax(0,1fr)',md:'minmax(0,1fr) minmax(0,.9fr)'},gap:3,alignItems:'start'}}><Stack spacing={2} sx={{minWidth:0}}>
+  const editor = draft ? <Box sx={{display:'grid',gridTemplateColumns:{xs:'minmax(0,1fr)',md:'minmax(0,1fr) minmax(0,.9fr)'},gap:3,alignItems:'start'}}><Stack spacing={2} sx={{minWidth:0}}>
         <Typography variant="h6">{draft.id?'Editar plantilla':'Nueva plantilla'}</Typography>
-        <TextField required label="Nombre" value={draft.name} slotProps={{htmlInput:{maxLength:120}}} error={!!fieldErrors.name||!draft.name.trim()} helperText={fieldErrors.name||(!draft.name.trim()?'Escribe un nombre para la plantilla.':'')} onChange={e => {setFieldErrors({...fieldErrors,name:''});setDraft({ ...draft, name: e.target.value })}} />
+        <TextField required label="Nombre" inputRef={nameRef} autoFocus value={draft.name} slotProps={{htmlInput:{maxLength:120}}} error={!!fieldErrors.name||!draft.name.trim()} helperText={fieldErrors.name||(!draft.name.trim()?'Escribe un nombre para la plantilla.':'')} onChange={e => {setFieldErrors({...fieldErrors,name:''});setDraft({ ...draft, name: e.target.value })}} />
         <TextField label="Categoría" error={!!fieldErrors.category} helperText={fieldErrors.category} value={draft.category} onChange={e => setDraft({ ...draft, category: e.target.value })} />
         <TextField select error={!!fieldErrors.channels||!draft.channels.length} helperText={fieldErrors.channels||(!draft.channels.length?'Selecciona al menos un canal.':'')} slotProps={{ select: { multiple: true } }} label="Canales" value={draft.channels} onChange={e => setDraft({ ...draft, channels: typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value })}>{channels.map(c => <MenuItem key={c} value={c}>{channelLabels[c]}</MenuItem>)}</TextField>
         <MessageFormatToolbar input={contentRef} value={draft.text} onChange={text=>setDraft({...draft,text})}/>
@@ -120,25 +125,27 @@ export default function TemplateDialog({ open, onClose, session, initialText = '
         {file && <Chip label={file.name} onDelete={() => setFile(undefined)} />}
         {fieldErrors.file&&<Alert severity="error">{fieldErrors.file}</Alert>}
         <TextField select label="Estado de la plantilla" value={String(draft.active)} onChange={e=>setDraft({...draft,active:e.target.value==='true'})}><MenuItem value="true">Activa</MenuItem><MenuItem value="false">Inactiva</MenuItem></TextField>
-        <Stack direction="row" spacing={1}><Button disabled={busy} onClick={() => setDraft(null)}>Cancelar</Button><Button variant="contained" disabled={busy || !draft.name.trim() || !draft.text.trim() || invalidText(draft.text)||tooLong||!draft.channels.length} onClick={save}>{busy?'Guardando…':'Guardar plantilla'}</Button></Stack>
-      </Stack><Box sx={{minWidth:0,position:{md:'sticky'},top:0}}><TemplateMessagePreview text={example(draft.text)} channels={draft.channels} channel={previewChannel} onChannelChange={setPreviewChannel} file={file} attachment={draft.attachment_url ? {url:draft.attachment_url,...draft.attachment_metadata} : undefined} example />{invalidText(draft.text)&&<Alert severity="warning" sx={{mt:1}}>Completa las variables marcadas en el contenido antes de guardar.</Alert>}</Box></Box> : <>
+        <Stack direction="row" spacing={1}><Button disabled={busy} onClick={requestCloseDraft}>Cancelar</Button><Button variant="contained" disabled={busy || !draft.name.trim() || !draft.text.trim() || invalidText(draft.text)||tooLong||!draft.channels.length} onClick={save}>{busy?'Guardando…':'Guardar plantilla'}</Button></Stack>
+      </Stack><Box sx={{minWidth:0,position:{md:'sticky'},top:0}}><TemplateMessagePreview text={example(draft.text)} channels={draft.channels} channel={previewChannel} onChannelChange={setPreviewChannel} file={file} attachment={draft.attachment_url ? {url:draft.attachment_url,...draft.attachment_metadata} : undefined} example />{invalidText(draft.text)&&<Alert severity="warning" sx={{mt:1}}>Completa las variables marcadas en el contenido antes de guardar.</Alert>}</Box></Box> : null
+  const listing = <>
         <Stack direction={{ xs: 'column', sm: 'row' }} sx={{ gap: 1, mb: 2,flexWrap:'wrap' }}>
           {!session&&<TextField select size="small" label="Canal" sx={{minWidth:140}} value={channel} onChange={e=>setChannel(e.target.value)}><MenuItem value="">Todos</MenuItem>{channels.map(c=><MenuItem key={c} value={c}>{channelLabels[c]}</MenuItem>)}</TextField>}
           <TextField select size="small" label="Estado" sx={{minWidth:130}} value={status} onChange={e=>setStatus(e.target.value)}><MenuItem value="">Todos</MenuItem><MenuItem value="true">Activas</MenuItem><MenuItem value="false">Inactivas</MenuItem></TextField>
           <TextField size="small" label="Buscar por nombre o texto" value={search} onChange={e => setSearch(e.target.value)} />
           <TextField select size="small" label="Categoría" value={category} onChange={e => setCategory(e.target.value)} sx={{ minWidth: 140 }}><MenuItem value="">Todas</MenuItem>{[...new Set((list.data || []).map(t => t.category))].map(c => <MenuItem key={c} value={JSON.stringify(c)}>{c || 'Sin categoría'}</MenuItem>)}</TextField>
           <TextField select size="small" value={view} onChange={e => setView(e.target.value)}><MenuItem value="all">Todas</MenuItem><MenuItem value="favorites">Favoritas</MenuItem><MenuItem value="recent">Recientes</MenuItem></TextField>
-          {canManage && <Button variant="contained" onClick={() => { setPreviewChannel('whatsapp_web');setDraft({ ...empty, text: initialText }); setFile(undefined) }}>Crear plantilla</Button>}
+          {canManage && <Button variant="contained" onClick={() => { setPreviewChannel('whatsapp_web');openDraft({ ...empty, text: initialText }) }}>{page?'Nueva plantilla':'Crear plantilla'}</Button>}
         </Stack>
-        <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>{items.map(t => <Box key={t.id} sx={{ p: 1, borderBottom: '1px solid #ddd' }}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}><Button onClick={() => select(t)}>{t.name}</Button><Chip size="small" label={t.category || 'Sin categoría'} />{!t.active && <Chip label="Inactiva" size="small" />}<Button onClick={() => run(async () => { await api.post(`/crm-chat/templates/${t.id}/favorite/`); refresh() })}>{t.favorite ? '★' : '☆'}</Button>{canManage && <><Button onClick={() => { setDraft(t); setFile(undefined) }}>Editar</Button><Button onClick={() => run(async () => { await api.patch(`/crm-chat/templates/${t.id}/`, { active: !t.active }); refresh() })}>{t.active ? 'Desactivar' : 'Activar'}</Button></>}</Stack>
+        <Box sx={{ maxHeight: page?'none':300, overflowY: 'auto' }}>{items.slice((listPage-1)*10,listPage*10).map(t => <Box key={t.id} sx={{ p: 1, borderBottom: '1px solid #ddd' }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}><Button onClick={() => select(t)}>{t.name}</Button><Chip size="small" label={t.category || 'Sin categoría'} />{!t.active && <Chip label="Inactiva" size="small" />}<Button onClick={() => run(async () => { await api.post(`/crm-chat/templates/${t.id}/favorite/`); refresh() })}>{t.favorite ? '★' : '☆'}</Button>{canManage && <><Button onClick={() => { openDraft({...t,channels:[...t.channels]}) }}>Editar</Button><Button onClick={() => run(async () => { await api.patch(`/crm-chat/templates/${t.id}/`, { active: !t.active }); refresh() })}>{t.active ? 'Desactivar' : 'Activar'}</Button></>}</Stack>
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{t.text}</Typography>
           <Stack direction="row" sx={{my:1,gap:1,flexWrap:"wrap"}}>{t.channels.map(c=><Chip key={c} size="small" label={channelLabels[c]||c}/>)}<Chip size="small" color={t.active?'success':'default'} label={t.active?'Activa':'Inactiva'}/></Stack>
-          {canManage&&<Stack direction="row" spacing={1}><Button disabled={busy} onClick={()=>run(async()=>{const response=await api.post<QuickReply>(`/crm-chat/templates/${t.id}/duplicate/`);await refresh();setDraft(response.data);setFile(undefined)})}>Duplicar</Button><Button color="error" disabled={busy} onClick={()=>setDeleting(t)}>Eliminar</Button></Stack>}
+          {canManage&&<Stack direction="row" spacing={1}><Button disabled={busy} onClick={()=>run(async()=>{const response=await api.post<QuickReply>(`/crm-chat/templates/${t.id}/duplicate/`);await refresh();openDraft(response.data)})}>Duplicar</Button><Button color="error" disabled={busy} onClick={()=>setDeleting(t)}>Eliminar</Button></Stack>}
           <Typography variant="caption">{t.author_name} · {new Date(t.updated_at).toLocaleString('es-CO')} · {t.channels.join(', ')}</Typography>
           {t.attachment_url && <Typography variant="caption" sx={{ display: 'block' }}>Adjunto: {t.attachment_metadata.name}</Typography>}
         </Box>)}</Box>
-        {!list.isLoading && !items.length && <Typography>No hay plantillas para estos filtros.</Typography>}
+        {!list.isLoading && !list.isError && !items.length && <Typography>No hay plantillas para estos filtros.</Typography>}
+        {items.length>10&&<Stack direction="row" spacing={2} sx={{my:2,alignItems:'center'}}><Button disabled={listPage<=1} onClick={()=>setListPage(n=>n-1)}>Anterior</Button><Typography>Página {listPage} de {Math.ceil(items.length/10)}</Typography><Button disabled={listPage*10>=items.length} onClick={()=>setListPage(n=>n+1)}>Siguiente</Button></Stack>}
         {selected&&!session&&<Box sx={{mt:2}}><Typography sx={{mb:1,fontWeight:700}}>Vista previa: {selected.name}</Typography><TemplateMessagePreview text={example(selected.text)} channels={selected.channels} channel={previewChannel} onChannelChange={setPreviewChannel} attachment={selected.attachment_url?{url:selected.attachment_url,...selected.attachment_metadata}:undefined} example /></Box>}
         {selected && session && <Stack spacing={1} sx={{ mt: 2 }}>
           <Typography sx={{ fontWeight: 700 }}>Completar: {selected.name}</Typography>
@@ -146,9 +153,23 @@ export default function TemplateDialog({ open, onClose, session, initialText = '
           <TemplateMessagePreview text={preview || selected.text.replace(/{{\s*([a-z_]+)\s*}}/g,(token,key)=>values[key]?.trim() || token)} channels={[session.channel]} channel={session.channel} attachment={selected.attachment_url?{url:selected.attachment_url,...selected.attachment_metadata}:undefined} />
           <Button disabled={busy} onClick={insert}>{preview ? 'Insertar y revisar en el chat' : 'Vista previa final'}</Button>
         </Stack>}
-      </>}
-      <Button disabled={busy} sx={{ mt: 2 }} onClick={onClose}>Cerrar</Button>
-      <Dialog open={!!deleting} onClose={busy?undefined:()=>setDeleting(null)} aria-labelledby="delete-template-title"><DialogTitle id="delete-template-title">Eliminar plantilla</DialogTitle><DialogContent><Typography>¿Eliminar «{deleting?.name}»? Los mensajes enviados se conservarán.</Typography><Stack direction="row" sx={{mt:2,gap:1}}><Button disabled={busy} onClick={()=>setDeleting(null)}>Cancelar</Button><Button color="error" variant="contained" disabled={busy} onClick={()=>run(async()=>{await api.delete(`/crm-chat/templates/${deleting!.id}/`);setDeleting(null);setSelected(null);await refresh()})}>Eliminar plantilla</Button></Stack></DialogContent></Dialog>
-    </DialogContent>
-  </Dialog>
+</>
+  const alerts=<>{error&&<Alert severity="error" sx={{mb:1}}>{error}</Alert>}{notice&&<Alert severity="success" sx={{mb:1}}>{notice}</Alert>}</>
+  const listStatus=<>{list.isError&&<Alert severity="error">No fue posible cargar las plantillas. <Button onClick={()=>list.refetch()}>Reintentar listado</Button></Alert>}{list.isLoading&&<Typography role="status">Cargando plantillas…</Typography>}</>
+  const discardWarning=confirmDiscard&&<Alert severity="warning" sx={{mb:2}}>Hay cambios sin guardar. ¿Quieres descartarlos?<Stack direction="row" spacing={1}><Button onClick={()=>setConfirmDiscard(false)}>Seguir editando</Button><Button color="error" onClick={closeDraft}>Descartar cambios</Button></Stack></Alert>
+  const management=<>{!draft||page? <>{!draft&&alerts}{listStatus}{listing}</>:null}</>
+  const deleteDialog=      <Dialog open={!!deleting} onClose={busy?undefined:()=>setDeleting(null)} aria-labelledby="delete-template-title"><DialogTitle id="delete-template-title">Eliminar plantilla</DialogTitle><DialogContent><Typography>¿Eliminar «{deleting?.name}»? Los mensajes enviados se conservarán.</Typography><Stack direction="row" sx={{mt:2,gap:1}}><Button disabled={busy} onClick={()=>setDeleting(null)}>Cancelar</Button><Button color="error" variant="contained" disabled={busy} onClick={()=>run(async()=>{await api.delete(`/crm-chat/templates/${deleting!.id}/`);setDeleting(null);setSelected(null);await refresh()})}>Eliminar plantilla</Button></Stack></DialogContent></Dialog>
+  if(page)return <Box component="section" aria-label="Administración de plantillas" sx={{minWidth:0}}>
+    <Typography variant="h4" component="h1" sx={{fontWeight:700,mb:1}}>Plantillas</Typography>
+    <Typography color="text.secondary" sx={{mb:3}}>Crea y organiza respuestas reutilizables para tus conversaciones.</Typography>
+    {management}
+    <Dialog open={!!draft} onClose={busy?undefined:requestCloseDraft} slotProps={{transition:{onEntered:()=>nameRef.current?.focus()}}} fullWidth maxWidth="lg" aria-labelledby="template-editor-title"><DialogTitle id="template-editor-title">{draft?.id?'Editar plantilla':'Nueva plantilla'}</DialogTitle><DialogContent>{alerts}{discardWarning}{editor}</DialogContent></Dialog>
+    {deleteDialog}
+  </Box>
+  return <Dialog open={open} onClose={busy?undefined:()=>{if(draft)requestCloseDraft();else onClose()}} fullWidth maxWidth={draft?'lg':'md'}>
+    <DialogTitle>Plantillas internas del CRM</DialogTitle><DialogContent>
+    <Alert severity="info" sx={{mb:2}}>Respuestas reutilizables. Insertar prepara un borrador editable; no envía mensajes ni utiliza plantillas de pago de Meta.</Alert>
+    {draft?<>{alerts}{discardWarning}{editor}</>:management}
+    <Button disabled={busy} sx={{mt:2}} onClick={()=>{if(draft)requestCloseDraft();else onClose()}}>Cerrar</Button>{deleteDialog}
+    </DialogContent></Dialog>
 }

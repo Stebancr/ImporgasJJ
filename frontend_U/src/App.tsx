@@ -131,6 +131,9 @@ function App() {
             <ScrollToTop />
             <Routes>
               <Route path="/admin/*" element={<div className="admin-theme"><AdminRoutes /></div>} />
+              <Route element={<AdminAuthProvider><AdminProtectedRoute allowedRoles={['admin']}><div className="admin-theme"><DashboardLayout /></div></AdminProtectedRoute></AdminAuthProvider>}>
+                <Route path="/chat/plantillas" element={<Suspense fallback={<CRMPageFallback />}><TemplatesPage /></Suspense>} />
+              </Route>
               {/* Compatibilidad temporal con enlaces administrativos existentes. */}
               <Route path="/dashboard/products" element={<Navigate to="/admin/productos" replace />} />
               <Route path="/dashboard/categories" element={<Navigate to="/admin/categorias" replace />} />
