@@ -14,7 +14,7 @@ from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone
 from .models import Delivery
-from .configuration import public_url, validate_smtp
+from .configuration import public_url, validate_smtp, sender_for, VisitSenderConfigurationError
 from .documents import ensure_document, document_link, cop
 
 logger = logging.getLogger(__name__)
@@ -100,13 +100,14 @@ def send(pk):
         validate_email(delivery.recipient)
         if settings.DEBUG and delivery.recipient.lower() not in [v.lower() for v in settings.TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS]:
             raise ValueError('recipient_not_authorized_in_dev')
+        from_email=sender_for(delivery.kind)
         validate_smtp()
         ensure_document(delivery,source)
         context=context_for(delivery,source)
         message_id=f'<{delivery.pk}@imporgasjj.com>'
         delivery.message_id=message_id;delivery.save(update_fields=['message_id'])
         message=EmailMultiAlternatives(f'{context["title"]} — {context["number"]}',
-            render_to_string('transactional_mail/message.txt',context),settings.DEFAULT_FROM_EMAIL,[delivery.recipient],
+            render_to_string('transactional_mail/message.txt',context),from_email,[delivery.recipient],
             reply_to=[settings.TRANSACTIONAL_REPLY_TO],headers={'Message-ID':message_id})
         message.attach_alternative(render_to_string('transactional_mail/message.html',context),'text/html')
         logo=Path(settings.BASE_DIR)/'AppVisits/assets/logo_imporgas.png'
@@ -126,6 +127,7 @@ def send(pk):
             'smtp_authentication_failed' if isinstance(exc,smtplib.SMTPAuthenticationError) else
             'smtp_recipient_rejected' if isinstance(exc,smtplib.SMTPRecipientsRefused) else
             'smtp_sender_rejected' if isinstance(exc,smtplib.SMTPSenderRefused) else
+            'visit_sender_configuration_invalid_SERVER_EMAIL_APLICACION' if isinstance(exc,VisitSenderConfigurationError) else
             'smtp_configuration_invalid' if isinstance(exc,ImproperlyConfigured) else
             'recipient_invalid' if isinstance(exc,ValidationError) else
             'document_or_event_not_ready' if stage=='prepare' else 'smtp_temporarily_unavailable')

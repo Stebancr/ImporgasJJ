@@ -618,7 +618,7 @@ class VisitCompletionTests(APITestCase):
         self.assertTrue(self.visit.pdf_final)
         from transactional_mail.models import Delivery
         from transactional_mail.service import send
-        with override_settings(TRANSACTIONAL_EMAIL_ENABLED=True,DEBUG=True,FRONTEND_PUBLIC_URL='http://localhost',PUBLIC_API_URL='http://localhost/api',TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=['cliente@example.com']):
+        with override_settings(SERVER_EMAIL_APLICACION='technical@example.invalid',TRANSACTIONAL_EMAIL_ENABLED=True,DEBUG=True,FRONTEND_PUBLIC_URL='http://localhost',PUBLIC_API_URL='http://localhost/api',TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=['cliente@example.com']):
             self.assertTrue(send(Delivery.objects.get(kind='visit',object_id=self.visit.pk).pk))
         self.visit.refresh_from_db()
         self.assertIsNotNone(self.visit.correo_completada_en)

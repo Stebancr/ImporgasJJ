@@ -23,6 +23,7 @@ from .configuration import public_url, validate_smtp
 
 
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',TRANSACTIONAL_EMAIL_ENABLED=True,
+    SERVER_EMAIL_APLICACION='technical@example.invalid',
     DEBUG=True,FRONTEND_PUBLIC_URL='http://localhost',PUBLIC_API_URL='http://localhost/api',
     TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS=['qa@example.invalid'])
 class TransactionalTests(APITestCase):

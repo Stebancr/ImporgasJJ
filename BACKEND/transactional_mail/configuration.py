@@ -1,8 +1,25 @@
-from email.utils import parseaddr
+from email.utils import parseaddr, formataddr
 import ipaddress
 from urllib.parse import urlsplit
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+
+
+class VisitSenderConfigurationError(ImproperlyConfigured):
+    pass
+
+
+def sender_for(kind):
+    if kind != 'visit':
+        return settings.DEFAULT_FROM_EMAIL
+    address = getattr(settings, 'SERVER_EMAIL_APLICACION', '')
+    try:
+        validate_email(address)
+    except ValidationError:
+        raise VisitSenderConfigurationError('Configura SERVER_EMAIL_APLICACION con una dirección de correo válida.') from None
+    return formataddr(('Servicio Técnico ImporGas JJ', address), charset='utf-8')
 
 
 def validate_smtp():
