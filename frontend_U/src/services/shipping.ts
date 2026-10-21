@@ -67,9 +67,14 @@ function cities():Promise<TCCCity[]> {
 }
 let activeEstimates=0
 const estimateQueue:Array<()=>void>=[]
-type EstimateInput={items:{product_id:number;quantity:number}[];tcc_city_code:string}
+type EstimateInput={items:{product_id:number;quantity:number}[];tcc_city_code?:string;address_id?:number}
 const recentEstimates=new Map<string,ShippingCalculation>()
-const estimateKey=(value:EstimateInput)=>JSON.stringify([value.tcc_city_code,[...value.items].sort((a,b)=>a.product_id-b.product_id)])
+const estimateKey=(value:EstimateInput)=>{
+  let owner='guest'
+  try{owner=JSON.parse(localStorage.getItem('user')||'null')?.id||'guest'}catch{/* No trusted account. */}
+  return JSON.stringify([owner,value.address_id??null,value.tcc_city_code,[...value.items].sort((a,b)=>a.product_id-b.product_id)])
+}
+export function clearDeliveryEstimates(){recentEstimates.clear()}
 /** Informational only; checkout always requests its own server quote and never charges this value. */
 export function previousEstimate(value:EstimateInput):ShippingCalculation|null {
   const result=recentEstimates.get(estimateKey(value))
@@ -77,13 +82,14 @@ export function previousEstimate(value:EstimateInput):ShippingCalculation|null {
 }
 /** Bound catalogue traffic; aborted cards leave the queue without making an HTTP request. */
 async function estimate(payload:EstimateInput&{force?:boolean},signal?:AbortSignal):Promise<ShippingCalculation> {
+  const cacheKey=estimateKey(payload)
   if(activeEstimates>=3)await new Promise<void>(resolve=>estimateQueue.push(resolve))
   else activeEstimates++
   try {
     if(signal?.aborted)throw new DOMException('Solicitud cancelada','AbortError')
     const result=await api.post<ShippingCalculation>('/shipping/estimate',payload,signal)
     if(recentEstimates.size>=100)recentEstimates.delete(recentEstimates.keys().next().value!)
-    recentEstimates.set(estimateKey(payload),result)
+    if(!signal?.aborted&&estimateKey(payload)===cacheKey)recentEstimates.set(cacheKey,result)
     return result
   } finally {const next=estimateQueue.shift();if(next)next();else activeEstimates--}
 }

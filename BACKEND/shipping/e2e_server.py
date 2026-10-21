@@ -55,8 +55,8 @@ def main():
         with override_settings(**overrides), patch('shipping.tcc.requests.post', side_effect=carrier), \
                 patch('shipping.services.enqueue_shipment', side_effect=lambda pk: create_shipment.run(pk)), \
                 patch('ecommerce.views.send_order_payment_confirmation'):
-            for username, role in [('tcc-e2e-client', 0), ('tcc-e2e-admin', 4)]:
-                profile = Usuario.objects.create(cedula=username, nombre_completo='TCC QA', correo=username+'@example.invalid',
+            for username, role in [('tcc-e2e-client', 0), ('tcc-e2e-admin', 4), ('dest@qa.invalid', 0)]:
+                profile = Usuario.objects.create(cedula=username, nombre_completo='TCC QA', correo=username if '@' in username else username+'@example.invalid',
                     telefono='3000000000', terms_version=CURRENT_TERMS_VERSION, terms_accepted_at=timezone.now())
                 credential = Credenciales.objects.create(usuario=username, usuario_rel=profile, estado=1, tipo_usuario=role)
                 credential.set_password('TCC-synthetic-fixture-only'); credential.save()

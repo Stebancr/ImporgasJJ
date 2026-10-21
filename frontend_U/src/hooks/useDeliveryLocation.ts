@@ -3,46 +3,58 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import addressesService from '../services/addresses'
 import { shippingDestinationKey, shippingService, type TCCCity } from '../services/shipping'
+import {useDeliveryAddresses} from './useDeliveryAddresses'
+import {useDeliveryCatalog} from './useDeliveryCatalog'
 
 export const deliveryLocationChanged = 'delivery:location-changed'
 export function notifyDeliveryLocation() { window.dispatchEvent(new Event(deliveryLocationChanged)) }
 
-/** Validate stored codes against the carrier catalogue; never persist prices or coordinates. */
-export async function resolveDeliveryLocation(userId: string | undefined): Promise<TCCCity | null> {
-  const catalog = await shippingService.cities()
-  const valid = (code: unknown) => catalog.find(city => city.code === code) || null
-  let stored: {tcc_city_code?: string; manual_location?: boolean} | null = null
-  try {
-    stored = JSON.parse(sessionStorage.getItem(shippingDestinationKey(userId || 'guest')) || 'null')
-  } catch { /* Storage is optional. */ }
-  // A deliberate change by this customer overrides automatic defaults for this session.
-  if (stored?.manual_location) return valid(stored.tcc_city_code)
-  if (userId) {
-    const addresses = await addressesService.getAll()
-    const defaultAddress = addresses.find(address => address.is_default && valid(address.tcc_city_code))
-    if (defaultAddress) return valid(defaultAddress.tcc_city_code)
-    const previous = await shippingService.destination()
-    if (valid(previous.destination?.code)) return valid(previous.destination?.code)
+export function addressLocation(address:import('../services/addresses').UserAddress,catalog:TCCCity[]){
+  if(address.tcc_city_code)return catalog.find(city=>city.code===address.tcc_city_code)||null
+  const normalize=(text:string)=>text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'')
+  const municipality=(text:string)=>normalize(text).replace(/^santiagodecali$/,'cali')
+  const matches=catalog.filter(city=>municipality(city.city)===municipality(address.city)&&normalize(city.department)===normalize(address.department))
+  return matches.length===1?matches[0]:null
+}
+
+export function readDeliverySelection(userId:string|undefined,catalog:TCCCity[],addresses:import('../services/addresses').UserAddress[]=[]){
+  const valid=(code:unknown)=>catalog.find(city=>city.code===code)||null
+  let stored:{address_id?:number;tcc_city_code?:string;manual_location?:boolean}|null=null
+  try{stored=JSON.parse(sessionStorage.getItem(shippingDestinationKey(userId||'guest'))||'null')}catch{/* Optional storage. */}
+  const chosen=userId?addresses.find(address=>address.id===stored?.address_id):undefined
+  if(chosen&&addressLocation(chosen,catalog))return {location:addressLocation(chosen,catalog),address:chosen}
+  if(stored?.manual_location&&!stored.address_id)return {location:valid(stored.tcc_city_code)}
+  const preferred=userId?addresses.find(address=>address.is_default&&addressLocation(address,catalog)):undefined
+  if(preferred)return {location:addressLocation(preferred,catalog),address:preferred}
+  if(valid(stored?.tcc_city_code))return {location:valid(stored?.tcc_city_code)}
+  if(userId){
+    try{const guest=JSON.parse(sessionStorage.getItem(shippingDestinationKey('guest'))||'null');return {location:valid(guest?.tcc_city_code)}}catch{/* Generic fallback only. */}
   }
-  if (valid(stored?.tcc_city_code)) return valid(stored?.tcc_city_code)
-  if (userId) {
-    try {
-      const guest = JSON.parse(sessionStorage.getItem(shippingDestinationKey('guest')) || 'null')
-      return valid(guest?.tcc_city_code)
-    } catch { /* No trusted fallback. */ }
-  }
-  return null
+  return {location:null}
+}
+
+/** Only municipalities are returned to catalogue cards; private addresses remain account scoped. */
+export async function resolveDeliveryLocation(userId:string|undefined):Promise<TCCCity|null>{
+  const catalog=await shippingService.cities()
+  const addresses=userId?await addressesService.getAll():[]
+  return readDeliverySelection(userId,catalog,addresses).location
 }
 
 export function useDeliveryLocation() {
   const { user, isLoading } = useAuth()
   const cache = useQueryClient()
-  const key = ['delivery-location', user?.id || 'guest']
+  const catalog=useDeliveryCatalog()
+  const addresses=useDeliveryAddresses()
+  const key = ['delivery-location', user?.id || 'guest',catalog.dataUpdatedAt,addresses.dataUpdatedAt]
   useEffect(() => {
     const update = () => { void cache.invalidateQueries({queryKey: ['delivery-location']}) }
     window.addEventListener(deliveryLocationChanged, update)
     return () => window.removeEventListener(deliveryLocationChanged, update)
   }, [cache])
-  return useQuery({queryKey: key, queryFn: () => resolveDeliveryLocation(user?.id), enabled: !isLoading,
+  return useQuery({queryKey: key, queryFn: () => {
+    if(catalog.error)throw catalog.error
+    if(user&&addresses.error)throw addresses.error
+    return readDeliverySelection(user?.id,catalog.data||[],addresses.data||[]).location
+  }, enabled: !isLoading&&!catalog.isPending&&(!user||!addresses.isPending),
     staleTime: 60000, retry: false})
 }

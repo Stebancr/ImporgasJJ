@@ -77,7 +77,7 @@ function CheckoutPage() {
     setRateNotice('')
     if(tccEnabled!==true||!destinationReady||addressEditor)return
     setShippingError('')
-    if(!form.email||!form.name||!form.phone||!form.address||!form.tcc_city_code){setQuoting(false);return}
+    if(!form.email||!form.name||!form.phone||!form.address||(!form.tcc_city_code&&!selectedAddressId)){setQuoting(false);return}
     setQuoting(true)
     const timer=setTimeout(()=>{
       shippingService.quote({force:quoteVersion>0,items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),
@@ -85,7 +85,7 @@ function CheckoutPage() {
         shipping_address:form.address,city:form.city,department:form.department,postal_code:form.postalCode,
         tcc_city_code:form.tcc_city_code,complement:form.complement,neighborhood:form.neighborhood,delivery_instructions:form.delivery_instructions},controller.signal)
         .then(value=>{if(active){
-          const estimated=previousEstimate({items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),tcc_city_code:form.tcc_city_code})
+          const estimated=previousEstimate({items:items.map(item=>({product_id:Number(item.product.id),quantity:item.quantity})),...(selectedAddressId?{address_id:selectedAddressId}:{tcc_city_code:form.tcc_city_code})})
           const previous=lastRate.current?.key===quoteKey?lastRate.current.total:estimated?.total
           if(previous!==undefined&&Number(previous)!==Number(value.total))setRateNotice('El costo de envío cambió respecto a la cotización anterior. Revisa el total actualizado antes de pagar.')
           lastRate.current={key:quoteKey,total:value.total}
@@ -149,7 +149,7 @@ function CheckoutPage() {
         }
       }catch{/* Invalid browser state is ignored. */}
       try {
-        const draft = user?.id ? JSON.parse(sessionStorage.getItem(shippingDestinationKey(user.id)) || sessionStorage.getItem(shippingDestinationKey('guest')) || 'null') : null
+        const draft = user?.id ? JSON.parse(sessionStorage.getItem(shippingDestinationKey(user.id)) || (!defaultAddr?sessionStorage.getItem(shippingDestinationKey('guest')):null) || 'null') : null
         if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
           if (draft.address_id) defaultAddr = data.find(addr => addr.id === draft.address_id) || defaultAddr
           else if (typeof draft.tcc_city_code === 'string') {

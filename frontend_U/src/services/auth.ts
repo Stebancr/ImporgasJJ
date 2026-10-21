@@ -86,7 +86,7 @@ export const authService = {
     if (stored) {
       const profile = await api.get<ProfileResponse>('/user/perfil')
       if (profile.estado !== 1) throw new Error('La cuenta no está activa')
-      const user = { ...stored, name: profile.nombre_completo, email: profile.correo || stored.email, phone: profile.telefono || '', is_active: true,
+      const user = { ...stored, id:String(profile.id), name: profile.nombre_completo, email: profile.correo || stored.email, phone: profile.telefono || '', is_active: true,
         usuario_rel: { nombre_completo: profile.nombre_completo, correo: profile.correo || stored.email, telefono: profile.telefono || '' },
         terms_version: profile.terms_version, terms_accepted_at: profile.terms_accepted_at, current_terms_version: profile.current_terms_version }
       localStorage.setItem('user', JSON.stringify(user))

@@ -1,4 +1,4 @@
-import {useRef,useState,useId,type FormEvent} from 'react'
+import {useRef,useState,useId,useEffect,type FormEvent} from 'react'
 import addressesService,{type CreateAddressPayload,type UserAddress} from '../services/addresses'
 import TCCAddressFields from './TCCAddressFields'
 
@@ -6,6 +6,8 @@ export default function DeliveryAddressForm({initial,onSaved,onCancel}:{
   initial:Partial<CreateAddressPayload>&{id?:number};onSaved:(address:UserAddress)=>void;onCancel:()=>void
 }){
   const id=useId(),lock=useRef(false)
+  const mounted=useRef(true)
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[])
   const [busy,setBusy]=useState(false),[error,setError]=useState('')
   const [errors,setErrors]=useState<Record<string,string>>({})
   const fieldError=(field:string)=>errors[field]?<p id={id+'-'+field+'-error'} role="alert" className="mt-1 text-sm text-red-700">{errors[field]}</p>:null
@@ -24,14 +26,15 @@ export default function DeliveryAddressForm({initial,onSaved,onCancel}:{
     lock.current=true;setBusy(true);setError('')
     try{
       const saved=initial.id?await addressesService.update(initial.id,form):await addressesService.create(form)
-      onSaved(saved)
+      if(mounted.current)onSaved(saved)
     }catch(e){
+      if(!mounted.current)return
       const fields=(e as {fields?:Record<string,unknown>}).fields||{}
       const invalid=Object.fromEntries(Object.entries(fields).filter(([key])=>key in form).map(([key,value])=>[key,Array.isArray(value)?value.join(' '):String(value)]))
       setErrors(invalid)
       setError(Object.keys(invalid).length?'Revisa los campos indicados. Tus datos se conservan.':e instanceof Error?e.message:'No fue posible guardar la dirección. Tus datos se conservan.')
     }
-    finally{lock.current=false;setBusy(false)}
+    finally{lock.current=false;if(mounted.current)setBusy(false)}
   }
   return <form noValidate onSubmit={submit} className="min-w-0 space-y-4 rounded-xl border bg-white p-4 sm:p-6" aria-label="Formulario de dirección de entrega">
     <h3 className="text-lg font-semibold">{initial.id?'Editar dirección de entrega':'Nueva dirección de entrega'}</h3>

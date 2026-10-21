@@ -80,11 +80,11 @@ const chooseLocation=require('./location-select.cjs')
   defaultAddress=false
   await page.evaluate(()=>sessionStorage.setItem('tcc-checkout-destination:998',JSON.stringify({tcc_city_code:'76001000'})))
   await page.reload()
-  await cards.first().getByText('Envío a BOGOTA:',{exact:false}).waitFor()
+  await cards.first().getByText('Envío a CALI:',{exact:false}).waitFor()
   historyCode=null
   await page.reload()
   await cards.first().getByText('Envío a CALI:',{exact:false}).waitFor()
   assert.deepEqual(errors,[])
-  console.log('PASS product cards: default address > validated history > session, guest/manual persistence, shared config/location, lazy per-product quote, cross-card update, cache reuse, city invalidation, provider error/retry, no fake free rate, responsive 1280/768/390. Catalogue reads:',cityCalls)
+  console.log('PASS product cards: explicit session choice/default address/session fallback, guest persistence, shared config/location, lazy quote, cross-card update, cache, invalidation, errors, responsive. Catalogue reads:',cityCalls)
  }finally{await browser.close()}
 })().catch(e=>{console.error(e.stack);process.exit(1)})
