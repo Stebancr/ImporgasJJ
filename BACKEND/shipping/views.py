@@ -92,13 +92,18 @@ class QuoteView(APIView):
 
 class EstimateInput(serializers.Serializer):
     items = OrderItemInputSerializer(many=True, allow_empty=False)
-    tcc_city_code = serializers.CharField(max_length=8)
+    tcc_city_code = serializers.CharField(max_length=8, required=False)
+    address_id = serializers.IntegerField(min_value=1, required=False)
     force = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, data):
+        if not data.get('tcc_city_code') and not data.get('address_id'):
+            raise serializers.ValidationError({'tcc_city_code': 'Selecciona dónde deseas recibir el producto.'})
+        return data
 
 
 class EstimateView(APIView):
     permission_classes = [AllowAny]
-    authentication_classes = []
     throttle_scope = 'shipping_estimate'
 
     def post(self, request):
@@ -106,6 +111,19 @@ class EstimateView(APIView):
             return Response({'error': 'El transporte TCC aún no está habilitado.'}, status=503)
         data = EstimateInput(data=request.data)
         data.is_valid(raise_exception=True)
+        destination = dict(data.validated_data)
+        if destination.get('address_id'):
+            if not request.user.is_authenticated:
+                return Response({'error': 'Inicia sesión para usar una dirección guardada.'}, status=401)
+            from ecommerce.models import UserAddress
+            address = UserAddress.objects.filter(pk=destination['address_id'], user=request.user).first()
+            if address is None:
+                return Response({'error': 'La dirección no está disponible para este usuario.'}, status=404)
+            from .catalog import address_city
+            location = address_city(address)
+            if not location:
+                return Response({'error': 'Actualiza la ciudad de esta dirección antes de cotizar.'}, status=400)
+            destination['tcc_city_code'] = location['code']
         from ecommerce.models import Product
         products = list(Product.objects.filter(pk__in=[item['product_id'] for item in data.validated_data['items']]).select_related('shipping_profile'))
         if len(products) != len({item['product_id'] for item in data.validated_data['items']}):
@@ -117,7 +135,8 @@ class EstimateView(APIView):
                              'missing_fields': list(dict.fromkeys(field for product in incomplete for field in product.shipping_missing_fields)),
                              'message': 'El producto no tiene información logística completa.'}, status=422)
         try:
-            result = estimate_shipping(data.validated_data['items'], data.validated_data)
+            scope = str(request.user.pk) if request.user.is_authenticated else 'guest'
+            result = estimate_shipping(destination['items'], destination, scope=scope)
         except TCCError as exc:
             return Response({'error': str(exc), 'code': exc.code}, status=503)
         return Response(result)

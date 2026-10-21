@@ -46,6 +46,11 @@ def address_snapshot(user, data):
         result = {field: getattr(address, field) for field in
                   ('recipient_name', 'phone', 'address', 'city', 'department', 'postal_code', 'tcc_city_code',
                    'complement', 'neighborhood', 'delivery_instructions')}
+        if not result['tcc_city_code']:
+            from .catalog import address_city
+            location = address_city(address)
+            if location:
+                result.update(tcc_city_code=location['code'], city=location['city'], department=location['department'])
     else:
         result = {field: str(data.get(source) or '').strip() for field, source in {
             'recipient_name': 'customer_name', 'phone': 'customer_phone', 'address': 'shipping_address',
@@ -161,10 +166,10 @@ def quote_shipping(user, items, data):
         expires_at=timezone.now()+timedelta(seconds=settings.TCC_QUOTE_TTL_SECONDS))
 
 
-def estimate_shipping(items, data):
+def estimate_shipping(items, data, *, scope='guest'):
     from .serializers import calculation_data
     snapshot = shipping_snapshot(None, items, data, estimate=True)
-    key = 'tcc-estimate:' + fingerprint(snapshot)
+    key = 'tcc-estimate:' + hashlib.sha256(str(scope).encode()).hexdigest()[:20] + ':' + fingerprint(snapshot)
     cached = cache.get(key)
     if cached and not data.get('force'):
         return cached
