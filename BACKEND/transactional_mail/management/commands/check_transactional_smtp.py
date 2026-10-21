@@ -11,11 +11,16 @@ class Command(BaseCommand):
     help='Validate SMTP/TLS/authentication without sending a message or printing credentials.'
     def add_arguments(self,parser):
         parser.add_argument('--technical-visits',action='store_true',help='Probe the visit sender envelope only; never sends DATA.')
+        parser.add_argument('--password-reset',action='store_true',help='Probe SERVER_EMAIL_NOREPLY only; never sends DATA.')
 
     def handle(self,*args,**options):
         try:
             validate_smtp()
-            sender=sender_for('visit' if options['technical_visits'] else 'order')
+            if options['password_reset']:
+                from usuarios.password_recovery import sender as reset_sender
+                sender = reset_sender()
+            else:
+                sender=sender_for('visit' if options['technical_visits'] else 'order')
             self.stdout.write('Configuration types/TLS: OK')
             with smtplib.SMTP(settings.EMAIL_HOST,settings.EMAIL_PORT,timeout=settings.EMAIL_TIMEOUT) as smtp:
                 smtp.ehlo();smtp.starttls(context=ssl.create_default_context());smtp.ehlo()

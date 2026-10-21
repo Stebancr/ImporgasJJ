@@ -16,7 +16,7 @@ import os
 import sys
 import pymysql
 from dotenv import load_dotenv
-from decouple import config
+from decouple import config, Csv
 import cloudinary
 from datetime import timedelta
 from urllib.parse import urlparse
@@ -334,6 +334,11 @@ TRANSACTIONAL_REPLY_TO = config('TRANSACTIONAL_REPLY_TO', default=SERVER_EMAIL)
 TRANSACTIONAL_EMAIL_ENABLED = config('TRANSACTIONAL_EMAIL_ENABLED', default=False, cast=bool)
 TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS = _csv_env('TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS')
 PASSWORD_RESET_TIMEOUT = 3600
+_reset_sender = config('SERVER_EMAIL_NOREPLY', default='').strip()
+SERVER_EMAIL_NOREPLY = (_reset_sender[1:-1] if len(_reset_sender) >= 2
+                       and _reset_sender[0] == _reset_sender[-1] and _reset_sender[0] in "\"'" else _reset_sender).strip()
+# Development SMTP must explicitly authorize recipients; locmem tests do not send mail.
+PASSWORD_RESET_ALLOWED_RECIPIENTS = config('PASSWORD_RESET_ALLOWED_RECIPIENTS', default='', cast=Csv())
 CASH_ON_DELIVERY_ENABLED = config('CASH_ON_DELIVERY_ENABLED', default=False, cast=bool)
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=20, cast=int)
 
@@ -543,6 +548,12 @@ LOGGING = {
         },
     },
     'loggers': {
+        'usuarios.password_recovery': {
+            'handlers': ['safe_console'], 'level': 'INFO', 'propagate': False,
+        },
+        'usuarios.account_views': {
+            'handlers': ['safe_console'], 'level': 'INFO', 'propagate': False,
+        },
         'daphne.server': {
             'handlers': ['safe_console'],
             'level': 'INFO',

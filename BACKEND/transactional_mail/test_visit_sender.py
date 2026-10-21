@@ -150,15 +150,19 @@ class VisitSenderTests(APITestCase):
         self.assertIn('technical@example.invalid', mail.outbox[-1].from_email)
         self.assertEqual(Delivery.objects.filter(kind='visit').count(), 1)
 
-    def test_password_reset_and_server_alert_keep_their_senders(self):
+    def test_password_reset_uses_no_reply_and_server_alert_keeps_its_sender(self):
         from django.urls import reverse
         from usuarios.models import Usuario
         profile = Usuario.objects.create(cedula='qa-reset-sender', nombre_completo='QA', correo='qa@example.invalid')
         self.owner.usuario_rel = profile; self.owner.save()
-        with override_settings(DEFAULT_FROM_EMAIL='Sales <sales@example.invalid>', SERVER_EMAIL='server@example.invalid', ADMINS=[('QA', 'qa@example.invalid')]):
+        from django.core.cache import cache
+        from usuarios.password_recovery import deliver
+        cache.clear()
+        with override_settings(SERVER_EMAIL_NOREPLY='reset@example.invalid', DEFAULT_FROM_EMAIL='Sales <sales@example.invalid>', SERVER_EMAIL='server@example.invalid', ADMINS=[('QA', 'qa@example.invalid')]), patch('usuarios.password_recovery.enqueue', side_effect=deliver), self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(reverse('customer-password-reset-request'), {'email': profile.correo}, format='json')
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(mail.outbox[-1].from_email, 'Sales <sales@example.invalid>')
+        self.assertIn('reset@example.invalid', mail.outbox[-1].from_email)
+        with override_settings(SERVER_EMAIL='server@example.invalid', ADMINS=[('QA', 'qa@example.invalid')]):
             mail.mail_admins('Synthetic server alert', 'Synthetic body')
             self.assertEqual(mail.outbox[-1].from_email, 'server@example.invalid')
 

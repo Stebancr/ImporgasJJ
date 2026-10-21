@@ -1,15 +1,13 @@
 """Customer account actions backed by Django password validation and reset tokens."""
 import logging
+import ipaddress
 
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import get_connection, send_mail
 from django.db import transaction
-from django.db.models import Q
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -17,20 +15,30 @@ from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 
 from .models import Credenciales
+from . import password_recovery
+from django.utils.crypto import salted_hmac
+from django.utils.translation import override
+from types import SimpleNamespace
+from rest_framework.throttling import SimpleRateThrottle
 
 logger = logging.getLogger(__name__)
-RESET_RESPONSE = {'message': 'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.'}
+RESET_RESPONSE = {'message': 'Si existe una cuenta asociada a este correo, recibirás un enlace para restablecer tu contraseña.'}
 
 
 class NewPasswordSerializer(serializers.Serializer):
-    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
-    confirm_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+    confirm_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
 
     def validate(self, attrs):
         if attrs['new_password'] != attrs['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'Las contraseñas no coinciden.'})
         try:
-            validate_password(attrs['new_password'], user=self.context.get('user'))
+            user = self.context.get('user')
+            profile = user.usuario_rel if user else None
+            subject = SimpleNamespace(_meta=Credenciales._meta, username=user.usuario if user else '', email=profile.correo if profile else '',
+                                      first_name=profile.nombre_completo if profile else '', last_name='')
+            with override('es'):
+                validate_password(attrs['new_password'], user=subject)
         except DjangoValidationError as exc:
             raise serializers.ValidationError({'new_password': list(exc.messages)}) from exc
         return attrs
@@ -60,57 +68,79 @@ class ChangePasswordView(APIView):
         return Response({'message': 'Contraseña actualizada. Vuelve a iniciar sesión.'})
 
 
+class RecoveryIPThrottle(SimpleRateThrottle):
+    rate = '10/hour'
+
+    def get_cache_key(self, request, view):
+        # Nginx overwrites X-Real-IP; X-Forwarded-For may include client-controlled entries.
+        raw = request.META.get('HTTP_X_REAL_IP') or request.META.get('REMOTE_ADDR', '')
+        try:
+            raw = str(ipaddress.ip_address(raw))
+        except ValueError:
+            raw = request.META.get('REMOTE_ADDR', '')
+        ident = salted_hmac('reset-ip', raw).hexdigest()
+        return 'reset:ip:' + ident
+
+
 class RequestPasswordResetView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
-    throttle_scope = 'password_reset_request'
+    throttle_classes = [RecoveryIPThrottle]
 
     def post(self, request):
-        email = request.data.get('email', '')
-        if not isinstance(email, str) or not email.strip():
-            return Response({'email': 'Ingresa un correo válido.'}, status=400)
         try:
-            email = serializers.EmailField(max_length=254).run_validation(email.strip()).lower()
+            raw = request.data.get('email', '')
+            email = serializers.EmailField(max_length=254).run_validation(raw.strip() if isinstance(raw, str) else raw).lower()
         except serializers.ValidationError:
             return Response({'email': 'Ingresa un correo válido.'}, status=400)
-        user = (Credenciales.objects.select_related('usuario_rel')
-                .filter(Q(usuario_rel__correo__iexact=email) | Q(usuario__iexact=email),
-                        tipo_usuario=0, estado=1).first())
-        if user and user.usuario_rel and user.usuario_rel.correo:
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = default_token_generator.make_token(user)
-            url = request.build_absolute_uri(f'/restablecer-contrasena/{uid}/{token}')
-            try:
-                send_mail(
-                    'Restablece tu contraseña de ImporGas JJ',
-                    f'Solicitaste restablecer tu contraseña. Usa este enlace durante una hora:\n\n{url}\n\nSi no fuiste tú, ignora este correo.',
-                    settings.DEFAULT_FROM_EMAIL, [user.usuario_rel.correo], fail_silently=False,
-                    connection=get_connection(timeout=min(settings.EMAIL_TIMEOUT, 10)),
-                )
-            except Exception:
-                logger.exception('No se pudo enviar el correo de recuperación al usuario %s', user.pk)
-        return Response(RESET_RESPONSE)
+        password_recovery.request_reset(email)
+        return Response(RESET_RESPONSE, headers={'Cache-Control': 'no-store'})
 
 
-class ConfirmPasswordResetView(APIView):
+class ResetLinkSerializer(serializers.Serializer):
+    uid = serializers.CharField(max_length=64)
+    token = serializers.CharField(max_length=128)
+
+
+def reset_user(data, lock=False):
+    fields = ResetLinkSerializer(data=data)
+    if not fields.is_valid():
+        return None
+    try:
+        uid = force_str(urlsafe_base64_decode(fields.validated_data['uid']))
+        query = Credenciales.objects.select_for_update() if lock else Credenciales.objects
+        user = query.get(pk=uid)
+        if password_recovery.eligible(user) and password_recovery.tokens.check_token(user, fields.validated_data['token']):
+            return user
+    except (TypeError, ValueError, OverflowError, UnicodeError, Credenciales.DoesNotExist):
+        pass
+    return None
+
+
+class ValidatePasswordResetView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     throttle_scope = 'password_reset_confirm'
 
     def post(self, request):
-        try:
-            uid = force_str(urlsafe_base64_decode(request.data.get('uid', '')))
-            user = Credenciales.objects.get(pk=uid, tipo_usuario=0, estado=1)
-        except (TypeError, ValueError, OverflowError, Credenciales.DoesNotExist):
-            return Response({'error': 'El enlace no es válido o ha expirado.'}, status=400)
+        valid = reset_user(request.data) is not None
+        return Response({'valid': True} if valid else {'error': 'El enlace no es válido o ha expirado.'},
+                        status=200 if valid else 400, headers={'Cache-Control': 'no-store'})
+
+
+class ConfirmPasswordResetView(ValidatePasswordResetView):
+    def post(self, request):
         with transaction.atomic():
-            user = Credenciales.objects.select_for_update().get(pk=user.pk)
-            if not default_token_generator.check_token(user, request.data.get('token', '')):
+            user = reset_user(request.data, lock=True)
+            if not user:
                 return Response({'error': 'El enlace no es válido o ha expirado.'}, status=400)
             serializer = NewPasswordSerializer(data=request.data, context={'user': user})
             serializer.is_valid(raise_exception=True)
             user.set_password(serializer.validated_data['new_password'])
             user.password_version += 1
-            user.save(update_fields=['password', 'password_version'])
+            user.password_reset_version += 1
+            user.save(update_fields=['password', 'password_version', 'password_reset_version'])
             Token.objects.filter(user=user).delete()
-        return Response({'message': 'Contraseña actualizada. Ya puedes iniciar sesión.'})
+        logger.info('password_reset password_changed user=%s sessions_revoked=true', user.pk)
+        return Response({'message': 'Tu contraseña fue actualizada correctamente. Ya puedes iniciar sesión.'},
+                        headers={'Cache-Control': 'no-store'})
