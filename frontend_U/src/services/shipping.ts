@@ -36,9 +36,22 @@ export interface ShipmentInfo {
 export interface TCCAddress {
   tcc_city_code: string; complement: string; neighborhood: string; delivery_instructions: string
 }
+export function deliveryFailureHint(error:unknown):string {
+  const value=error as {status?:number;name?:string}
+  if(value?.status===401)return 'Tu sesión no es válida. Inicia sesión nuevamente.'
+  if(value?.status===403)return 'No tienes permiso para realizar esta consulta.'
+  if(value?.status===404)return 'Este servicio no está disponible. Inténtalo más tarde.'
+  if(value?.status&&value.status>=500)return 'El servicio no está disponible temporalmente.'
+  if(value?.name==='TimeoutError')return 'La solicitud tardó demasiado. Inténtalo nuevamente.'
+  if(error instanceof TypeError)return 'Revisa tu conexión a internet.'
+  return ''
+}
 export function deliveryError(error:unknown):string {
   const code=(error as {code?:string})?.code
   if(code==='configuration'||code==='carrier_authentication')return 'El cálculo de entrega no está disponible en este momento. Contacta a un asesor.'
+  if(code==='route_not_configured'&&error instanceof Error)return error.message.replace(/\bTCC\b/gi,'el servicio de transporte')
+  const hint=deliveryFailureHint(error)
+  if(hint)return hint
   return (error instanceof Error?error.message:'No fue posible calcular el envío.').replace(/\bTCC\b/gi,'el servicio de transporte')
 }
 let catalogue: {value:TCCCity[]; expires:number} | null = null
@@ -47,6 +60,7 @@ function cities():Promise<TCCCity[]> {
   if(catalogue&&catalogue.expires>Date.now())return Promise.resolve(catalogue.value)
   if(catalogueRequest)return catalogueRequest
   catalogueRequest=api.get<TCCCity[]>('/shipping/cities').then(value=>{
+    if(!Array.isArray(value))throw new Error('El catálogo de entrega no tiene el formato esperado.')
     catalogue={value,expires:Date.now()+300000};return value
   }).finally(()=>{catalogueRequest=null})
   return catalogueRequest

@@ -64,7 +64,7 @@ const chooseLocation=require('./location-select.cjs')
   assert(!(await cards.first().innerText()).includes('CALI:'))
   fail=true
   await page.reload()
-  await cards.first().getByText('No fue posible calcular el envío en este momento.').waitFor()
+  await cards.first().getByText('El servicio no está disponible temporalmente.').waitFor()
   assert.equal(await cards.first().getByText(/Total estimado:/).count(),0)
   fail=false
   await cards.first().getByRole('button',{name:'Reintentar envío'}).click()

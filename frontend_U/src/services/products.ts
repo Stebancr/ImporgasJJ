@@ -13,6 +13,8 @@ interface ApiImage {
 }
 
 interface ApiProduct {
+  shipping_ready?: boolean
+  shipping_missing_fields?: string[]
   id: number
   name: string
   slug: string
@@ -74,6 +76,8 @@ function toProduct(p: ApiProduct): Product {
     isFeatured: p.is_featured,
     discount: p.discount_percentage || undefined,
     slug: p.slug,
+    shippingReady: p.shipping_ready,
+    shippingMissingFields: p.shipping_missing_fields,
   }
 }
 

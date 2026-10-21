@@ -84,16 +84,20 @@ class EstimateAndPricingTests(APITestCase):
         self.assertEqual(self.client.post(reverse('shipping-estimate'), payload, format='json').status_code, 400)
         self.profile.weight_kg = None; self.profile.save()
         payload['tcc_city_code'] = '76001000'
-        self.assertEqual(self.client.post(reverse('shipping-estimate'), payload, format='json').status_code, 400)
+        response=self.client.post(reverse('shipping-estimate'), payload, format='json')
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.data['status'],'incomplete')
+        self.assertIn('Peso',response.data['missing_fields'])
         self.assertFalse(Product.objects.get(pk=self.product.pk).shipping_ready)
         self.http.assert_not_called()
 
     def test_missing_profile_returns_actionable_error_without_carrier_request(self):
         self.profile.delete()
         response=self.client.post(reverse('shipping-estimate'), {'items': self.payload['items'], 'tcc_city_code':'76001000'}, format='json')
-        self.assertEqual(response.status_code,400)
+        self.assertEqual(response.status_code,422)
         self.assertEqual(response.data['code'],'shipping_profile_incomplete')
-        self.assertIn('completar sus datos',response.data['error'])
+        self.assertFalse(response.data['can_quote'])
+        self.assertIn('Valor declarado',response.data['missing_fields'])
         self.assertNotIn('items',response.data)
         self.http.assert_not_called()
 

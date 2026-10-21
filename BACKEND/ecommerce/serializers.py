@@ -138,6 +138,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     stock_entries  = ProductStockSerializer(many=True, read_only=True)
     discount_percentage = serializers.ReadOnlyField()
     shipping_ready = serializers.ReadOnlyField()
+    shipping_missing_fields = serializers.ReadOnlyField()
     from shipping.serializers import ProductShippingSerializer
     shipping_profile = ProductShippingSerializer(read_only=True)
 
@@ -148,7 +149,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'category_id', 'category', 'brand_id', 'brand',
             'total_stock', 'is_available', 'is_featured',
             'rating', 'reviews_count',
-            'images', 'specifications', 'stock_entries', 'shipping_profile', 'shipping_ready',
+            'images', 'specifications', 'stock_entries', 'shipping_profile', 'shipping_ready', 'shipping_missing_fields',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'slug', 'total_stock', 'rating', 'reviews_count', 'created_at', 'updated_at']

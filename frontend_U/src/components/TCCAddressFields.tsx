@@ -1,6 +1,7 @@
-import {useEffect,useMemo,useState,useId} from 'react'
+import {useEffect,useMemo,useId} from 'react'
 import {Autocomplete,TextField} from '@mui/material'
-import {shippingService,type TCCAddress,type TCCCity} from '../services/shipping'
+import {deliveryFailureHint,type TCCAddress} from '../services/shipping'
+import {useDeliveryCatalog} from '../hooks/useDeliveryCatalog'
 
 const normalize=(text:string)=>text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es').trim()
 const readable=(text:string)=>text.toLocaleLowerCase('es').replace(/(^|\s)\S/g,char=>char.toLocaleUpperCase('es'))
@@ -14,12 +15,9 @@ export default function TCCAddressFields({value,onChange,compact=false,errors={}
   onChange:(patch:Partial<TCCAddress>&{city?:string;department?:string})=>void;compact?:boolean;errors?:Record<string,string>
 }){
   const id=useId()
-  const [cities,setCities]=useState<TCCCity[]>([])
-  const [loading,setLoading]=useState(true),[error,setError]=useState(false),[retry,setRetry]=useState(0)
-  useEffect(()=>{let active=true;setLoading(true);setError(false)
-    shippingService.cities().then(data=>{if(active)setCities(data)}).catch(()=>{if(active)setError(true)}).finally(()=>{if(active)setLoading(false)})
-    return()=>{active=false}
-  },[retry])
+  const catalog=useDeliveryCatalog()
+  const cities=catalog.data??[]
+  const loading=catalog.isFetching,error=catalog.isError
   useEffect(()=>{
     if(value.tcc_city_code||!value.city||!value.department)return
     const matches=cities.filter(item=>normalize(item.city)===normalize(value.city!)&&normalize(item.department)===normalize(value.department!))
@@ -36,7 +34,8 @@ export default function TCCAddressFields({value,onChange,compact=false,errors={}
   const sx={'& .MuiOutlinedInput-root':{minHeight:48,borderRadius:2},'& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline':{borderColor:'#001575'}}
   return <div className="min-w-0 space-y-3">
     {loading&&<p role="status" className="text-sm">Cargando ubicaciones de entrega…</p>}
-    {error&&<p role="alert" className="text-sm text-red-700">No fue posible cargar las ubicaciones. <button type="button" className="underline min-h-11" onClick={()=>setRetry(n=>n+1)}>Reintentar</button></p>}
+    {error&&<p role="alert" className="text-sm text-red-700">No fue posible cargar los departamentos y ciudades. {deliveryFailureHint(catalog.error)} <button type="button" className="underline min-h-11" disabled={loading} onClick={()=>catalog.refetch()}>Reintentar ubicaciones</button></p>}
+    {catalog.status==='empty'&&<p className="text-sm">No hay departamentos y ciudades disponibles por el momento.</p>}
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Autocomplete id={`${id}-department`} disablePortal options={departments} value={canonicalDepartment}
         disabled={loading||error} loading={loading} getOptionLabel={readable} noOptionsText="No se encontraron departamentos"

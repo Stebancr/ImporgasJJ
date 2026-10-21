@@ -410,7 +410,7 @@ export default function ProductsPage() {
                       <TableRow key={product.id}>
                         <TableCell>
                           <p className="font-medium">{product.name}</p>
-                          {product.shipping_ready === false && <button type="button" className="mt-1 block text-left focus-visible:outline focus-visible:outline-2" title={(product.shipping_missing_fields ?? []).join(', ')} aria-label={`Editar envío de ${product.name}: ${(product.shipping_missing_fields ?? []).join(', ')}`} onClick={()=>handleOpenDialog(product)}><Badge variant="warning">Faltan especificaciones de envío</Badge><span className="block text-xs text-muted-foreground">{product.shipping_missing_fields?.join(', ')}</span></button>}
+                          {product.shipping_ready === false && <button type="button" className="mt-1 block text-left focus-visible:outline focus-visible:outline-2" title={(product.shipping_missing_fields ?? []).join(', ')} aria-label={`Editar envío de ${product.name}: ${(product.shipping_missing_fields ?? []).join(', ')}`} onClick={()=>handleOpenDialog(product)}><Badge variant="warning">Configuración TCC incompleta</Badge><span className="block text-xs text-muted-foreground">{product.shipping_missing_fields?.join(', ')}</span></button>}
                           {product.shipping_ready === true && <Badge variant="secondary" className="mt-1">Configuración de envío completa</Badge>}
                           {product.is_featured && (
                             <Badge variant="secondary" className="mt-1">Destacado</Badge>

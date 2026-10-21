@@ -45,3 +45,25 @@ class LogisticsListingTests(APITestCase):
         ProductShippingProfile.objects.create(product=self.old, requires_shipping=False)
         self.assertTrue(self.old.shipping_ready)
         self.assertEqual(self.old.shipping_missing_fields, [])
+
+    def test_public_config_and_catalog_ignore_stale_authentication(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer expired-synthetic-token')
+        response=self.client.get(reverse('shipping-config'))
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.data['status'],'disabled')
+        self.assertFalse(response.data['can_quote'])
+        self.assertEqual(self.client.get(reverse('shipping-cities')).status_code,200)
+
+    def test_empty_catalog_is_valid(self):
+        from unittest.mock import patch
+        with patch('shipping.views.cities',return_value=[]):
+            response=self.client.get(reverse('shipping-cities'))
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.data,[])
+
+    @override_settings(TCC_SHIPPING_ENABLED=True)
+    def test_unknown_product_is_404_not_provider_failure(self):
+        response=self.client.post(reverse('shipping-estimate'),
+            {'items':[{'product_id':999999,'quantity':1}],'tcc_city_code':'76001000'},format='json')
+        self.assertEqual(response.status_code,404)
+        self.assertEqual(response.data['status'],'not_found')

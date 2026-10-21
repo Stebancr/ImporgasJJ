@@ -32,14 +32,18 @@ class QuoteInput(serializers.Serializer):
 
 class ShippingConfigView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get(self, request):
         return Response({'enabled': settings.TCC_SHIPPING_ENABLED, 'carrier': 'TCC',
+                         'status': 'available' if settings.TCC_SHIPPING_ENABLED else 'disabled',
+                         'can_quote': settings.TCC_SHIPPING_ENABLED,
                          'tracking_api_available': False, 'units': {'weight': 'kg', 'dimensions': 'cm'}})
 
 
 class CityListView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get(self, request):
         return Response(cities())
@@ -102,6 +106,16 @@ class EstimateView(APIView):
             return Response({'error': 'El transporte TCC aún no está habilitado.'}, status=503)
         data = EstimateInput(data=request.data)
         data.is_valid(raise_exception=True)
+        from ecommerce.models import Product
+        products = list(Product.objects.filter(pk__in=[item['product_id'] for item in data.validated_data['items']]).select_related('shipping_profile'))
+        if len(products) != len({item['product_id'] for item in data.validated_data['items']}):
+            return Response({'status': 'not_found', 'error': 'El producto no existe.'}, status=404)
+        incomplete = [product for product in products if not product.shipping_ready]
+        if incomplete:
+            return Response({'status': 'incomplete', 'can_quote': False,
+                             'code': 'shipping_profile_incomplete',
+                             'missing_fields': list(dict.fromkeys(field for product in incomplete for field in product.shipping_missing_fields)),
+                             'message': 'El producto no tiene información logística completa.'}, status=422)
         try:
             result = estimate_shipping(data.validated_data['items'], data.validated_data)
         except TCCError as exc:
