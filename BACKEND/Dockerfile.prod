@@ -7,9 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential pkg-config default-libmysqlclient-dev pandoc \
+    build-essential pkg-config default-libmysqlclient-dev pandoc ca-certificates openssl \
     texlive-xetex texlive-latex-recommended \
     libcairo2 libcairo2-dev libfreetype6-dev fontconfig fonts-liberation \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
