@@ -43,6 +43,10 @@ const assert=require('node:assert/strict')
   }
   for(const width of [1280,768,390]){
    await page.setViewportSize({width,height:1000})
+   await page.waitForFunction(()=>{
+    const regions=['Administración de plantillas','Vista previa del mensaje para el cliente'].map(label=>document.querySelector(`[aria-label="${label}"]`))
+    return regions.every(el=>el&&el.scrollWidth<=el.clientWidth)
+   })
    assert(await page.getByRole('region',{name:'Administración de plantillas'}).evaluate(el=>el.scrollWidth<=el.clientWidth),`page overflow ${channel} ${width}`)
    assert(await preview.evaluate(el=>el.scrollWidth<=el.clientWidth),`preview overflow ${channel} ${width}`)
   }

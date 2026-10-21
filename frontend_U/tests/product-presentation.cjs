@@ -20,19 +20,19 @@ const product = { id: 991, name: 'Calentador QA', slug: 'calentador-qa', descrip
   await page.routeWebSocket('**/ws/**', ws => ws.close())
   let cart = []
   let cartPosts = 0
-  let primaryPatches = 0
+  let editorSaves = 0
   await page.route('**/qa-*.svg', route => route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect x="100" y="40" width="200" height="320" rx="20" fill="${route.request().url().includes('blue') ? '#2563eb' : '#ea580c'}"/></svg>` }))
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
     const method = route.request().method()
     let body = { data: [] }
     if (path.endsWith('/user/perfil')) body = { id: 998, tipo_usuario: 4, nombre_completo: 'QA', estado: 1 }
-    else if (/\/products\/991\/images\/\d+$/.test(path) && method === 'PATCH') {
-      const id = Number(path.split('/').pop())
-      assert.deepEqual(route.request().postDataJSON(), { is_primary: true })
-      product.images.forEach(i => { i.is_primary = i.id === id })
-      primaryPatches++
-      body = { data: product.images.find(i => i.id === id) }
+    else if (path.endsWith('/products/991/editor') && method === 'POST') {
+      const payload = JSON.parse(route.request().postData().match(/name="payload"\r\n\r\n([\s\S]*?)\r\n--/)[1])
+      assert.deepEqual(payload.images.map(image => image.id), [11, 12])
+      product.images.forEach((image, index) => { image.is_primary = index === payload.primary })
+      editorSaves++
+      body = { data: product }
     }
     else if (path.endsWith('/cart')) {
       if (method === 'POST') {
@@ -95,19 +95,24 @@ const product = { id: 991, name: 'Calentador QA', slug: 'calentador-qa', descrip
     assert.equal(await page.getByLabel('Descripción', { exact: true }).inputValue(), description)
     await page.getByText('Vista previa de la descripción', { exact: true }).click()
     assert.equal(await page.locator('.product-description li').count(), 3)
-    await page.getByRole('button', { name: 'Establecer como principal: imagen 11', exact: true }).click()
-    await page.waitForFunction(() => document.querySelector('[aria-label="Establecer como principal: imagen 11"]')?.getAttribute('aria-pressed') === 'true')
-    assert.equal(primaryPatches, 1)
+    await page.getByRole('button', { name: 'Usar imagen 1 como principal', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('[aria-label="Usar imagen 1 como principal"]')?.getAttribute('aria-pressed') === 'true')
+    assert.equal(editorSaves, 0, 'Selecting the main image must remain local until the editor is saved')
+    await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click()
+    await page.getByRole('dialog').waitFor({state:'hidden'})
+    assert.equal(editorSaves, 1)
+    await page.getByRole('button', { name: 'Editar', exact: true }).click()
+    await page.getByRole('button', { name: 'Usar imagen 1 como principal', exact: true }).waitFor()
     for (const width of [1280, 768, 390]) {
       await page.setViewportSize({ width, height: 1000 })
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `admin overflow ${width}`)
-      await page.getByRole('button', { name: 'Establecer como principal: imagen 11', exact: true }).scrollIntoViewIfNeeded()
+      await page.getByRole('button', { name: 'Usar imagen 1 como principal', exact: true }).scrollIntoViewIfNeeded()
       await page.screenshot({ path: `/evidence/admin-after-${width}.png`, fullPage: true })
     }
     await page.reload()
     await page.getByRole('button', { name: 'Editar', exact: true }).click()
-    await page.getByRole('button', { name: 'Establecer como principal: imagen 11', exact: true }).waitFor()
-    assert.equal(await page.getByRole('button', { name: 'Establecer como principal: imagen 11', exact: true }).getAttribute('aria-pressed'), 'true')
+    await page.getByRole('button', { name: 'Usar imagen 1 como principal', exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: 'Usar imagen 1 como principal', exact: true }).getAttribute('aria-pressed'), 'true')
     for (const path of ['/productos', '/productos?search=Calentador', '/producto/991', '/carrito', '/favoritos']) {
       await page.goto(`http://crm.localhost${path}`)
       await page.locator('img[src="/qa-blue.svg"]').first().waitFor()

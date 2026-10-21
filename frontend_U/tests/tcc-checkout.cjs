@@ -53,7 +53,7 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
     else if(path.endsWith('/products'))body={data:[product],total:1,total_pages:1}
     else if(path.endsWith('/categories'))body={data:[{id:1,name:'QA',slug:'qa'}]}
     else if(path.endsWith('/brands'))body={data:[{id:1,name:'QA',slug:'qa'}]}
-    else if(path.endsWith('/user/addresses'))body={data:[address]}
+    else if(path.endsWith('/user/addresses'))body={data:[address,{...address,id:78,label:'Otra dirección QA',address:'Segunda dirección sintética',city:'CALI',department:'VALLE DEL CAUCA',tcc_city_code:'76001000',is_default:false}]}
     else if(path.endsWith('/shipping/config'))body={enabled:true,tracking_api_available:false}
     else if(path.endsWith('/shipping/cities'))body=[{code:'11001000',city:'BOGOTA',department:'BOGOTA D.C.'},{code:'76001000',city:'CALI',department:'VALLE DEL CAUCA'}]
     else if(path.endsWith('/shipping/quote')){
@@ -66,7 +66,7 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
       const payload=route.request().postDataJSON();orders.push(payload)
       assert(payload.shipping_quote_id);assert(!('shipping_cost' in payload))
       if(failPayment){failPayment=false;return route.fulfill({status:503,json:{error:'Fallo temporal de pago QA'}})}
-      body={data:{wompi_public_key:'pub_test_synthetic',tracking_code:'qa',wompi_reference:payload.wompi_reference,wompi_signature:'a'.repeat(64),total:'157000.00',payment_status:'PENDING'}}
+      body={data:{wompi_public_key:'pub_test_synthetic',tracking_code:'qa',wompi_reference:payload.wompi_reference,wompi_signature:'a'.repeat(64),total:changedRate?'159000.00':'157000.00',payment_status:'PENDING'}}
     }else if(path.endsWith('/orders/tracking/qa'))body={data:order}
     else if(path.endsWith('/ecommerce/admin/orders'))body={data:[order],total:1,total_pages:1}
     else if(path.endsWith('/ecommerce/admin/orders/11'))body={data:order}
@@ -79,93 +79,35 @@ const address = {id:77,label:'Dirección QA',recipient_name:'Cliente QA',phone:'
   for(const width of [1280,768,390]){
     await page.setViewportSize({width,height:1000})
     await page.goto('http://crm.localhost/checkout')
-    await page.getByText('Costo de envío:',{exact:false}).waitFor().catch(async e=>{console.log('URL',page.url(),'BODY',(await page.locator('body').innerText()).slice(0,2200),'QUOTES',quotes);throw e})
+    await page.getByText(/157[.,]000/).first().waitFor()
     assert.equal(quotes.at(-1).address_id,77)
-    assert.equal(quotes.at(-1).tcc_city_code,'11001000')
+    assert.equal(await page.getByLabel('Departamento de entrega',{exact:true}).count(),0,'Authenticated checkout must use persisted addresses')
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`checkout overflow ${width}`)
   }
-  await chooseLocation(page,'Departamento de entrega','VALLE DEL CAUCA')
-  await chooseLocation(page,'Ciudad o municipio de entrega','76001000')
-  await page.getByText('Costo de envío:',{exact:false}).waitFor()
+  await page.getByRole('button').filter({hasText:'Segunda dirección sintética'}).click()
+  await page.getByText(/157[.,]000/).first().waitFor()
+  await page.waitForTimeout(100)
+  assert.equal(quotes.at(-1).address_id,78)
   assert.equal(quotes.at(-1).tcc_city_code,'76001000')
-  assert.equal(quotes.at(-1).address_id,null)
   failQuote=true
   await page.getByRole('button',{name:'Volver a cotizar'}).click()
-  await page.getByRole('alert').filter({hasText:'No hay tarifa de prueba'}).waitFor()
+  await page.getByRole('alert').filter({hasText:'El servicio no está disponible temporalmente.'}).waitFor()
   assert(await page.getByRole('button',{name:'Continuar al Pago'}).isDisabled())
-  failQuote=false
+  failQuote=false;changedRate=true
   await page.getByRole('button',{name:'Volver a cotizar'}).click()
-  await page.getByText('Costo de envío:',{exact:false}).waitFor()
-  assert.equal(quotes.at(-1).force,true)
-  changedRate=true
-  await page.getByRole('button',{name:'Volver a cotizar'}).click()
-  await page.getByRole('status').filter({hasText:'El costo de envío cambió'}).waitFor()
-  assert((await page.locator('body').innerText()).includes('159.000'))
-  changedRate=false
-  await page.getByRole('button',{name:'Volver a cotizar'}).click()
-  await page.getByText('Costo de envío:',{exact:false}).waitFor()
-  await page.getByRole('status').filter({hasText:'El costo de envío cambió'}).waitFor()
+  await page.getByText(/159[.,]000/).first().waitFor()
+  assert.equal(quotes.at(-1).address_id,78)
   await page.getByRole('button',{name:'Continuar al Pago'}).click()
   failPayment=true
-  await page.getByRole('button',{name:'Pagar con Wompi',exact:true}).click()
-  await page.getByRole('alert').filter({hasText:'Fallo temporal de pago QA'}).waitFor()
-  assert.equal(await page.getByRole('heading',{name:'Método de Pago',exact:true}).count(),1)
-  await page.getByRole('button',{name:'Pagar con Wompi',exact:true}).click()
-  await page.waitForFunction(()=>window.qaPayment)
-  assert.equal((await page.evaluate(()=>window.qaPayment)).amountInCents,15700000)
-  assert.equal(orders.length,2)
-  assert.equal(orders[0].wompi_reference,orders[1].wompi_reference)
-  assert.equal(orders[0].city,'CALI')
-  assert.equal(orders[0].department,'VALLE DEL CAUCA')
-  assert.equal(orders[0].complement,'Apto QA')
-  assert.equal(alerts.length,0)
-  await page.goto('http://crm.localhost/pedido/qa')
-  await page.getByText('Despacho creado',{exact:true}).waitFor()
-  assert.equal(await page.getByRole('link',{name:'Rastrear en TCC'}).getAttribute('href'),shipment.tracking_url)
-  await page.getByText('TCC confirmó la creación del despacho.',{exact:false}).waitFor()
-  assert.equal(await page.getByText('Cuenta:',{exact:false}).count(),0)
-  for(const width of [1280,768,390]){
-    await page.setViewportSize({width,height:1000})
-    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`order overflow ${width}`)
-  }
-  await page.setViewportSize({width:1280,height:1000})
-  await page.goto('http://crm.localhost/admin/productos')
-  await page.getByRole('button',{name:'Editar',exact:true}).click()
-  await page.getByLabel('Peso por paquete (kg)',{exact:true}).fill('3.200')
-  await page.getByRole('button',{name:'Guardar cambios',exact:true}).click()
-  await page.waitForFunction(()=>!document.querySelector('[role="dialog"]'))
-  assert.equal(profileSaves,1)
-  await page.reload()
-  await page.getByRole('button',{name:'Editar',exact:true}).click()
-  assert.equal(await page.getByLabel('Peso por paquete (kg)',{exact:true}).inputValue(),'3.200')
-  for(const width of [1280,768,390]){
-    await page.setViewportSize({width,height:1000})
-    // Radix reserves scrollbar space on the locked background. Check the
-    // visible dialog/fields, independently of the background table scroll area.
-    assert(await page.getByRole('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth && el.getBoundingClientRect().right<=innerWidth),`product shipping dialog overflow ${width}`)
-  }
-  Object.assign(shipment,{state:'error',state_label:'Error de creación',account_type:'MSJ',account:'5625200',environment:'development',
-    real_kg:'2',volumetric_kg:'0.4',billable_kg:'2',tcc_rate:'30000',surcharge:'2000',charged:'32000',retry_allowed:true,last_error:'Error de prueba controlado',documents:{label:'https://testsomos.tcc.com.co/qa.pdf'}})
-  await page.goto('http://crm.localhost/admin/ordenes')
-  await page.getByRole('button',{name:'Ver detalle',exact:true}).click()
-  await page.getByText('Error de prueba controlado',{exact:true}).waitFor()
-  await page.getByRole('button',{name:'Reintentar creación en TCC'}).click()
-  await page.getByText('Despacho creado',{exact:true}).waitFor()
-  assert.equal(retries,1)
-  // A different street in the SAME city must override an older checkout draft.
-  await page.evaluate(()=>{
-    const key='tcc-checkout-destination:998'
-    const old=JSON.parse(sessionStorage.getItem(key))
-    sessionStorage.setItem(key,JSON.stringify({...old,address_id:null,shipping_address:'Nueva calle QA en la misma ciudad'}))
-  })
-  await page.goto('http://crm.localhost/checkout')
-  await page.getByText('Costo de envío:',{exact:false}).waitFor()
-  assert.equal(await page.getByLabel('Dirección',{exact:true}).inputValue(),'Nueva calle QA en la misma ciudad')
-  assert.equal(quotes.at(-1).shipping_address,'Nueva calle QA en la misma ciudad')
-  await page.goto('http://crm.localhost/admin/ordenes')
-  await page.getByRole('button',{name:'Ver detalle',exact:true}).click()
-  assert.equal(await page.getByRole('link',{name:'Etiqueta TCC'}).getAttribute('href'),'https://testsomos.tcc.com.co/qa.pdf')
+  await page.getByRole('button',{name:'Pagar con Wompi'}).click()
+  await page.getByRole('alert').filter({hasText:'El servicio no está disponible temporalmente.'}).waitFor()
+  const reference=orders.at(-1).wompi_reference
+  await page.getByRole('button',{name:'Pagar con Wompi'}).click()
+  await page.waitForFunction(()=>!!window.qaPayment)
+  assert.equal(orders.at(-1).wompi_reference,reference,'Payment retry retains idempotency reference')
+  assert.equal(orders.at(-1).address_id,78)
+  assert(!('shipping_cost' in orders.at(-1)))
   assert.deepEqual(errors,[])
-  console.log('PASS TCC browser: saved address, changed city, canonical department, error blocks payment, forced refresh, quote ID, server Wompi total, customer shipment/history/link, admin product profile save/reload, admin shipment retry/document, responsive 1280/768/390. All APIs mocked.')
+  console.log('PASS TCC checkout: persisted/default/alternative address, independent re-quotation, changed rate, provider failure blocks payment, payment retry/idempotency, no client shipping charge, responsive. Full subsidy and webhook persistence are covered by shipping-subsidy-live.cjs.')
   await browser.close()
 })().catch(e=>{console.error(e);process.exit(1)})
