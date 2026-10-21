@@ -5,12 +5,13 @@ import {useQueryClient} from '@tanstack/react-query'
 import DeliveryAddressForm from './DeliveryAddressForm'
 import { shippingService, deliveryError, deliveryFailureHint, shippingDestinationKey, type ShippingCalculation } from '../services/shipping'
 import TCCAddressFields from './TCCAddressFields'
-import {Truck,MapPin} from 'lucide-react'
+import {Truck,MapPin,Plus} from 'lucide-react'
 import {Link} from 'react-router-dom'
 import { notifyDeliveryLocation, readDeliverySelection, addressLocation } from '../hooks/useDeliveryLocation'
 import {useShippingConfig} from '../hooks/useShippingConfig'
 import {useDeliveryCatalog} from '../hooks/useDeliveryCatalog'
 import {useDeliveryAddresses} from '../hooks/useDeliveryAddresses'
+import ShippingProgress from './ShippingProgress'
 
 type Destination = {address_id:number|null;customer_name:string;customer_phone:string;customer_email:string;
   shipping_address:string;city:string;department:string;postal_code:string;tcc_city_code:string;
@@ -93,7 +94,7 @@ export default function ShippingCalculator({items,cart=false,onQuote,productPric
     const controller=new AbortController()
     const force=forceRefresh.current;forceRefresh.current=false
     setResult(null);callback.current?.(null);setError('');setErrorCode('');setBusy(false)
-    if(!sessionReady||!started)return
+    if(!sessionReady||!started||(isAuthenticated&&!form.address_id))return
     // Remember a valid selection even if this product has incomplete logistics
     // or the carrier is temporarily unavailable. Never persist tariff amounts.
     try{
@@ -103,7 +104,7 @@ export default function ShippingCalculator({items,cart=false,onQuote,productPric
       sessionStorage.setItem(storageKey,JSON.stringify({...((cart&&isAuthenticated)?form:destination),...(isAuthenticated&&form.address_id?{address_id:form.address_id}:{}),manual_location:manualLocation.current||previous?.manual_location||false}))
       if(manualLocation.current)notifyDeliveryLocation()
     }catch{/* Storage is optional. */}
-    if(!form.tcc_city_code||!canQuote)return
+    if(!form.tcc_city_code||!canQuote||(isAuthenticated&&!form.address_id))return
     setBusy(true)
     const timer=setTimeout(()=>{
       const complete=cart&&isAuthenticated&&form.customer_name&&form.customer_phone&&form.customer_email&&form.shipping_address
@@ -124,6 +125,7 @@ export default function ShippingCalculator({items,cart=false,onQuote,productPric
   return <section className="my-5 min-w-0 space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5" aria-label="Información de envío">
     <div className="flex items-center gap-3"><span className="rounded-xl bg-blue-50 p-2 text-[#001575]"><Truck aria-hidden="true" className="h-5 w-5"/></span><div><h3 className="font-semibold text-gray-900">Entrega de tu pedido</h3><p className="text-xs text-gray-600">Conoce el costo según tu destino</p></div></div>
     {!cart&&<><p className="font-semibold">Precio del producto: {fmt(String(productPrice??0))}</p><p className="text-sm">El precio mostrado corresponde únicamente al producto. El costo de envío se calcula según la ubicación de entrega.</p></>}
+    {canQuote&&!current&&<ShippingProgress items={items}/>}
     {shippingReady===false ? <div data-shipping-state="incomplete"><p className="font-semibold">Envío pendiente por configurar</p><p className="text-sm">Este producto todavía no cuenta con la información necesaria para calcular automáticamente el costo de entrega.</p>{missingFields.length>0&&<p className="mt-2 text-sm">Falta: {missingFields.join(', ')}.</p>}</div>
       :config.status==='error'?<div role="alert" data-shipping-state="configuration-error"><p>{config.error}</p><p className="text-sm">{deliveryFailureHint(config.cause)}</p><button type="button" disabled={config.loading} className="min-h-11 underline" onClick={()=>config.retry()}>Reintentar configuración</button></div>
       :config.status==='loading'?<p role="status">Consultando opciones de entrega…</p>
@@ -132,28 +134,28 @@ export default function ShippingCalculator({items,cart=false,onQuote,productPric
       :config.status==='success'&&enabled!==false&&catalog.status==='empty'?<p className="text-sm">No hay departamentos y ciudades disponibles por el momento.</p>
       :!canQuote?<p data-shipping-state="disabled" className="text-sm">La cotización automática de envío no está disponible en este momento.</p>
       :!sessionReady?<p role="status" className="text-sm">Cargando ubicación de entrega…</p>
-      :!current&&!error&&!busy&&<div data-shipping-state="idle"><p className="text-sm font-semibold">{isAuthenticated&&savedAddresses.isSuccess&&!addresses.length?'Agrega tu ubicación de entrega':'Calcula el costo de entrega'}</p><p className="text-sm">{isAuthenticated?'Para calcular el costo del envío, indícanos dónde deseas recibir el producto.':'Selecciona el lugar donde deseas recibir el producto.'}</p></div>}
+      :!current&&!error&&!busy&&!isAuthenticated&&<div data-shipping-state="idle"><p className="text-sm font-semibold">Calcula el costo de entrega</p><p className="text-sm">Selecciona el lugar donde deseas recibir el producto.</p></div>}
     {isAuthenticated&&savedAddresses.isError&&<div role="alert" className="text-sm text-red-700">No fue posible cargar tus direcciones. {deliveryFailureHint(savedAddresses.error)} <button type="button" disabled={savedAddresses.isFetching} className="min-h-11 underline" onClick={()=>savedAddresses.refetch()}>Reintentar direcciones</button></div>}
-    {canQuote&&sessionReady&&isAuthenticated&&savedAddresses.isSuccess&&!addresses.length&&<p className="text-sm text-gray-600">Todavía no tienes una dirección de entrega. Puedes ingresar una ubicación para calcular el envío o guardar una dirección completa.</p>}
+    {sessionReady&&isAuthenticated&&savedAddresses.isSuccess&&!addresses.length&&<div className="rounded-xl border border-blue-100 bg-blue-50 p-4"><p className="font-semibold">Todavía no tienes una dirección de entrega</p><p className="mt-1 text-sm text-gray-600">Agrega la dirección donde deseas recibir tus productos para calcular el costo del envío.</p></div>}
     {canQuote&&sessionReady&&isAuthenticated&&form.address_id&&<div className="rounded-lg bg-gray-50 p-3 text-sm" aria-label="Dirección de entrega seleccionada"><p className="font-semibold">Entregar en:</p><p>{form.shipping_address}, {form.city}, {form.department}</p><p>{form.customer_name} · {form.customer_phone}</p></div>}
-    {canQuote&&sessionReady&&!cart&&<button type="button" className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-left text-sm text-[#001575] hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700" onClick={()=>setEditing(value=>!value)} aria-expanded={editing}><MapPin aria-hidden="true" className="h-4 w-4 shrink-0"/>{form.address_id?'Cambiar dirección':form.city?`Envío a ${form.city} · Cambiar ubicación`:'Configurar ubicación de entrega'}</button>}
-    {editing&&canQuote&&sessionReady&&!addressEditor&&<>
+    {canQuote&&sessionReady&&(!isAuthenticated||addresses.length>0)&&!cart&&<button type="button" className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-left text-sm text-[#001575] hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700" onClick={()=>setEditing(value=>!value)} aria-expanded={editing}><MapPin aria-hidden="true" className="h-4 w-4 shrink-0"/>{isAuthenticated?'Cambiar dirección':form.city?`Envío a ${form.city} · Cambiar ubicación`:'Configurar ubicación de entrega'}</button>}
+    {editing&&canQuote&&sessionReady&&(!isAuthenticated||addresses.length>0)&&!addressEditor&&<>
     {isAuthenticated&&addresses.length>0&&<label className="block text-sm">Dirección guardada<select aria-label="Dirección guardada para cotizar" className="mt-1 w-full min-w-0 rounded border bg-white p-2" value={form.address_id??''} onChange={e=>{
       const address=addresses.find(value=>value.id===Number(e.target.value));if(address)selectAddress(address);else{manualLocation.current=true;setForm(previous=>({...previous,address_id:null,shipping_address:'',postal_code:'',complement:'',neighborhood:'',delivery_instructions:''}))}
     }}><option value="">Otra dirección</option>{addresses.map(address=><option key={address.id} value={address.id}>{address.label} — {address.city}</option>)}</select></label>}
-    <TCCAddressFields value={form} compact={!cart} onChange={patch=>{manualLocation.current=true;setForm(previous=>({...previous,...patch,address_id:null,...(!cart?{shipping_address:'',postal_code:'',complement:'',neighborhood:'',delivery_instructions:''}:{})}))}}/>
-    {cart&&<><label htmlFor={`${id}-street`} className="block text-sm">Dirección de entrega<input id={`${id}-street`} className="mt-1 w-full min-w-0 rounded border p-2" maxLength={500} value={form.shipping_address} onChange={e=>setForm(previous=>({...previous,shipping_address:e.target.value,address_id:null}))}/></label>
+    {!isAuthenticated&&<TCCAddressFields value={form} compact={!cart} onChange={patch=>{manualLocation.current=true;setForm(previous=>({...previous,...patch,address_id:null,...(!cart?{shipping_address:'',postal_code:'',complement:'',neighborhood:'',delivery_instructions:''}:{})}))}}/>}
+    {cart&&!isAuthenticated&&<><label htmlFor={`${id}-street`} className="block text-sm">Dirección de entrega<input id={`${id}-street`} className="mt-1 w-full min-w-0 rounded border p-2" maxLength={500} value={form.shipping_address} onChange={e=>setForm(previous=>({...previous,shipping_address:e.target.value,address_id:null}))}/></label>
     <label htmlFor={`${id}-postal`} className="block text-sm">Código postal (opcional)<input id={`${id}-postal`} className="mt-1 w-full min-w-0 rounded border p-2" maxLength={20} value={form.postal_code} onChange={e=>setForm(previous=>({...previous,postal_code:e.target.value,address_id:null}))}/></label>
     </>}
     <p className="text-xs text-gray-600">El envío se calcula automáticamente al seleccionar tu ciudad.</p>
     <button type="button" disabled={busy||!canQuote||!form.tcc_city_code} className="min-h-11 rounded-lg bg-blue-700 px-4 py-2 text-white disabled:opacity-60" onClick={()=>{forceRefresh.current=true;setStarted(true);setRevision(value=>value+1)}}>{busy?'Calculando envío…':'Calcular envío'}</button>
     </>}
-    {canQuote&&sessionReady&&isAuthenticated&&!cart&&!addressEditor&&<button type="button" className="min-h-11 font-semibold text-[#001575] underline" onClick={()=>setAddressEditor(true)}>Agregar nueva dirección</button>}
+    {sessionReady&&isAuthenticated&&!addressEditor&&<button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#001575] px-4 py-3 font-semibold text-white hover:bg-[#00104f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2" onClick={()=>setAddressEditor(true)}><Plus aria-hidden="true" className="h-4 w-4"/>Agregar nueva dirección</button>}
     {isAuthenticated&&sessionReady&&addressEditor&&<DeliveryAddressForm initial={{recipient_name:user?.name||'',phone:user?.phone||'',city:form.city,department:form.department,tcc_city_code:form.tcc_city_code,is_default:addresses.length===0}} onSaved={saveAddress} onCancel={()=>setAddressEditor(false)}/>}
     {busy&&canQuote&&<p role="status" className="text-sm">Consultando opciones de entrega…</p>}
     {error&&canQuote&&<div role={errorCode==='shipping_profile_incomplete'?'status':'alert'} className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{errorCode==='shipping_profile_incomplete'?<><p className="font-semibold">Envío pendiente por configurar</p><p>Este producto todavía no cuenta con la información necesaria para calcular automáticamente el costo de entrega.</p><Link className="inline-flex min-h-11 items-center font-semibold underline" to="/contacto">Contactar a un asesor</Link></>:<><p>No fue posible calcular el costo de envío.</p><p>{errorCode==='route_not_configured'?'Prueba otra ciudad o consulta con un asesor la disponibilidad de entrega.':'Verifica la ubicación o inténtalo nuevamente.'}</p><p className="text-xs">{error}</p><button type="button" disabled={busy} className="min-h-11 underline" onClick={()=>{forceRefresh.current=true;setRevision(value=>value+1)}}>Reintentar cotización</button></>}</div>}
     {current&&<div aria-live="polite" className="space-y-2 rounded-xl bg-gray-50 p-4 text-sm">
-      <p className="font-semibold">{current.approximate?'Envío estimado':'Envío cotizado'}: {fmt(current.total)}</p>
+      <p className="font-semibold">{current.approximate?'Envío estimado':'Envío cotizado'}: {current.free_shipping_applied?'Gratis':fmt(current.total)}</p>{current.free_shipping_applied?<><p>ImporGas JJ asume el costo de la entrega.</p><p>Ahorro en envío: {fmt(current.shipping_discount||'0')}</p></>:Number(current.amount_to_free_shipping)>0&&<p>Agrega {fmt(current.amount_to_free_shipping!)} más para obtener envío gratis.</p>}
       {!cart&&<><p>Subtotal de productos: {fmt(current.subtotal)}</p><p className="font-semibold">Total estimado: {fmt(current.order_total)}</p></>}
       <p>Cobertura disponible para esta cotización.</p>
       <p>Destino: {current.destination?.city||form.city}, {current.destination?.department||form.department}</p>

@@ -22,8 +22,8 @@ const chooseLocation=require('./location-select.cjs')
   else if(path.endsWith('/shipping/cities')){cityCalls++;body=[{code:'76001000',city:'CALI',department:'VALLE DEL CAUCA'},{code:'11001000',city:'BOGOTA',department:'BOGOTA D.C.'}]}
   else if(path.endsWith('/shipping/estimate')){
    const payload=route.request().postDataJSON();requests.push(payload)
-   assert.deepEqual(Object.keys(payload).sort(),['force','items','tcc_city_code'])
-   const rate=payload.tcc_city_code==='76001000'?30000:45000
+   assert.deepEqual(Object.keys(payload).sort(),payload.address_id?['address_id','force','items']:['force','items','tcc_city_code'])
+   const rate=payload.address_id===77||payload.tcc_city_code==='76001000'?30000:45000
    if(fail){status=503;body={error:'No fue posible calcular el envío en este momento.'}}
    else body={carrier:'TCC',total:String(rate),subtotal:'125000',order_total:String(125000+rate),tcc_rate:String(rate),surcharge:'0',approximate:true,expires_at:new Date(Date.now()+600000).toISOString()}
   }
@@ -80,10 +80,11 @@ const chooseLocation=require('./location-select.cjs')
   defaultAddress=false
   await page.evaluate(()=>sessionStorage.setItem('tcc-checkout-destination:998',JSON.stringify({tcc_city_code:'76001000'})))
   await page.reload()
-  await cards.first().getByText('Envío a CALI:',{exact:false}).waitFor()
+  await cards.first().getByRole('button',{name:'Agregar nueva dirección'}).waitFor()
+  assert.equal(await cards.first().getByText(/Total estimado:/).count(),0)
   historyCode=null
   await page.reload()
-  await cards.first().getByText('Envío a CALI:',{exact:false}).waitFor()
+  await cards.first().getByRole('button',{name:'Agregar nueva dirección'}).waitFor()
   assert.deepEqual(errors,[])
   console.log('PASS product cards: explicit session choice/default address/session fallback, guest persistence, shared config/location, lazy quote, cross-card update, cache, invalidation, errors, responsive. Catalogue reads:',cityCalls)
  }finally{await browser.close()}

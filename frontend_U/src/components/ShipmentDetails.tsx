@@ -18,6 +18,7 @@ export default function ShipmentDetails({shipment,orderId,admin=false,onUpdated}
       <p>Cuenta: {shipment.account_type} ({shipment.account}) · Ambiente: {shipment.environment}</p>
       <p>Peso real: {shipment.real_kg} kg · Volumétrico: {shipment.volumetric_kg} kg · Facturable calculado: {shipment.billable_kg} kg</p>
       <p>Tarifa TCC: ${shipment.tcc_rate} · Recargo: ${shipment.surcharge} · Cobrado: ${shipment.charged}</p>
+      {shipment.shipping_discount!==undefined&&<><p>Subsidio de envío: ${shipment.shipping_discount}</p><p>Envío gratis aplicado: {shipment.free_shipping_applied?'Sí':'No'}</p></>}
       {shipment.last_error&&<p role="alert" className="text-red-700">{shipment.last_error}</p>}
       {shipment.retry_allowed&&<button type="button" disabled={busy} onClick={retry} className="rounded border px-3 py-2">{busy?'Solicitando…':'Reintentar creación en TCC'}</button>}
       {Object.entries(shipment.documents||{}).map(([key,url])=><a key={key} className="mr-3 inline-block text-blue-700 underline" href={url} target="_blank" rel="noopener noreferrer">{{label:'Etiqueta TCC',relation:'Relación de despacho',waybill:'Documento de remesa'}[key]||'Documento TCC'}</a>)}

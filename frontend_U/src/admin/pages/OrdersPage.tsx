@@ -337,6 +337,12 @@ export default function OrdersPage() {
                           <TableCell className="text-right">{formatPrice(Number(selectedOrder.shipping_cost))}</TableCell>
                         </TableRow>
                       )}
+                      {selectedOrder.carrier_shipping_cost!=null&&<>
+                        <TableRow><TableCell colSpan={3} className="text-right">Costo real de TCC</TableCell><TableCell className="text-right">{formatPrice(Number(selectedOrder.carrier_shipping_cost))}</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={3} className="text-right">Cobrado al cliente por envío</TableCell><TableCell className="text-right">{selectedOrder.free_shipping_applied?'Gratis':formatPrice(Number(selectedOrder.shipping_cost))}</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={3} className="text-right">Subsidio de envío ImporGas JJ</TableCell><TableCell className="text-right">{formatPrice(Number(selectedOrder.shipping_discount))}</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={3} className="text-right">Envío gratis aplicado</TableCell><TableCell className="text-right">{selectedOrder.free_shipping_applied?'Sí':'No'}</TableCell></TableRow>
+                      </>}
                       <TableRow>
                         <TableCell colSpan={3} className="text-right text-muted-foreground">Descuentos adicionales</TableCell>
                         <TableCell className="text-right">{formatPrice(Number(selectedOrder.discounts||0))}</TableCell>

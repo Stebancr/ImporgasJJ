@@ -194,8 +194,8 @@ function CartPage() {
                   <span className="text-[#6B7280]">Subtotal ({cartItems.length} productos)</span>
                   <span className="font-medium text-[#1A1D21]">{formatPrice(subtotal)}</span>
                 </div>
-                <p className="text-sm text-[#6B7280]">{activeCalculation ? `Costo de envío: ${formatPrice(Number(activeCalculation.total))}` : tccEnabled ? "Envío pendiente de cotización." : "El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente."}</p>
-                <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeCalculation?.discounts||0))}</span></div>
+                <p className="text-sm text-[#6B7280]">{activeCalculation ? (activeCalculation.free_shipping_applied ? "Envío: Gratis" : `Costo de envío: ${formatPrice(Number(activeCalculation.total))}`) : tccEnabled ? "Envío pendiente de cotización." : "El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente."}</p>
+                {activeCalculation?.free_shipping_applied&&<p className="text-sm font-semibold text-green-800">Ahorro en envío: {formatPrice(Number(activeCalculation.shipping_discount))}</p>}<div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeCalculation?.discounts||0))}</span></div>
                 <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(Number(activeCalculation?.taxes||0))}</span></div>
                 <div className="border-t border-[#E5E7EB] pt-4">
                   <div className="flex justify-between items-center">

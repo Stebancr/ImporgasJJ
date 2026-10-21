@@ -23,13 +23,12 @@ export function readDeliverySelection(userId:string|undefined,catalog:TCCCity[],
   try{stored=JSON.parse(sessionStorage.getItem(shippingDestinationKey(userId||'guest'))||'null')}catch{/* Optional storage. */}
   const chosen=userId?addresses.find(address=>address.id===stored?.address_id):undefined
   if(chosen&&addressLocation(chosen,catalog))return {location:addressLocation(chosen,catalog),address:chosen}
-  if(stored?.manual_location&&!stored.address_id)return {location:valid(stored.tcc_city_code)}
-  const preferred=userId?addresses.find(address=>address.is_default&&addressLocation(address,catalog)):undefined
-  if(preferred)return {location:addressLocation(preferred,catalog),address:preferred}
-  if(valid(stored?.tcc_city_code))return {location:valid(stored?.tcc_city_code)}
   if(userId){
-    try{const guest=JSON.parse(sessionStorage.getItem(shippingDestinationKey('guest'))||'null');return {location:valid(guest?.tcc_city_code)}}catch{/* Generic fallback only. */}
+    const address=addresses.find(value=>value.is_default&&addressLocation(value,catalog))||addresses.find(value=>addressLocation(value,catalog))
+    return address?{location:addressLocation(address,catalog),address}:{location:null}
   }
+  if(stored?.manual_location&&!stored.address_id)return {location:valid(stored.tcc_city_code)}
+  if(valid(stored?.tcc_city_code))return {location:valid(stored?.tcc_city_code)}
   return {location:null}
 }
 
@@ -54,7 +53,8 @@ export function useDeliveryLocation() {
   return useQuery({queryKey: key, queryFn: () => {
     if(catalog.error)throw catalog.error
     if(user&&addresses.error)throw addresses.error
-    return readDeliverySelection(user?.id,catalog.data||[],addresses.data||[]).location
+    const selected=readDeliverySelection(user?.id,catalog.data||[],addresses.data||[])
+    return selected.location?{...selected.location,address_id:selected.address?.id}:null
   }, enabled: !isLoading&&!catalog.isPending&&(!user||!addresses.isPending),
     staleTime: 60000, retry: false})
 }

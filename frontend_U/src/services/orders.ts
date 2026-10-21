@@ -37,6 +37,11 @@ export interface BackendOrder {
   postal_code: string
   subtotal: string
   shipping_cost: string | null
+  customer_shipping_charge?:string|null
+  carrier_shipping_cost?:string|null
+  shipping_discount?:string|null
+  free_shipping_applied?:boolean|null
+  free_shipping_threshold?:string|null
   taxes?: string
   discounts?: string
   paid_total?: string | null

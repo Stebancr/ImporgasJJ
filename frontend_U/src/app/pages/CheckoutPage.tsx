@@ -75,7 +75,7 @@ function CheckoutPage() {
     const controller=new AbortController()
     setQuoted(null)
     setRateNotice('')
-    if(tccEnabled!==true||!destinationReady||addressEditor)return
+    if(tccEnabled!==true||!destinationReady||addressEditor||!selectedAddressId){setQuoting(false);return}
     setShippingError('')
     if(!form.email||!form.name||!form.phone||!form.address||(!form.tcc_city_code&&!selectedAddressId)){setQuoting(false);return}
     setQuoting(true)
@@ -140,7 +140,7 @@ function CheckoutPage() {
         const sameDestination=!destination||(destination.tcc_city_code===saved?.form?.tcc_city_code
           &&(destination.address_id??null)===(saved?.address_id??null)
           &&[['shipping_address','address'],['complement','complement'],['neighborhood','neighborhood'],['delivery_instructions','delivery_instructions']].every(([source,target])=>!(source in destination)||destination[source]===saved?.form?.[target]))
-        if(saved?.form&&sameDestination&&(!saved.address_id||data.some(address=>address.id===saved.address_id))){
+        if(saved?.form&&sameDestination&&saved.address_id&&data.some(address=>address.id===saved.address_id)){
           setForm(previous=>({...previous,...Object.fromEntries(Object.entries(saved.form).filter(([key,value])=>key in previous&&typeof value==='string')),paymentMethod:'wompi'}))
           setSelectedAddressId(saved.address_id||null)
           if(saved.address_id)applyAddress(data.find(a=>a.id===saved.address_id)!)
@@ -152,15 +152,7 @@ function CheckoutPage() {
         const draft = user?.id ? JSON.parse(sessionStorage.getItem(shippingDestinationKey(user.id)) || (!defaultAddr?sessionStorage.getItem(shippingDestinationKey('guest')):null) || 'null') : null
         if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
           if (draft.address_id) defaultAddr = data.find(addr => addr.id === draft.address_id) || defaultAddr
-          else if (typeof draft.tcc_city_code === 'string') {
-            const text = (key:string) => typeof draft[key] === 'string' ? draft[key] : ''
-            setSelectedAddressId(null)
-            setForm(previous => ({...previous, name:text('customer_name')||previous.name, phone:text('customer_phone')||previous.phone,
-              address:text('shipping_address'), city:text('city'), department:text('department'), postalCode:text('postal_code'),
-              tcc_city_code:text('tcc_city_code'), complement:text('complement'), neighborhood:text('neighborhood'),
-              delivery_instructions:text('delivery_instructions')}))
-            return
-          }
+
         }
       } catch { /* Invalid or unavailable browser storage never replaces a saved address. */ }
       if (defaultAddr) {
@@ -223,6 +215,7 @@ function CheckoutPage() {
     }).format(price)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    if(isAuthenticated&&!['email','paymentMethod'].includes(e.target.name))return
     if(!['email','paymentMethod'].includes(e.target.name))setSelectedAddressId(null)
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
@@ -431,7 +424,7 @@ function CheckoutPage() {
                       <label htmlFor="checkout-name" className="block text-sm font-medium text-gray-700 mb-1">Nombre Completo</label>
                       <input
                         type="text"
-                        name="name" id="checkout-name" autoComplete="name"
+                        readOnly={isAuthenticated} name="name" id="checkout-name" autoComplete="name"
                         value={form.name}
                         onChange={handleInputChange}
                         required
@@ -455,7 +448,7 @@ function CheckoutPage() {
                     <label htmlFor="checkout-phone" className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
                     <input
                       type="tel"
-                      name="phone" id="checkout-phone" autoComplete="tel"
+                      readOnly={isAuthenticated} name="phone" id="checkout-phone" autoComplete="tel"
                       value={form.phone}
                       onChange={handleInputChange}
                       required
@@ -467,7 +460,7 @@ function CheckoutPage() {
                     <label htmlFor="checkout-address" className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
                     <input
                       type="text"
-                      name="address" id="checkout-address" autoComplete="street-address"
+                      readOnly={isAuthenticated} name="address" id="checkout-address" autoComplete="street-address"
                       value={form.address}
                       onChange={handleInputChange}
                       required
@@ -475,13 +468,13 @@ function CheckoutPage() {
                       placeholder="Calle 123 #45-67, Apto 101" />
                   </div>
 
-                  <TCCAddressFields value={form} onChange={patch=>{setSelectedAddressId(null);setForm(prev=>({...prev,...patch}))}}/>
+                  {!isAuthenticated&&<TCCAddressFields value={form} onChange={patch=>{setSelectedAddressId(null);setForm(prev=>({...prev,...patch}))}}/>}
                   <div className="grid md:grid-cols-3 gap-4">
                     <div>
                       <label htmlFor="checkout-postalCode" className="block text-sm font-medium text-gray-700 mb-1">Código Postal</label>
                       <input
                         type="text"
-                        name="postalCode" id="checkout-postalCode" autoComplete="postal-code"
+                        readOnly={isAuthenticated} name="postalCode" id="checkout-postalCode" autoComplete="postal-code"
                         value={form.postalCode}
                         onChange={handleInputChange}
                         className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -639,7 +632,7 @@ function CheckoutPage() {
                 </div>
                 <div className="flex justify-between text-sm"><span>Descuentos adicionales</span><span>{formatPrice(Number(activeQuote?.discounts||0))}</span></div>
                 <div className="flex justify-between text-sm"><span>Impuestos adicionales</span><span>{formatPrice(Number(activeQuote?.taxes||0))}</span></div>
-                {tccEnabled ? <div className="flex justify-between"><span>Costo de envío</span><span>{shipping===null?'Pendiente de cotización':formatPrice(shipping)}</span></div>
+                {tccEnabled ? <div className="flex justify-between"><span>Costo de envío</span><span>{shipping===null?'Pendiente de cotización':activeQuote?.free_shipping_applied?'Gratis':formatPrice(shipping)}</span></div>
                   : <p className="text-sm text-gray-600">El valor del envío no está incluido en esta compra. Las condiciones de entrega serán confirmadas posteriormente.</p>}
                 <div className="border-t pt-3">
                   <div className="flex justify-between">
@@ -651,7 +644,7 @@ function CheckoutPage() {
 
               {tccEnabled && <div className="mt-4 space-y-2 text-sm" aria-live="polite">
                 {quoting&&<p>Calculando el costo de envío…</p>}
-                {activeQuote&&<><p>Costo de envío: {formatPrice(Number(activeQuote.tcc_rate))}</p><p>Preparación del envío: {formatPrice(Number(activeQuote.surcharge))}</p><p>Precio válido hasta {new Date(activeQuote.expires_at).toLocaleTimeString('es-CO')}</p></>}
+                {activeQuote&&<><p>Envío al cliente: {activeQuote.free_shipping_applied?'Gratis':formatPrice(Number(activeQuote.total))}</p>{activeQuote.free_shipping_applied&&<p>Ahorro en envío: {formatPrice(Number(activeQuote.shipping_discount))}</p>}<p>Precio válido hasta {new Date(activeQuote.expires_at).toLocaleTimeString('es-CO')}</p></>}
                 <button type="button" className="text-blue-700 underline" disabled={quoting} onClick={()=>setQuoteVersion(value=>value+1)}>Volver a cotizar</button>
               </div>}
               {rateNotice&&<p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{rateNotice}</p>}

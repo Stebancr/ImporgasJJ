@@ -18,6 +18,8 @@ export const emptyShippingProfile: ShippingProfile = { declared_value_from_price
 
 export interface TCCCity { code: string; city: string; department: string }
 export interface ShippingCalculation {
+  carrier_shipping_cost?:string;customer_shipping_charge?:string;shipping_discount?:string;free_shipping_applied?:boolean
+  free_shipping_threshold?:string;eligible_subtotal?:string;amount_to_free_shipping?:string
   id?: string; carrier: string; tcc_rate: string; surcharge: string; total: string; subtotal: string; order_total: string
   discounts?: string; taxes?: string; approximate?: boolean; quoted_at?: string
   destination?: {city:string;department:string}; estimated_delivery?: string | null
@@ -25,6 +27,7 @@ export interface ShippingCalculation {
 }
 export interface ShippingQuote extends ShippingCalculation {id:string}
 export interface ShipmentInfo {
+  carrier_shipping_cost?:string;customer_shipping_charge?:string;shipping_discount?:string;free_shipping_applied?:boolean
   id: number; carrier: string; state: string; state_label: string; waybill: string | null; last_update: string
   last_sync_at: string | null; tracking_url: string; tracking_api_available: boolean
   history: Array<{state: string; description: string; created_at: string}>
@@ -94,7 +97,8 @@ async function estimate(payload:EstimateInput&{force?:boolean},signal?:AbortSign
   } finally {const next=estimateQueue.shift();if(next)next();else activeEstimates--}
 }
 export const shippingService = {
-  config: () => api.get<{enabled:boolean; tracking_api_available:boolean}>('/shipping/config'),
+  config: () => api.get<{enabled:boolean; tracking_api_available:boolean;free_shipping_threshold?:string}>('/shipping/config'),
+  promotion:(items:{product_id:number;quantity:number}[],signal?:AbortSignal)=>api.post<{eligible_subtotal:string;free_shipping_threshold:string;amount_to_free_shipping:string}>('/shipping/promotion',{items},signal),
   cities,
   destination: () => api.get<{destination: {code:string;city:string;department:string}|null}>('/shipping/destination'),
   quote: (payload: unknown, signal?:AbortSignal) => api.post<ShippingQuote>('/shipping/quote',payload,signal),

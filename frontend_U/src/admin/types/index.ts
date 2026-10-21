@@ -168,6 +168,9 @@ export interface Order {
   postal_code: string
   subtotal: number
   shipping_cost: number | null
+  carrier_shipping_cost?:number|string|null
+  shipping_discount?:number|string|null
+  free_shipping_applied?:boolean|null
   taxes?: number | string
   discounts?: number | string
   paid_total?: number | string | null
