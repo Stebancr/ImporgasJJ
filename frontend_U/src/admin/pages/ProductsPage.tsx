@@ -37,8 +37,12 @@ import { locationsService } from '@/admin/services/admin_locations'
 import { clearProductDraft, productDraftKey, readDraftImages, readProductDraft, saveDraftImages, saveProductDraft } from '@/admin/services/product_draft'
 import type { Product, Brand, Category, ProductSpec, Location } from '@/admin/types'
 import ProductDescription from '@/components/ProductDescription'
+import ShippingProfileFields from '@/components/ShippingProfileFields'
+import { emptyShippingProfile, type ShippingProfile } from '@/services/shipping'
+import { useShippingConfig } from '@/hooks/useShippingConfig'
 
 interface FormData {
+  shipping_profile?: ShippingProfile
   name: string
   description: string
   price: string
@@ -50,6 +54,7 @@ interface FormData {
 }
 
 const defaultForm: FormData = {
+  shipping_profile: { ...emptyShippingProfile, declared_value_from_price: true },
   name: '',
   description: '',
   price: '',
@@ -73,7 +78,7 @@ export default function ProductsPage() {
   const showErrors = (errors:Record<string,string>) => {
     setFieldErrors(errors)
     setError('Revisa los campos indicados. Tus cambios se conservan.')
-    requestAnimationFrame(() => { errorRef.current?.focus(); errorRef.current?.scrollIntoView({block:'nearest'}) })
+    requestAnimationFrame(() => { const target=document.querySelector<HTMLElement>('[role="dialog"] [aria-invalid="true"]'); (target??errorRef.current)?.focus(); (target??errorRef.current)?.scrollIntoView({block:'nearest'}) })
   }
   const [imageError, setImageError] = useState('')
   const [products, setProducts] = useState<Product[]>([])
@@ -83,6 +88,7 @@ export default function ProductsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [searchTerm, setSearchTerm] = useState('')
+  const [shippingFilter, setShippingFilter] = useState<'' | 'complete' | 'incomplete'>('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoadingProduct, setIsLoadingProduct] = useState(false)
@@ -94,6 +100,8 @@ export default function ProductsPage() {
   const [draftRestored, setDraftRestored] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [formData, setFormData] = useState<FormData>(defaultForm)
+  const {enabled:tccEnabled}=useShippingConfig()
+  const initialShipping=useRef(JSON.stringify(defaultForm.shipping_profile))
 
   // Image upload state
   const [imageFiles, setImageFiles] = useState<File[]>([])
@@ -115,6 +123,7 @@ export default function ProductsPage() {
     try {
       const res = await productsService.getAll({
         search: searchTerm || undefined,
+        shipping_status: shippingFilter || undefined,
         page,
         per_page: PER_PAGE,
       })
@@ -129,7 +138,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts()
-  }, [searchTerm, page])
+  }, [searchTerm, page, shippingFilter])
 
   useEffect(() => {
     brandsService.getAll({ is_active: true, per_page: 100 }).then(r => setBrands(r.data)).catch(() => {})
@@ -194,6 +203,7 @@ export default function ProductsPage() {
     setError(null)
     if (product) {
       setEditingProduct(product)
+      initialShipping.current=JSON.stringify(emptyShippingProfile)
       setFormData(defaultForm)
       setIsDialogOpen(true)
       setIsLoadingProduct(true)
@@ -203,11 +213,13 @@ export default function ProductsPage() {
           productsService.getStock(product.id),
         ])
         setEditingProduct(full)
+        initialShipping.current=JSON.stringify(full.shipping_profile??emptyShippingProfile)
         setGallery((full.images??[]).map(img=>({id:img.id,url:img.image_url||img.image,alt_text:img.alt_text})))
         setPrimary(Math.max(0,(full.images??[]).findIndex(img=>img.is_primary)))
         setFormData({
           name: full.name,
           description: full.description ?? '',
+          shipping_profile: full.shipping_profile ?? emptyShippingProfile,
           price: full.price.toString(),
           original_price: full.original_price?.toString() ?? '',
           category: full.category_id.toString(),
@@ -227,6 +239,7 @@ export default function ProductsPage() {
       }
     } else {
       setEditingProduct(null)
+      initialShipping.current=JSON.stringify(defaultForm.shipping_profile)
       const key = productDraftKey()
       const draft = readProductDraft(key)
       if(draft?.operationKey) operation.current.key=draft.operationKey
@@ -256,6 +269,17 @@ export default function ProductsPage() {
     if(!formData.brand) errors.brand='Selecciona una marca.'
     if(!Number.isFinite(Number(formData.price)) || Number(formData.price)<=0) errors.price='El precio debe ser mayor que cero.'
     if(formData.original_price && Number(formData.original_price)<Number(formData.price)) errors.original_price='Debe ser mayor o igual al precio de venta.'
+    const shipping=formData.shipping_profile??emptyShippingProfile
+    const sendShipping=JSON.stringify(shipping)!==initialShipping.current||(!editingProduct&&tccEnabled===true)
+    if(sendShipping){
+      if(!Number.isInteger(shipping.packages_per_unit)||Number(shipping.packages_per_unit)<1||Number(shipping.packages_per_unit)>100) errors.shipping_profile='Indica entre 1 y 100 paquetes.'
+      if(formData.is_available && shipping.requires_shipping){
+        for(const field of ['weight_kg','height_cm','width_cm','length_cm',...(shipping.declared_value_from_price?[]:['declared_value'])] as const){
+          const value=shipping[field as keyof ShippingProfile]
+          if(!value||!Number.isFinite(Number(value))||Number(value)<=0) errors[`shipping_profile.${field}`]='Ingresa un valor mayor que cero.'
+        }
+      }
+    }
     if(Object.values(stockValues).some(value=>value!==''&&(!/^\d+$/.test(value)||Number(value)>2147483647))) errors.stocks='Las existencias deben ser números enteros no negativos.'
     if(newSpecRows.some(row=>!row.name.trim()||!row.value.trim())) errors.specs='Completa o elimina las características vacías.'
     if(Object.keys(errors).length){showErrors(errors);return}
@@ -266,7 +290,7 @@ export default function ProductsPage() {
       let upload=0
       const payload={
         product:{...formData,price:formData.price,original_price:formData.original_price||null,
-          category:Number(formData.category),brand:Number(formData.brand)},
+          category:Number(formData.category),brand:Number(formData.brand),shipping_profile:sendShipping?shipping:undefined},
         updated_at:editingProduct?.updated_at,
         images:gallery.map(item=>({... (item.id?{id:item.id}:{file:`upload_${upload++}`}),alt_text:item.alt_text})),
         primary:gallery.length?primary:null,
@@ -341,6 +365,11 @@ export default function ProductsPage() {
               Lista de Productos
               <Badge variant="secondary">{total}</Badge>
             </CardTitle>
+            <label className="text-sm">Configuración de envío
+              <select aria-label="Filtrar configuración de envío" className="ml-2 rounded border p-2" value={shippingFilter} onChange={e=>{setShippingFilter(e.target.value as typeof shippingFilter);setPage(1)}}>
+                <option value="">Todos</option><option value="complete">TCC completo</option><option value="incomplete">TCC incompleto</option>
+              </select>
+            </label>
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -381,6 +410,8 @@ export default function ProductsPage() {
                       <TableRow key={product.id}>
                         <TableCell>
                           <p className="font-medium">{product.name}</p>
+                          {product.shipping_ready === false && <button type="button" className="mt-1 block text-left focus-visible:outline focus-visible:outline-2" title={(product.shipping_missing_fields ?? []).join(', ')} aria-label={`Editar envío de ${product.name}: ${(product.shipping_missing_fields ?? []).join(', ')}`} onClick={()=>handleOpenDialog(product)}><Badge variant="warning">Faltan especificaciones de envío</Badge><span className="block text-xs text-muted-foreground">{product.shipping_missing_fields?.join(', ')}</span></button>}
+                          {product.shipping_ready === true && <Badge variant="secondary" className="mt-1">Configuración de envío completa</Badge>}
                           {product.is_featured && (
                             <Badge variant="secondary" className="mt-1">Destacado</Badge>
                           )}
@@ -560,9 +591,10 @@ export default function ProductsPage() {
               </div>
             </div>
 
+            <ShippingProfileFields errors={fieldErrors} price={formData.price} value={formData.shipping_profile ?? emptyShippingProfile} onChange={shipping_profile=>setFormData({...formData,shipping_profile})}/>
 
+            {fieldErrors.shipping_profile && <p className="text-sm text-destructive">{fieldErrors.shipping_profile}</p>}{fieldErrors.specs && <p className="text-sm text-destructive">{fieldErrors.specs}</p>}{/* Specifications */}
             <div className="grid gap-2">
-              {fieldErrors.specs && <p className="text-sm text-destructive">{fieldErrors.specs}</p>}
               <div className="flex items-center justify-between">
                 <Label>Especificaciones del producto</Label>
                 <Button

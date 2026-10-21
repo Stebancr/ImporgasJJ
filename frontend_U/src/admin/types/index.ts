@@ -80,6 +80,9 @@ export interface SpecAttribute {
 
 // Product Types
 export interface Product {
+  shipping_profile?: import('../../services/shipping').ShippingProfile | null
+  shipping_ready?: boolean
+  shipping_missing_fields?: string[]
   id: number
   name: string
   slug: string
@@ -151,6 +154,7 @@ export interface Review {
 export type OrderStatus = 'pending' | 'paid' | 'preparing' | 'shipping' | 'delivered' | 'installed' | 'cancelled'
 
 export interface Order {
+  shipment?: import('../../services/shipping').ShipmentInfo | null
   id: number
   order_number: string
   tracking_code: string | null

@@ -113,7 +113,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Error de conexión' }))
-    throw Object.assign(new Error(errorMessage(error) || 'Error en la solicitud'), {code:typeof error.code==='string'?error.code:undefined})
+    throw Object.assign(new Error(errorMessage(error) || 'Error en la solicitud'), {code:typeof error.code==='string'?error.code:undefined, fields:error})
   }
 
   if (response.status === 204) return undefined as T

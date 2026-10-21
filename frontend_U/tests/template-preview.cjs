@@ -12,7 +12,7 @@ const assert=require('node:assert/strict')
  await page.routeWebSocket('**/ws/**',ws=>ws.close())
  let sends=0,savePayload=''
  const template={id:81,name:'Saludo multicanal QA',text:'Hola *{{nombre_cliente}}* 👋\n_Revisa tu pedido_ ~anterior~ `PED-123`\nhttps://example.invalid/producto\n<script>window.QA_INJECTED=1</script>',category:'Ventas',active:true,channels:['whatsapp_web','facebook','instagram'],variables:['nombre_cliente'],favorite:false,last_used_at:null,author_name:'QA',updated_at:new Date().toISOString(),attachment_url:'',attachment_metadata:{}}
- const pdf={...template,id:82,name:'Adjunto protegido QA',attachment_url:'/api/crm-chat/templates/82/attachment/',attachment_metadata:{name:'Informe.pdf',mime_type:'application/pdf'}}
+ const pdf={...template,id:82,name:'Adjunto protegido QA',category:'',attachment_url:'/api/crm-chat/templates/82/attachment/',attachment_metadata:{name:'Informe.pdf',mime_type:'application/pdf'}}
  await page.route('**/api/**',async route=>{
   const url=new URL(route.request().url());let body={},status=200
   if(url.pathname.endsWith('/user/perfil'))body={id:998,tipo_usuario:4,nombre_completo:'Administrador QA',estado:1}
@@ -73,6 +73,13 @@ const assert=require('node:assert/strict')
  await preview.getByLabel('Canal de la vista previa').click()
  await page.getByRole('option',{name:'Facebook Messenger',exact:true}).click()
  await preview.getByText(/Este canal requiere enviar el texto y este archivo por separado/).waitFor()
+ await page.getByRole('combobox',{name:'Categoría',exact:true}).click()
+ await page.getByRole('option',{name:'Sin categoría',exact:true}).click()
+ assert.equal(await page.getByRole('button',{name:template.name,exact:true}).count(),0)
+ assert.equal(await page.getByRole('button',{name:pdf.name,exact:true}).count(),1)
+ await page.getByRole('combobox',{name:'Estado',exact:true}).click()
+ await page.getByRole('option',{name:'Inactivas',exact:true}).click()
+ await page.getByText('No hay plantillas para estos filtros.',{exact:true}).waitFor()
  assert.equal(sends,0);assert.equal(savePayload,'');assert.deepEqual(errors,[])
  console.log('PASS: three channel styles, WhatsApp formatting, literal Instagram/Facebook text, safe HTML, variables, live edit, local image, protected attachment error, responsive 1280/768/390, no sends or saves')
  await browser.close()

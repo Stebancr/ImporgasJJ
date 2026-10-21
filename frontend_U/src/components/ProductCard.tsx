@@ -5,6 +5,7 @@ import { Product } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { useCart } from '../context/CartContext'
 import { useFavorites } from '../context/FavoritesContext'
+import ProductShippingEstimate from './ProductShippingEstimate'
 
 interface ProductCardProps {
   product: Product
@@ -173,6 +174,8 @@ function ProductCard({ product }: ProductCardProps) {
             </span>
           )}
         </div>
+
+        <ProductShippingEstimate productId={Number(product.id)} price={product.price} />
 
         {/* Mobile: always-visible add-to-cart */}
         <button

@@ -2,6 +2,7 @@ import api from './admin_api'
 import type { Product, ProductImage, ProductSpec, ProductStock, ApiResponse, PaginatedResponse } from '@/admin/types'
 
 export interface ProductFilters {
+  shipping_status?: 'complete' | 'incomplete'
   category_id?: number
   brand_id?: number
   is_available?: boolean
@@ -14,6 +15,7 @@ export interface ProductFilters {
 }
 
 export interface CreateProductData {
+  shipping_profile?: import('../../services/shipping').ShippingProfile
   name: string
   description: string
   price: number

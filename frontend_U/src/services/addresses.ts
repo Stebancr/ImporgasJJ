@@ -1,7 +1,7 @@
 import api from './api'
-interface DeliveryDetails { complement?:string; neighborhood?:string; delivery_instructions?:string }
+import type { TCCAddress } from './shipping'
 
-export interface UserAddress extends DeliveryDetails {
+export interface UserAddress extends Partial<TCCAddress> {
   id: number
   label: string
   recipient_name: string
@@ -15,7 +15,7 @@ export interface UserAddress extends DeliveryDetails {
   updated_at: string
 }
 
-export interface CreateAddressPayload extends DeliveryDetails {
+export interface CreateAddressPayload extends Partial<TCCAddress> {
   label: string
   recipient_name: string
   phone: string
@@ -39,16 +39,19 @@ class AddressesService {
 
   async create(payload: CreateAddressPayload): Promise<UserAddress> {
     const response = await api.post<{ data: UserAddress }>('/ecommerce/user/addresses', payload)
+    window.dispatchEvent(new Event('delivery:location-changed'))
     return response.data
   }
 
   async update(id: number, payload: Partial<CreateAddressPayload>): Promise<UserAddress> {
     const response = await api.put<{ data: UserAddress }>(`/ecommerce/user/addresses/${id}`, payload)
+    window.dispatchEvent(new Event('delivery:location-changed'))
     return response.data
   }
 
   async delete(id: number): Promise<void> {
     await api.delete(`/ecommerce/user/addresses/${id}`)
+    window.dispatchEvent(new Event('delivery:location-changed'))
   }
 }
 

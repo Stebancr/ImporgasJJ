@@ -1,7 +1,7 @@
 // Docker-only, disposable Django/PostgreSQL database. No real carrier calls.
 const {chromium}=require('/tmp/crm-ui/node_modules/playwright')
 const assert=require('node:assert/strict')
-const api='http://general-e2e-backend:8099'
+const api=process.env.QA_API_URL||'http://general-e2e-backend:8099'
 ;(async()=>{
  const browser=await chromium.launch({args:['--host-resolver-rules=MAP crm.localhost nginx']})
  const page=await browser.newPage();page.setDefaultTimeout(20000)
