@@ -573,6 +573,7 @@ INSTAGRAM_OAUTH_STATE_MAX_AGE = config('INSTAGRAM_OAUTH_STATE_MAX_AGE', default=
 
 # TCC secrets are backend-only. Production requires a separately supplied token
 # and a deliberate approval flag; development credentials never cross over.
+FREE_SHIPPING_THRESHOLD = config('FREE_SHIPPING_THRESHOLD', default='2000000')
 TCC_SHIPPING_ENABLED = config('TCC_SHIPPING_ENABLED', default=False, cast=bool)
 TCC_API_ENVIRONMENT = config('TCC_API_ENVIRONMENT', default='sandbox')
 TCC_DEVELOPMENT_BASE_URL = config('TCC_DEVELOPMENT_BASE_URL', default='https://testsomos.tcc.com.co')

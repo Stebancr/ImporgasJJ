@@ -51,12 +51,13 @@ class DestinationSessionTests(APITestCase):
         address.refresh_from_db();self.assertTrue(address.is_default)
 
     def test_estimate_cache_is_scoped_to_account(self):
-        self.assertEqual(self.estimate(tcc_city_code='76001000').status_code,200)
-        self.assertEqual(self.estimate(tcc_city_code='76001000').status_code,200)
+        address=self.address()
+        self.assertEqual(self.estimate(address_id=address.pk).status_code,200)
+        self.assertEqual(self.estimate(address_id=address.pk).status_code,200)
         self.assertEqual(self.http.call_count,1)
         other=Credenciales.objects.create(usuario='destination-cache-qa',estado=1,tipo_usuario=0)
         self.client.force_authenticate(other)
-        self.assertEqual(self.estimate(tcc_city_code='76001000').status_code,200)
+        self.assertEqual(self.estimate(address_id=self.address(other).pk).status_code,200)
         self.assertEqual(self.http.call_count,2)
 
     def test_expired_session_is_not_treated_as_an_empty_address_list(self):

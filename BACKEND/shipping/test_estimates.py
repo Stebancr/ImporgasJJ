@@ -64,6 +64,7 @@ class EstimateAndPricingTests(APITestCase):
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 
     def test_estimate_invalidates_on_quantity_city_and_logistics_changes(self):
+        self.client.force_authenticate(None)
         payload = {'items': self.payload['items'], 'tcc_city_code': '11001000'}
         def estimate(data):
             response = self.client.post(reverse('shipping-estimate'), data, format='json')
@@ -80,6 +81,7 @@ class EstimateAndPricingTests(APITestCase):
         self.assertEqual(self.http.call_count, 4)
 
     def test_incomplete_product_and_unknown_geography_are_blocked(self):
+        self.client.force_authenticate(None)
         payload = {'items': self.payload['items'], 'tcc_city_code': 'invalid'}
         self.assertEqual(self.client.post(reverse('shipping-estimate'), payload, format='json').status_code, 400)
         self.profile.weight_kg = None; self.profile.save()
@@ -92,6 +94,7 @@ class EstimateAndPricingTests(APITestCase):
         self.http.assert_not_called()
 
     def test_missing_profile_returns_actionable_error_without_carrier_request(self):
+        self.client.force_authenticate(None)
         self.profile.delete()
         response=self.client.post(reverse('shipping-estimate'), {'items': self.payload['items'], 'tcc_city_code':'76001000'}, format='json')
         self.assertEqual(response.status_code,422)
@@ -134,6 +137,7 @@ class EstimateAndPricingTests(APITestCase):
         self.assertFalse(Order.objects.exists())
 
     def test_provider_credentials_and_nonofficial_base_fail_safely(self):
+        self.client.force_authenticate(None)
         with override_settings(TCC_DEVELOPMENT_BASE_URL='https://internal.invalid'):
             with self.assertRaises(TCCError): TCCClient()
         self.http.side_effect = None

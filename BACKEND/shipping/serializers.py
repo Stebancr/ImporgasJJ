@@ -20,8 +20,15 @@ def quote_data(quote):
 
 
 def calculation_data(snapshot, rate, surcharge, shipping, created_at, expires_at):
+    from .policy import shipping_policy
+    policy = snapshot.get('shipping_policy')
+    if policy is None and snapshot.get('pricing_policy') == 'customer_subsidy_v2':
+        policy = shipping_policy(snapshot['subtotal'], rate, limit=snapshot['free_shipping_threshold'], requires_shipping=bool(snapshot['packages']))
+    if policy:
+        shipping = policy['customer_shipping_charge']
     breakdown = totals(snapshot['subtotal'], shipping)
     return {'carrier': 'TCC', 'tcc_rate': str(rate), 'surcharge': str(surcharge), 'total': str(shipping),
+            **(policy or {}),
             'subtotal': str(breakdown['subtotal']), 'discounts': str(breakdown['discounts']), 'taxes': str(breakdown['taxes']),
             'order_total': str(breakdown['total']), 'expires_at': expires_at, 'quoted_at': created_at,
             'estimated_delivery': None, 'carrier_quote_id': None,
@@ -49,6 +56,7 @@ def shipment_data(order, admin=False):
             'real_kg': quote.snapshot['real_kg'], 'volumetric_kg': quote.snapshot['volumetric_kg'],
             'billable_kg': quote.snapshot['billable_kg'], 'tcc_rate': str(quote.tcc_rate),
             'surcharge': str(quote.surcharge), 'charged': str(quote.total),
+            **quote.snapshot.get('shipping_policy', {}),
             'last_error': shipment.last_error, 'documents': shipment.document_urls,
             'retry_allowed': shipment.state == 'error' and settings.TCC_SHIPPING_ENABLED and settings.TCC_DISPATCH_ENABLED,
             'environment': quote.environment})

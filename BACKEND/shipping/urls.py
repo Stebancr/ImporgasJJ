@@ -1,7 +1,8 @@
 from django.urls import path
-from .views import ShippingConfigView, CityListView, QuoteView, EstimateView, ShipmentActionView, DestinationView
+from .views import ShippingConfigView, CityListView, QuoteView, EstimateView, ShipmentActionView, DestinationView, PromotionView
 
 urlpatterns = [
+    path('promotion', PromotionView.as_view(), name='shipping-promotion'),
     path('destination', DestinationView.as_view(), name='shipping-destination'),
     path('config', ShippingConfigView.as_view(), name='shipping-config'),
     path('cities', CityListView.as_view(), name='shipping-cities'),

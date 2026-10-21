@@ -73,6 +73,7 @@ def main():
                         'shipments': Shipment.objects.count(), 'addresses': UserAddress.objects.count(), 'database_isolated': True,
                         'product_id': product.pk, 'webhook_path': reverse('wompi-webhook'),
                         'rows': list(Order.objects.values('id','subtotal','shipping_cost','discounts','taxes','total','paid_total')),
+                        'shipping_accounting': list(Order.objects.values('carrier_shipping_cost','shipping_cost','shipping_discount','free_shipping_applied','free_shipping_threshold')),
                         'waybills': list(Shipment.objects.values_list('waybill', flat=True))}
                     start_response('200 OK', [('Content-Type','application/json')])
                     if path == '/__qa/stop':

@@ -37,6 +37,7 @@ from .serializers import (
 )
 from .firebase_service import send_push_to_user
 from .email_service import send_order_payment_confirmation
+from shipping.policy import order_shipping_fields
 
 logger = logging.getLogger(__name__)
 
@@ -1033,7 +1034,7 @@ class OrderListView(APIView):
                         'notes': data.get('notes', ''),
                         'address_id': address.pk if address else None,
                         'delivery_details': delivery_details,
-                        **({'tcc_quote_id': str(shipping_quote.pk)} if shipping_quote else {}),
+                        **({'tcc_quote_id': str(shipping_quote.pk), 'shipping_policy': shipping_quote.snapshot.get('shipping_policy', {})} if shipping_quote else {}),
                         'items': [{
                             'product_id': item['product_id'], 'quantity': item['quantity'],
                             'product_name': products[item['product_id']].name,
@@ -1095,6 +1096,7 @@ class OrderListView(APIView):
             shipping_cost    = shipping,
             delivery_address = address,
             delivery_details = delivery_details,
+            **(order_shipping_fields(shipping_quote.snapshot.get('shipping_policy', {})) if shipping_quote else {}),
             total            = total,
             payment_method   = data['payment_method'],
             wompi_reference  = data.get('wompi_reference', ''),
@@ -1321,6 +1323,7 @@ def _create_approved_order(intent):
         delivery_address=UserAddress.objects.filter(pk=data.get('address_id'), user=intent.user).first() if data.get('address_id') else None,
         delivery_details=data.get('delivery_details', {}),
         taxes=intent.taxes, discounts=intent.discounts, paid_total=intent.total,
+        **order_shipping_fields(data.get('shipping_policy', {})),
         payment_method=Order.PaymentMethod.WOMPI, wompi_reference=intent.reference,
         wompi_transaction_id=intent.transaction_id or '', wompi_status=Order.WompiStatus.APPROVED,
         status=Order.Status.PAID,

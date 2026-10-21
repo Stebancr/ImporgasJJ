@@ -35,7 +35,9 @@ class ShippingConfigView(APIView):
     authentication_classes = []
 
     def get(self, request):
+        from .policy import threshold
         return Response({'enabled': settings.TCC_SHIPPING_ENABLED, 'carrier': 'TCC',
+                         'free_shipping_threshold': str(threshold()),
                          'status': 'available' if settings.TCC_SHIPPING_ENABLED else 'disabled',
                          'can_quote': settings.TCC_SHIPPING_ENABLED,
                          'tracking_api_available': False, 'units': {'weight': 'kg', 'dimensions': 'cm'}})
@@ -47,6 +49,28 @@ class CityListView(APIView):
 
     def get(self, request):
         return Response(cities())
+
+
+class PromotionView(APIView):
+    """Authoritative progress only; never grants free delivery without a quote."""
+    permission_classes = [AllowAny]
+    throttle_scope = 'shipping_estimate'
+
+    def post(self, request):
+        from ecommerce.models import Product
+        from .policy import shipping_policy
+        class Input(serializers.Serializer):
+            items = OrderItemInputSerializer(many=True, allow_empty=False, max_length=100)
+        data = Input(data=request.data)
+        data.is_valid(raise_exception=True)
+        items = data.validated_data['items']
+        products = {product.pk: product for product in Product.objects.filter(
+            pk__in=[item['product_id'] for item in items], is_available=True)}
+        if len(products) != len({item['product_id'] for item in items}):
+            return Response({'error': 'Uno de los productos no está disponible.'}, status=404)
+        subtotal = sum(products[item['product_id']].price * item['quantity'] for item in items)
+        policy = shipping_policy(subtotal, 0)
+        return Response({key: policy[key] for key in ('eligible_subtotal', 'free_shipping_threshold', 'amount_to_free_shipping')})
 
 
 class DestinationView(APIView):
@@ -112,6 +136,8 @@ class EstimateView(APIView):
         data = EstimateInput(data=request.data)
         data.is_valid(raise_exception=True)
         destination = dict(data.validated_data)
+        if request.user.is_authenticated and not destination.get('address_id'):
+            return Response({'address_id': ['Selecciona una dirección guardada o agrega una nueva dirección.']}, status=400)
         if destination.get('address_id'):
             if not request.user.is_authenticated:
                 return Response({'error': 'Inicia sesión para usar una dirección guardada.'}, status=401)

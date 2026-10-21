@@ -16,6 +16,7 @@ from ecommerce.models import Product, CartItem, UserAddress, Order, OrderItem
 from .models import ProductShippingProfile, ShippingQuote, Shipment, ShipmentEvent
 from .catalog import city
 from .tcc import TCCClient, TCCError
+from .policy import threshold, shipping_policy, order_shipping_fields
 
 logger = logging.getLogger(__name__)
 CENT = Decimal('0.01')
@@ -117,7 +118,7 @@ def shipping_snapshot(user, items, data, *, estimate=False):
         'address': estimate_address(data) if estimate else address_snapshot(user, data), 'origin': origin() if packages else {},
         'environment': settings.TCC_API_ENVIRONMENT, 'account_type': business,
         'account': settings.TCC_PQT_ACCOUNT if business == 'PQT' else settings.TCC_MSJ_ACCOUNT,
-        'pricing_policy': 'carrier_rate_only_v1'}
+        'pricing_policy': 'customer_subsidy_v2', 'free_shipping_threshold': str(threshold())}
     return snapshot
 
 
@@ -159,6 +160,9 @@ def quote_shipping(user, items, data):
     if cached and not data.get('force', False):
         return cached
     rate, surcharge, total = fresh_rate(snapshot)
+    policy = shipping_policy(snapshot['subtotal'], rate, limit=snapshot['free_shipping_threshold'], requires_shipping=bool(snapshot['packages']))
+    snapshot['shipping_policy'] = policy
+    total = Decimal(policy['customer_shipping_charge'])
     return ShippingQuote.objects.create(user=user, fingerprint=key, snapshot=snapshot,
         environment=settings.TCC_API_ENVIRONMENT, account_type=snapshot['account_type'],
         tcc_rate=rate, surcharge=surcharge, total=total,
@@ -192,7 +196,9 @@ def validate_checkout_quote(user, quote_id, items, data):
     if quote.reference and quote.reference != reference:
         raise ValidationError({'shipping_quote_id': 'La cotización ya está vinculada a otro pago.'})
     # A fresh provider request before payment; frontend cannot decide the amount.
-    if fresh_rate(snapshot) != (quote.tcc_rate, quote.surcharge, quote.total):
+    rate, surcharge, _ = fresh_rate(snapshot)
+    policy = shipping_policy(snapshot['subtotal'], rate, limit=snapshot['free_shipping_threshold'], requires_shipping=bool(snapshot['packages']))
+    if (rate, surcharge, Decimal(policy['customer_shipping_charge'])) != (quote.tcc_rate, quote.surcharge, quote.total):
         raise ValidationError({'shipping_quote_id': 'La tarifa TCC cambió. Actualiza la cotización antes de pagar.'})
     quote.reference = reference
     quote.save(update_fields=['reference'])
@@ -212,7 +218,7 @@ def create_draft_order(intent, quote):
         customer_phone=data['customer_phone'], shipping_address=data['shipping_address'], city=data['city'],
         department=data['department'], postal_code=data.get('postal_code', ''), notes=data.get('notes', ''),
         subtotal=intent.subtotal, shipping_cost=intent.shipping_cost, total=intent.total,
-        taxes=intent.taxes, discounts=intent.discounts,
+        taxes=intent.taxes, discounts=intent.discounts, **order_shipping_fields(quote.snapshot.get('shipping_policy', {})),
         delivery_address_id=data.get('address_id'), delivery_details=data.get('delivery_details', {}),
         payment_method='wompi', wompi_reference=intent.reference, status='pending', wompi_status='PENDING')
     for item in data['items']:

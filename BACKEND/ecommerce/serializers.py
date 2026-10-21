@@ -283,6 +283,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 
 class OrderSerializer(serializers.ModelSerializer):
+    customer_shipping_charge = serializers.DecimalField(source='shipping_cost', max_digits=14, decimal_places=2, read_only=True, allow_null=True)
     items            = OrderItemSerializer(many=True, read_only=True)
     tracking_history = TrackingEventSerializer(many=True, read_only=True)
     shipment = serializers.SerializerMethodField()
@@ -301,6 +302,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'customer_name', 'customer_email', 'customer_phone',
             'shipping_address', 'city', 'department', 'postal_code', 'delivery_address', 'delivery_details',
             'subtotal', 'shipping_cost', 'discounts', 'taxes', 'total', 'paid_total',
+            'customer_shipping_charge', 'carrier_shipping_cost', 'shipping_discount', 'free_shipping_applied', 'free_shipping_threshold',
             'status', 'payment_method',
             'wompi_transaction_id', 'wompi_reference',
             'wompi_status',
@@ -312,6 +314,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'tracking_code',
             'user_id', 'subtotal', 'shipping_cost', 'discounts', 'taxes', 'total', 'paid_total',
             'delivery_address', 'delivery_details',
+            'carrier_shipping_cost', 'shipping_discount', 'free_shipping_applied', 'free_shipping_threshold',
             'created_at', 'updated_at',
         ]
 
