@@ -43,7 +43,8 @@ class Command(BaseCommand):
             ensure_document(delivery,source)
             context=context_for(delivery,source)
             import base64
-            context['logo']='data:image/png;base64,'+base64.b64encode((Path(settings.BASE_DIR)/'AppVisits/assets/logo_imporgas.png').read_bytes()).decode()
+            from transactional_mail.branding import LOGO_PATH
+            context['email_logo_src']='data:image/png;base64,'+base64.b64encode(LOGO_PATH.read_bytes()).decode()
             # Previews contain no signed tokens; actual delivery constructs fresh links.
             context['document_url']='https://example.invalid/documento-de-prueba'
             context['order_url']='https://example.invalid/pedido-de-prueba' if kind=='order' else ''

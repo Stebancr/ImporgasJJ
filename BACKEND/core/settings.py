@@ -333,6 +333,8 @@ SERVER_EMAIL_APLICACION = (_visit_sender[1:-1] if len(_visit_sender) >= 2
 TRANSACTIONAL_REPLY_TO = config('TRANSACTIONAL_REPLY_TO', default=SERVER_EMAIL)
 TRANSACTIONAL_EMAIL_ENABLED = config('TRANSACTIONAL_EMAIL_ENABLED', default=False, cast=bool)
 TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS = _csv_env('TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS')
+# Blank uses the packaged inline PNG; configure only a deployed first-party HTTPS URL.
+EMAIL_LOGO_URL = config('EMAIL_LOGO_URL', default='').strip()
 PASSWORD_RESET_TIMEOUT = 3600
 _reset_sender = config('SERVER_EMAIL_NOREPLY', default='').strip()
 SERVER_EMAIL_NOREPLY = (_reset_sender[1:-1] if len(_reset_sender) >= 2

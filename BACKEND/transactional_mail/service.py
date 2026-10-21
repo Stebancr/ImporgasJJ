@@ -2,8 +2,6 @@ import logging
 import smtplib
 import socket
 import ssl
-from email.mime.image import MIMEImage
-from pathlib import Path
 from zoneinfo import ZoneInfo
 from datetime import timedelta
 from django.conf import settings
@@ -15,6 +13,7 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 from .models import Delivery
 from .configuration import public_url, validate_smtp, sender_for, VisitSenderConfigurationError
+from .branding import logo_context, attach_logo
 from .documents import ensure_document, document_link, cop
 
 logger = logging.getLogger(__name__)
@@ -53,7 +52,7 @@ def queue(kind, pk):
 
 
 def context_for(delivery, source):
-    context = {'logo':'cid:imporgas-logo', 'document_url':document_link(delivery),
+    context = {**logo_context(), 'document_url':document_link(delivery),
         'contact':settings.TRANSACTIONAL_REPLY_TO, 'phone':'3165266734 / 3176467820'}
     if delivery.kind == 'order':
         context.update(name=source.customer_name, title='Tu compra está confirmada', number=source.order_number,
@@ -110,12 +109,7 @@ def send(pk):
             render_to_string('transactional_mail/message.txt',context),from_email,[delivery.recipient],
             reply_to=[settings.TRANSACTIONAL_REPLY_TO],headers={'Message-ID':message_id})
         message.attach_alternative(render_to_string('transactional_mail/message.html',context),'text/html')
-        logo=Path(settings.BASE_DIR)/'AppVisits/assets/logo_imporgas.png'
-        if logo.is_file():
-            image=MIMEImage(logo.read_bytes(),_subtype='png')
-            image.add_header('Content-ID','<imporgas-logo>')
-            image.add_header('Content-Disposition','inline',filename='imporgas.png')
-            message.attach(image)
+        attach_logo(message, context)
         stage='smtp'
         if message.send(fail_silently=False)!=1:
             raise smtplib.SMTPException('not_accepted')

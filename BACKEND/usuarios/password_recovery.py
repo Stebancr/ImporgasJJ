@@ -2,9 +2,7 @@
 import logging
 import smtplib
 import ssl
-from email.mime.image import MIMEImage
 from email.utils import formataddr
-from pathlib import Path
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -22,6 +20,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
 from transactional_mail.configuration import public_url, validate_smtp
+from transactional_mail.branding import logo_context, attach_logo
 from .models import Credenciales, PasswordResetDelivery
 
 logger = logging.getLogger(__name__)
@@ -106,20 +105,14 @@ def build_email(user):
     link = public_url('/restablecer-contrasena') + '#' + urlencode({
         'uid': urlsafe_base64_encode(force_bytes(user.pk)), 'token': tokens.make_token(user),
     })
-    context = {'reset_url': link, 'minutes': max(1, settings.PASSWORD_RESET_TIMEOUT // 60),
+    context = {**logo_context(), 'reset_url': link, 'minutes': max(1, settings.PASSWORD_RESET_TIMEOUT // 60),
                'contact': getattr(settings, 'TRANSACTIONAL_REPLY_TO', '')}
     message = EmailMultiAlternatives(SUBJECT,
         render_to_string('usuarios/password_reset.txt', context), from_email,
         [user.usuario_rel.correo],
         connection=get_connection(timeout=min(settings.EMAIL_TIMEOUT, 10)))
     message.attach_alternative(render_to_string('usuarios/password_reset.html', context), 'text/html')
-    logo = Path(settings.BASE_DIR) / 'AppVisits/assets/logo_imporgas.png'
-    if logo.is_file():
-        image = MIMEImage(logo.read_bytes(), _subtype='png')
-        image.add_header('Content-ID', '<imporgas-logo>')
-        image.add_header('Content-Disposition', 'inline', filename='logo_imporgas.png')
-        message.attach(image)
-        message.mixed_subtype = 'related'
+    attach_logo(message, context)
     return message
 
 
