@@ -1,0 +1,60 @@
+name: imporgas-crm-audit
+services:
+  database:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: crm_audit
+      POSTGRES_USER: crm_audit
+      POSTGRES_PASSWORD: isolated-test-only
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U crm_audit']
+      interval: 2s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      retries: 30
+  backend:
+    image: frontend-backend:latest
+    command: sleep infinity
+    working_dir: /app
+    volumes:
+      - ./BACKEND:/app
+    environment:
+      SECRET_KEY: crm-audit-isolated-not-production
+      DEBUG: 'True'
+      ALLOWED_HOSTS: '*'
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: crm_audit
+      DB_USER: crm_audit
+      DB_PASSWORD: isolated-test-only
+      DB_HOST: database
+      CRM_TEST_POSTGRES: '1'
+      CRM_EXTERNAL_SEND_ENABLED: 'False'
+      CRM_TEST_MODE: 'True'
+      CHANNEL_REDIS_URL: redis://redis:6379/2
+      CELERY_BROKER_URL: memory://
+      CELERY_RESULT_BACKEND: cache+memory://
+      EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+      TRANSACTIONAL_EMAIL_ENABLED: 'False'
+      TCC_SHIPPING_ENABLED: 'False'
+      TCC_DISPATCH_ENABLED: 'False'
+      EXTERNAL_PRODUCT_URL_TEMPLATE: https://www.imporgasjj.com/producto/{id}
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  worker:
+    extends:
+      service: backend
+    profiles: [smoke]
+    command: celery -A core worker --loglevel=WARNING --concurrency=2 -Q celery,chatbot
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+networks:
+  default:
+    internal: true
