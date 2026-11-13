@@ -24,6 +24,7 @@ import {
   type ChatMessage,
   type ChatAttachment,
   type ChatSession,
+  type MessagesResponse,
   type SessionFilters,
 } from '../services/admin_chat'
 
@@ -36,6 +37,7 @@ const statusColor: Record<ChatSession['status'], 'default' | 'warning' | 'succes
 }
 
 function messageState(message: ChatMessage) {
+  if (message.simulated) return <Chip size="small" label="Simulado" variant="outlined" />
   if (message.status === 'failed') return (
     <Tooltip title={message.error || 'Meta rechazó el envío'} arrow>
       <Box component="span" sx={{ display: 'inline-flex', cursor: 'help' }}>
@@ -94,6 +96,8 @@ function CRMInbox({ userId }: { userId?: number | string }) {
   const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [filters, setFilters] = useInboxFilters(userId)
+  const [sessionPage, setSessionPage] = useState(0)
+  useEffect(() => { setSessionPage(0) }, [filters])
   const { status, channel, search = '', unanswered, priority: priorityFilter, queue: queueFilter } = filters
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | undefined>()
@@ -134,6 +138,7 @@ function CRMInbox({ userId }: { userId?: number | string }) {
   const messagesBoxRef = useRef<HTMLDivElement | null>(null)
   const forceScrollRef = useRef(true)
   const lastMessageIdRef = useRef<number | null>(null)
+  const olderScroll = useRef<{ height: number; top: number } | null>(null)
   const [nearBottom, setNearBottom] = useState(true)
   const [hasNewMessage, setHasNewMessage] = useState(false)
   const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window
@@ -142,8 +147,8 @@ function CRMInbox({ userId }: { userId?: number | string }) {
   )
 
   const sessions = useQuery({
-    queryKey: ['crm-sessions', userId, filters],
-    queryFn: ({ signal }) => adminChatService.getSessions(filters, signal),
+    queryKey: ['crm-sessions', userId, filters, sessionPage],
+    queryFn: ({ signal }) => adminChatService.getSessions(filters, signal, sessionPage * 100),
     refetchInterval: 30_000,
   })
   const counts = useQuery({
@@ -157,6 +162,12 @@ function CRMInbox({ userId }: { userId?: number | string }) {
     queryKey: ['crm-messages', userId, selectedId],
     queryFn: async ({ signal }) => {
       const result = await adminChatService.getMessages(selectedId!, undefined, signal)
+      const previous = queryClient.getQueryData<MessagesResponse>(['crm-messages', userId, selectedId])
+      if (previous && previous.messages.length > result.messages.length) {
+        result.messages = [...new Map([...previous.messages, ...result.messages].map(item => [item.id, item])).values()]
+        result.before = previous.before
+        result.has_more = previous.has_more
+      }
       if (!signal.aborted) {
         queryClient.invalidateQueries({ queryKey: ['crm-session-counts'] })
         queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
@@ -175,6 +186,19 @@ function CRMInbox({ userId }: { userId?: number | string }) {
       return difference || left.id - right.id
     })
   }, [messages.data?.messages])
+
+  const loadEarlier = useMutation({
+    mutationFn: ({ id, before }: { id: number; before: number }) => adminChatService.getMessages(id, undefined, undefined, before),
+    onSuccess: (page, target) => {
+      if (selectedRef.current === target.id && messagesBoxRef.current) {
+        olderScroll.current = { height: messagesBoxRef.current.scrollHeight, top: messagesBoxRef.current.scrollTop }
+      }
+      queryClient.setQueryData<MessagesResponse>(['crm-messages', userId, target.id], current => current && ({
+        ...current, has_more: page.has_more, before: page.before,
+        messages: [...new Map([...page.messages, ...current.messages].map(item => [item.id, item])).values()],
+      }))
+    },
+  })
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['crm-sessions'] })
@@ -206,6 +230,12 @@ function CRMInbox({ userId }: { userId?: number | string }) {
   }, [selectedId])
 
   useLayoutEffect(() => {
+    if (olderScroll.current && messagesBoxRef.current) {
+      const { height, top } = olderScroll.current
+      messagesBoxRef.current.scrollTop = top + messagesBoxRef.current.scrollHeight - height
+      olderScroll.current = null
+      return
+    }
     if (!orderedMessages.length) return
     const lastId = orderedMessages.at(-1)!.id
     if (lastMessageIdRef.current === lastId) return
@@ -307,7 +337,7 @@ function CRMInbox({ userId }: { userId?: number | string }) {
               </Stack>
               <FormControlLabel control={<Switch size="small" checked={!!unanswered} onChange={(event) => changeFilters({ unanswered: event.target.checked })} />} label="Sin responder" />
               <Typography variant="caption" aria-live="polite">{counts.data ? `${counts.data.total} conversaciones · ${counts.data.count} pendientes · ${counts.data.unread} no leídos` : 'Actualizando contadores…'}</Typography>
-              {counts.data && counts.data.total > 100 && <Typography variant="caption">Se muestran las 100 más recientes. Ajusta los filtros para acotar la lista.</Typography>}
+              {counts.data && counts.data.total > 100 && <Typography variant="caption">Página {sessionPage + 1} · hasta 100 conversaciones por página</Typography>}
               {counts.isError && <Alert severity="warning">No fue posible actualizar los contadores.</Alert>}
             </Stack>
             <Box sx={{ flex: 1, overflowY: 'auto' }}>
@@ -338,6 +368,10 @@ function CRMInbox({ userId }: { userId?: number | string }) {
                 </Box>
               ))}
             </Box>
+            {(sessionPage > 0 || (counts.data?.total ?? 0) > 100) && <Stack direction="row" sx={{ p: 1, justifyContent: 'space-between' }}>
+              <Button disabled={sessionPage === 0 || sessions.isFetching} onClick={() => { selectSession(null); setSessionPage(page => page - 1) }}>Anterior</Button>
+              <Button disabled={sessions.isFetching || (sessionPage + 1) * 100 >= (counts.data?.total ?? 0)} onClick={() => { selectSession(null); setSessionPage(page => page + 1) }}>Siguiente</Button>
+            </Stack>}
           </Paper>
 
           {!selected ? (
@@ -365,6 +399,8 @@ function CRMInbox({ userId }: { userId?: number | string }) {
                 </Stack>
               </Stack>
               <Stack ref={messagesBoxRef} onScroll={(event) => { const box = event.currentTarget; const closeToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 96; setNearBottom(closeToBottom); if (closeToBottom) setHasNewMessage(false) }} spacing={1.5} sx={{ position: 'relative', flex: 1, overflowY: 'auto', overflowX: 'hidden', p: 2, bgcolor: '#f8fafc', scrollBehavior: 'smooth' }}>
+                {messages.data?.has_more && messages.data.before && <Button disabled={loadEarlier.isPending} onClick={() => loadEarlier.mutate({ id: selected.id, before: messages.data!.before! })}>{loadEarlier.isPending ? 'Cargando anteriores…' : 'Cargar mensajes anteriores'}</Button>}
+                {loadEarlier.isError && <Alert severity="warning">No fue posible cargar mensajes anteriores. Puedes reintentar.</Alert>}
                 {messages.isLoading && <Stack sx={{ alignItems: 'center', p: 4 }}><CircularProgress size={24} /></Stack>}
                 {messages.isError && <Alert severity="error">La conversación no está disponible. Actualiza la lista; tu borrador se conserva.</Alert>}
                 {orderedMessages.map((message) => <ConversationMessage key={message.id} message={message} avatarUrl={selected.avatar_url} contactName={selected.user_name} onRetry={id => { if (!retry.isPending) retry.mutate(id) }} />)}
