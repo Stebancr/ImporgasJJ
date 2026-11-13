@@ -92,6 +92,9 @@ def consume_oauth_state(state):
 def exchange_authorization_code(integration, code):
     """Intercambia el código, obtiene token de larga duración y lo cifra."""
 
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
+
     if not code:
         raise MetaAPIError('Instagram no devolvió un código de autorización.')
     app_secret = secret_store.decrypt(integration.app_secret_encrypted)
