@@ -3,7 +3,7 @@ import api from '../../services/api'
 import './styles/HomePage.css'
 import { Link } from 'react-router-dom'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ThermometerSun, Gauge, PenToolIcon as Tool, ChevronLeft, ChevronRight, Flame, Utensils } from 'lucide-react'
+import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ChevronLeft, ChevronRight, Flame, Utensils } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import GoogleMap from '../../components/GoogleMap'
 import {useShippingConfig} from '../../hooks/useShippingConfig'
@@ -16,7 +16,6 @@ import { locationsService, ApiLocation } from '../../services/locations'
 const categories = [
   {
     name: 'Calentadores',
-    icon: ThermometerSun,
     slug: 'calentadores',
     color: 'from-[#F58634] to-[#d4711e]',
     bgColor: 'bg-[#fff3e8]',
@@ -24,7 +23,6 @@ const categories = [
   },
   {
     name: 'Reguladores',
-    icon: Gauge,
     slug: 'reguladores',
     color: 'from-[#10B981] to-[#059669]',
     bgColor: 'bg-[#D1FAE5]',
@@ -32,7 +30,7 @@ const categories = [
   },
   {
     name: 'Herramientas',
-    icon: Tool,
+    icon: 'wrench',
     slug: 'herramientas',
     color: 'from-[#F59E0B] to-[#D97706]',
     bgColor: 'bg-[#FEF3C7]',
@@ -309,7 +307,7 @@ function HomePage() {
           <div className="home-categories__grid">
               {[...categories, ...extraCategories.map(({ id, name, slug, icon }) => ({
               id, name, slug,
-              icon: ({ className }: { className?: string }) => <CategoryIcon name={icon} className={className} />,
+              icon,
               color: 'from-[#001575] to-[#00104f]',
               bgColor: 'bg-[#e8ecff]',
               textColor: 'text-[#001575]',
@@ -324,7 +322,7 @@ function HomePage() {
                 
                 <div className="relative z-10 flex flex-col items-center text-center">
                   <div className={`w-14 h-14 lg:w-16 lg:h-16 ${category.bgColor} group-hover:bg-white/20 rounded-2xl flex items-center justify-center mb-4 transition-colors`}>
-                    <category.icon className={`w-7 h-7 lg:w-8 lg:h-8 ${category.textColor} group-hover:text-white transition-colors`} />
+                    <CategoryIcon slug={category.slug} name={category.icon} className={`w-7 h-7 lg:w-8 lg:h-8 ${category.textColor} group-hover:text-white transition-colors`} />
                   </div>
                   <h3 className="font-semibold text-[#1A1D21] group-hover:text-white text-lg transition-colors">
                     {category.name}
