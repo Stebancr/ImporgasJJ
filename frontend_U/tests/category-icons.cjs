@@ -70,6 +70,11 @@ const output=process.env.ICON_EVIDENCE || '/evidence'
    assert.equal(await dialog.getByLabel('Icono',{exact:true}).inputValue(),'gauge')
    assert(await dialog.getByLabel('Icono',{exact:true}).isDisabled())
    await dialog.getByRole('button',{name:'Cancelar',exact:true}).click()
+   // Editing scrolls the wide table to its action column; restore the icon column for evidence.
+   await page.evaluate(()=>{document.querySelectorAll('*').forEach(el=>{if(el.scrollLeft)el.scrollLeft=0});window.scrollTo(0,0)})
+   const firstIcon=page.getByRole('row').filter({has:page.getByText(categories[0].name,{exact:true})}).locator('svg').first()
+   const bounds=await firstIcon.boundingBox()
+   assert(bounds && bounds.x>=0 && bounds.x+bounds.width<=width,'admin icon remains reachable on mobile')
    await page.screenshot({path:output+`/admin-${width}.png`,fullPage:true})
    console.log('PASS home/admin/catalog/filter/unknown/preview/no-overflow',width)
   }
