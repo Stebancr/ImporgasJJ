@@ -1,3 +1,5 @@
+import { CategoryIcon } from '../../components/CategoryIcon'
+import api from '../../services/api'
 import './styles/HomePage.css'
 import { Link } from 'react-router-dom'
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -121,6 +123,16 @@ function HomePage() {
   const [productsError, setProductsError] = useState(false)
   const [reloadProducts, setReloadProducts] = useState(0)
   const [isLoadingProducts, setIsLoadingProducts] = useState(true)
+  const [extraCategories, setExtraCategories] = useState<{ id: number; name: string; slug: string; icon: string }[]>([])
+  useEffect(() => {
+    let active = true
+    api.get<{ categories: { id: number; name: string; slug: string; icon: string }[] }>('/products?per_page=1')
+      .then(result => {
+        if (active) setExtraCategories((result.categories ?? []).filter(item => !categories.some(featured => featured.slug === item.slug)))
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
   const [storeLocations, setStoreLocations] = useState<ApiLocation[]>([])
   const [currentSlide, setCurrentSlide]   = useState(0)
   const [isAnimating, setIsAnimating]     = useState(false)
@@ -295,10 +307,16 @@ function HomePage() {
           </div>
           
           <div className="home-categories__grid">
-            {categories.map((category) => (
+              {[...categories, ...extraCategories.map(({ id, name, slug, icon }) => ({
+              id, name, slug,
+              icon: ({ className }: { className?: string }) => <CategoryIcon name={icon} className={className} />,
+              color: 'from-[#001575] to-[#00104f]',
+              bgColor: 'bg-[#e8ecff]',
+              textColor: 'text-[#001575]',
+            }))].map((category) => (
               <Link
                 key={category.slug}
-                to={`/productos?category=${category.slug}`}
+                to={'id' in category ? '/productos?category_id=' + category.id : '/productos?category=' + category.slug}
                 className="home-category-card group relative bg-white rounded-2xl p-6 lg:p-8 border border-[#E5E7EB] hover:border-transparent hover:shadow-xl transition-all duration-300 overflow-hidden"
               >
                 {/* Background gradient on hover */}

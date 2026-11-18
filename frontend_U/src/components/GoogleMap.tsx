@@ -1,58 +1,61 @@
-﻿import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MapPin, Clock, Phone, Navigation, Calendar } from 'lucide-react'
 import { ApiLocation } from '../services/locations'
+import { locationMapUrls } from './locationMapUrls'
 
 interface GoogleMapProps {
   locations?: ApiLocation[]
 }
 
-const buildMapSrc = (loc: ApiLocation) =>
-  `https://www.google.com/maps?q=${encodeURIComponent(`${loc.address}, ${loc.city}, Colombia`)}&output=embed`
+function MapFrame({ src, name }: { src: string; name: string }) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  useEffect(() => {
+    if (status !== 'loading') return
+    const timer = window.setTimeout(() => setStatus('error'), 12000)
+    return () => window.clearTimeout(timer)
+  }, [status])
 
-const buildMapsLink = (loc: ApiLocation) =>
-  `https://maps.google.com?q=${encodeURIComponent(`${loc.address}, ${loc.city}, Colombia`)}`
-
-const FALLBACK_SRC = `https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3976.8877567785387!2d-74.07283482426025!3d4.6097100428613025!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x8e3f99a7d4a3b9d7%3A0x5f5f5f5f5f5f5f5f!2sBogot%C3%A1%2C%20Colombia!5e0!3m2!1ses!2sco!4v1699999999999!5m2!1ses!2sco`
-
+  return (
+    <>
+      {status === 'loading' && <p role="status" className="px-4 py-2 text-sm">Cargando mapa…</p>}
+      {status === 'error' ? (
+        <p role="status" className="p-6 text-sm">No se pudo cargar el mapa. Usa «Cómo llegar» para abrir la ubicación.</p>
+      ) : (
+        <iframe src={src} width="100%" height="400" style={{ border: 0 }}
+          allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
+          title={'Ubicación de ' + name} className="w-full"
+          onLoad={() => setStatus('ready')} onError={() => setStatus('error')} />
+      )}
+    </>
+  )
+}
 function GoogleMap({ locations = [] }: GoogleMapProps) {
   const [selected, setSelected] = useState<ApiLocation | null>(null)
 
   const active = selected ?? locations[0] ?? null
 
-  const mapSrc = active ? buildMapSrc(active) : FALLBACK_SRC
-  const mapsLink = active ? buildMapsLink(active) : 'https://maps.google.com'
+  const urls = active ? locationMapUrls(active, import.meta.env.VITE_GOOGLE_MAPS_EMBED_KEY) : null
 
   return (
     <div className="grid lg:grid-cols-3 gap-6 lg:gap-8">
       {/* Map */}
       <div className="lg:col-span-2">
         <div className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden shadow-sm">
-          <iframe
-            key={mapSrc}
-            src={mapSrc}
-            width="100%"
-            height="400"
-            style={{ border: 0 }}
-            allowFullScreen
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            title="Ubicacion ImporGas JJ"
-            className="w-full"
-          />
-          <div className="p-4 flex items-center justify-between bg-[#F9FAFB]">
+          {active && urls && <MapFrame key={urls.embed} src={urls.embed} name={active.name} />}
+          <div className="p-4 flex flex-wrap gap-3 items-center justify-between bg-[#F9FAFB]">
             <div className="flex items-center gap-2 text-sm text-[#6B7280]">
               <MapPin className="w-4 h-4 text-[#001575]" />
               {active ? `${active.name} - ${active.city}, Colombia` : 'Colombia'}
             </div>
-            <a
-              href={mapsLink}
+            {urls && <a
+              href={urls.directions}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 text-sm font-medium text-[#001575] hover:text-[#00104f] transition-colors"
             >
               <Navigation className="w-4 h-4" />
-              Abrir en Google Maps
-            </a>
+              Cómo llegar
+            </a>}
           </div>
         </div>
 
@@ -62,6 +65,7 @@ function GoogleMap({ locations = [] }: GoogleMapProps) {
               <button
                 key={loc.id}
                 type="button"
+                aria-pressed={active?.id === loc.id}
                 onClick={() => setSelected(loc)}
                 className={`flex items-start gap-3 p-3 rounded-xl border transition-all text-left w-full ${
                   active?.id === loc.id

@@ -20,23 +20,13 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Search, Edit, Trash2, FolderTree, Flame, Wind, Gauge, Wrench, Loader2 } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, FolderTree, Loader2 } from 'lucide-react'
 import { categoriesService } from '@/admin/services/admin_categories'
 import type { Category } from '@/admin/types'
 
-const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-  flame: Flame,
-  wind: Wind,
-  gauge: Gauge,
-  wrench: Wrench,
-}
+import { CategoryIcon, categoryIcons } from '@/components/CategoryIcon'
 
-const availableIcons = [
-  { value: 'flame', label: 'Llama' },
-  { value: 'wind', label: 'Viento' },
-  { value: 'gauge', label: 'Medidor' },
-  { value: 'wrench', label: 'Herramienta' },
-]
+const availableIcons = Object.entries(categoryIcons).map(([value, entry]) => ({ value, label: entry.label }))
 
 const toSlug = (name: string) =>
   name
@@ -144,10 +134,7 @@ export default function CategoriesPage() {
     }
   }
 
-  const renderIcon = (iconName: string) => {
-    const IconComponent = iconMap[iconName] || Flame
-    return <IconComponent className="h-5 w-5" />
-  }
+
 
   return (
     <div className="space-y-6">
@@ -213,7 +200,7 @@ export default function CategoriesPage() {
                         <TableCell>
                           <div className="flex items-center gap-3">
                             <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                              {renderIcon(category.icon)}
+                              <CategoryIcon name={category.icon} className="h-5 w-5" />
                             </div>
                             <span className="font-medium">{category.name}</span>
                           </div>

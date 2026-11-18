@@ -5,6 +5,9 @@ export interface ApiLocation {
   name: string
   address: string
   city: string
+  latitude?: string | number | null
+  longitude?: string | number | null
+  google_place_id?: string
   phone: string
   hours_weekday: string
   hours_saturday: string
