@@ -549,8 +549,8 @@ class ProductListView(APIView):
         categories_data = list(
             Category.objects.filter(is_active=True)
             .annotate(product_count=Count('products', filter=Q(products__is_available=True)))
-            .values('id', 'name', 'slug', 'product_count')
-            .order_by('name')
+            .values('id', 'name', 'slug', 'icon', 'product_count')
+            .order_by('order', 'name')
         )
 
         # Metadata: marcas con conteo

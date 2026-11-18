@@ -221,18 +221,22 @@ REGLAS ESTRICTAS:
             return None
         normalized = self._normalize(message)
         try:
-            from ecommerce.models import Category
+            from django.db.models import Exists, OuterRef
+            from ecommerce.models import Category, Product
 
-            categories = list(Category.objects.filter(is_active=True).select_related('parent'))
+            sellable = Product.objects.filter(category_id=OuterRef('pk'), is_available=True, total_stock__gt=0)
+            categories = list(Category.objects.filter(is_active=True).annotate(has_products=Exists(sellable)).order_by('-has_products', 'order', 'name'))
             best = None
             best_score = 0
             message_tokens = set(re.findall(r'[a-z0-9]+', normalized))
-            ignored = {'para', 'quiero', 'busco', 'necesito', 'producto', 'productos', 'una', 'uno'}
+            ignored = {'para', 'quiero', 'busco', 'necesito', 'producto', 'productos', 'una', 'uno', 'de', 'del', 'gas', 'el', 'la', 'los', 'las'}
             for category in categories:
                 name = self._normalize(category.name)
                 description = self._normalize(category.description or '')
                 name_tokens = {t for t in re.findall(r'[a-z0-9]+', name) if t not in ignored}
                 score = 100 if name and re.search(r'\b' + re.escape(name) + r'\b', normalized) else 0
+                if not score and not category.has_products:
+                    continue
                 overlap = message_tokens & name_tokens
                 fuzzy_overlap = {
                     category_token for category_token in name_tokens
