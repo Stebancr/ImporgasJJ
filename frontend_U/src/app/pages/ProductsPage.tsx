@@ -302,7 +302,7 @@ function ProductsPage() {
                           onChange={() => updateFilter('category_id', category.id.toString())}
                           className="w-4 h-4 text-[#001575] border-[#D1D5DB] focus:ring-[#001575]"
                         />
-                        <CategoryIcon name={category.icon} className="h-4 w-4 shrink-0" />
+                        <CategoryIcon slug={category.slug} name={category.icon} className="h-4 w-4 shrink-0" />
                         <span className="text-sm font-medium">{category.name}</span>
                       </div>
                       <span className="text-xs bg-[#F3F4F6] text-[#6B7280] px-2 py-0.5 rounded-full">
@@ -475,7 +475,7 @@ function ProductsPage() {
                           onChange={() => { updateFilter('category_id', category.id.toString()); setIsFilterOpen(false) }}
                           className="w-4 h-4 text-[#001575]"
                         />
-                        <CategoryIcon name={category.icon} className="h-4 w-4 shrink-0" />
+                        <CategoryIcon slug={category.slug} name={category.icon} className="h-4 w-4 shrink-0" />
                         <span className="text-sm font-medium">{category.name}</span>
                       </div>
                       <span className="text-xs">{category.product_count}</span>
