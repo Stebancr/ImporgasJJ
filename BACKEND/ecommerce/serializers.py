@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from .models import (
     Brand, Location, Category, SpecAttribute,
@@ -18,9 +20,19 @@ class BrandSerializer(serializers.ModelSerializer):
 
 
 class LocationSerializer(serializers.ModelSerializer):
+    latitude = serializers.DecimalField(max_digits=10, decimal_places=7, min_value=Decimal('-90'), max_value=Decimal('90'), required=False, allow_null=True)
+    longitude = serializers.DecimalField(max_digits=10, decimal_places=7, min_value=Decimal('-180'), max_value=Decimal('180'), required=False, allow_null=True)
+
+    def validate(self, attrs):
+        lat = attrs.get('latitude', getattr(self.instance, 'latitude', None))
+        lng = attrs.get('longitude', getattr(self.instance, 'longitude', None))
+        if (lat is None) != (lng is None):
+            raise serializers.ValidationError('Indica la latitud y la longitud juntas.')
+        return attrs
+
     class Meta:
         model = Location
-        fields = ['id', 'name', 'address', 'city', 'phone', 'hours_weekday', 'hours_saturday', 'hours_sunday', 'is_active', 'created_at']
+        fields = ['id', 'name', 'address', 'city', 'phone', 'latitude', 'longitude', 'google_place_id', 'hours_weekday', 'hours_saturday', 'hours_sunday', 'is_active', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
