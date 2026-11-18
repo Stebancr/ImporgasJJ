@@ -1,4 +1,4 @@
-import { createLucideIcon, Construction, Cylinder, Flame, FolderTree, Gauge, Heater, Link2, SlidersHorizontal, Timer, Wind, Wrench, Zap } from 'lucide-react'
+import { createLucideIcon, Construction, Cylinder, Flame, FolderTree, Gauge, Heater, Link2, PenTool, SlidersHorizontal, Timer, Wind, Wrench, Zap } from 'lucide-react'
 
 // Original 24×24 drawings rendered by Lucide: currentColor, round caps, 2px stroke.
 const InstantWaterHeater = createLucideIcon('InstantWaterHeater', [
@@ -61,6 +61,7 @@ export const categoryIcons = {
   'pipe-elbow': { Icon: PipeElbow, label: 'Codo de tubería' },
   'storage-tank': { Icon: StorageTank, label: 'Tanque de almacenamiento' },
   // Preserve stored keys for other categories without rewriting the database.
+  'pen-tool': { Icon: PenTool, label: 'Herramientas' },
   flame: { Icon: Flame, label: 'Llama' },
   wind: { Icon: Wind, label: 'Viento' },
   meter: { Icon: Timer, label: 'Medidor genérico' },

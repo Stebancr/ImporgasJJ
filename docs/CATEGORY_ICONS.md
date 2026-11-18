@@ -6,7 +6,7 @@ Rama: `codex/improve-category-icons`. Base: `origin/dev` en `4cc209fcbb4e31cbfb2
 
 `frontend_U/src/components/CategoryIcon.tsx` contiene el registro de componentes y el mapa de los 15 slugs reales, comprobados con una consulta GET a la API pública. El slug conocido tiene prioridad sobre los valores genéricos históricos almacenados en `Category.icon`. Para categorías nuevas se respeta una clave configurada válida; una clave ausente, inválida o heredada de Object cae en `FolderTree`. No se necesita una migración de datos ni una escritura al desplegar.
 
-Inicio, filtros de escritorio/móvil y administración utilizan el mismo componente y slug. La edición muestra vista previa e indica que los iconos de estos slugs son centrales; al guardar otros datos conserva el valor existente de `Category.icon`. Las categorías no incluidas en el mapa mantienen su selector de icono.
+Inicio, filtros de escritorio/móvil y administración utilizan el mismo componente y slug. La edición muestra vista previa e indica que los iconos de estos slugs son centrales; al guardar otros datos conserva el valor existente de `Category.icon`. Las categorías no incluidas en el mapa mantienen su selector de icono. La tarjeta genérica histórica Herramientas de Inicio conserva su PenTool; no se repite con Repuestos.
 
 | Categoría (nombre existente conservado) | Slug | Componente | Motivo |
 |---|---|---|---|
@@ -55,8 +55,8 @@ Bundle completo (suma de archivos JS, builds limpios):
 | Medida | Antes | Después | Diferencia |
 |---|---:|---:|---:|
 | Archivos JS | 82 | 82 | 0 |
-| Bytes JS | 1.430.678 | 1.433.786 | +3.108 (+0,22 %) |
-| Bytes gzip (cada archivo) | 454.138 | 455.489 | +1.351 (+0,30 %) |
+| Bytes JS | 1.430.678 | 1.434.239 | +3.561 (+0,25 %) |
+| Bytes gzip (cada archivo) | 454.138 | 455.650 | +1.512 (+0,33 %) |
 
 El build conserva el aviso preexistente de chunks superiores a 500 kB; no se cambió su umbral.
 

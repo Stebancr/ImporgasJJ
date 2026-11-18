@@ -40,6 +40,7 @@ const output=process.env.ICON_EVIDENCE || '/evidence'
     geometry.push(await icon.innerHTML())
    }
    assert.equal(new Set(geometry).size,15)
+   assert.equal(await page.locator('a.home-category-card[href="/productos?category=herramientas"] svg.lucide-pen-tool').count(),1)
    assert(await page.locator('.home-category-card').filter({hasText:'Nueva categoría QA'}).locator('svg.lucide-folder-tree').count())
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'home overflow '+width)
    if(width===1440)await page.locator('.home-categories__grid').screenshot({path:output+'/home-after.png'})

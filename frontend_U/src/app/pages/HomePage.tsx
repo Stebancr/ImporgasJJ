@@ -30,7 +30,7 @@ const categories = [
   },
   {
     name: 'Herramientas',
-    icon: 'wrench',
+    icon: 'pen-tool',
     slug: 'herramientas',
     color: 'from-[#F59E0B] to-[#D97706]',
     bgColor: 'bg-[#FEF3C7]',
