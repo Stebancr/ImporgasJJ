@@ -162,3 +162,15 @@ Rollback: conservar imágenes anteriores, respaldo y esquema aditivo. Un rollbac
 ![Selector móvil](readiness/icon-picker-mobile.png)
 
 ![PDF técnico sintético](readiness/technical-pdf.png)
+
+## Bloqueo posterior de seguridad — no fusionar todavía
+
+El escaneo completo del árbol (además del delta de la integración) detectó seis JWT literales heredados en scripts manuales y cuatro coincidencias adicionales. Cinco JWT tienen exp vencido y uno declara exp futuro (2027-01-05); esto no prueba que su firma o cuenta sean válidas actualmente. No se muestran valores ni claims de identidad. Los cuatro hallazgos adicionales eran dos tokens ficticios de documentación y dos fixtures deterministas de pruebas, no credenciales activas.
+
+Saneamiento preparado únicamente en commits locales: retirar los seis literales; hacer que las utilidades tomen tokens solo del entorno; no imprimir claims privados; bloquear sondas fuera de QA/local y no seguir redirecciones; desactivar los experimentos heredados que creaban una cuenta con contraseña fija o cargaban CSV fuera de la suite aislada. Los ejemplos de documentación pasan a placeholders y los dos falsos positivos de fixtures tienen una excepción inline específica y justificada, no una desactivación general del escáner. Cinco pruebas nuevas cubren estas garantías.
+
+No se reescribe el historial: los JWT antiguos deben tratarse como expuestos. El PR #15 permanece en borrador. Los cambios locales de limpieza no se publican todavía porque un diff de eliminación volvería a mostrar el literal histórico antes de aclarar su validez/revocación.
+
+La revisión automática rechazó verificar el JWT con el validador de producción: consideró que el uso de una credencial encontrada en una fuente histórica requiere autorización específica. No se ejecutó esa comprobación y no se accedió a datos usando el token. Está pendiente autorización para una única comprobación por stdin cifrado, con resultado exclusivamente aceptado/rechazado y sin peticiones a clientes, o bien confirmación administrativa de su revocación en los entornos afectados. Si es aceptado, debe invalidarse antes de fusionar y desplegar; la revocación por password_version afectaría las sesiones JWT de esa cuenta y requiere autorización explícita.
+
+Situación: CI del head publicado f30e2170 aprobado (534 backend, frontend y WhatsApp); saneamiento posterior local pendiente de publicación/CI tras resolver el bloqueo. Producción sigue en main 9d1edf49 sin pull, migraciones ni recreación. Respaldo previo verificado: /root/imporgas-release-backups/20261122T144451Z-integration-readiness, dump de 751536 bytes y media inventariada de 852 archivos.
