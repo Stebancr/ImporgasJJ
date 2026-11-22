@@ -52,7 +52,7 @@ class VisitSenderTests(APITestCase):
             after = mail.outbox[-1]
         parsed = BytesParser(policy=policy.default).parsebytes(after.message().as_bytes())
         sender = parsed['From'].addresses[0]
-        self.assertEqual(sender.display_name, 'Servicio Técnico ImporGas JJ')
+        self.assertEqual(sender.display_name, 'ImporGas JJ Servicio Técnico')
         self.assertEqual(sender.addr_spec, 'technical@example.invalid')
         for field in ('subject', 'body', 'to', 'cc', 'bcc', 'reply_to', 'extra_headers'):
             self.assertEqual(getattr(before, field), getattr(after, field), field)

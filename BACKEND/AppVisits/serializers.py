@@ -352,6 +352,13 @@ class VisitaCreateSerializer(serializers.Serializer):
             creado_por=creado_por,
             pdf_estado='pendiente',
         )
+        # The logical event is durable; a broker or mail failure never rolls back the visit.
+        from transactional_mail.service import queue
+        try:
+            queue('visit_confirmation', visita.pk)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning('transactional_email event_registration_failed kind=visit_confirmation')
         return visita
 
 

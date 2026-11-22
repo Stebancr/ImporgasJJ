@@ -40,6 +40,8 @@ def receipt(order):
 
 
 def ensure_document(delivery, source):
+    if delivery.kind == 'visit_confirmation':
+        return
     if delivery.kind == 'order':
         if not delivery.document or not delivery.document.storage.exists(delivery.document.name):
             delivery.document.save(f'{delivery.pk}.pdf', ContentFile(receipt(source)), save=True)
@@ -55,6 +57,8 @@ def ensure_document(delivery, source):
 
 
 def document_link(delivery):
+    if delivery.kind not in ('order', 'visit'):
+        raise ValueError('event_has_no_document')
     payload={'delivery':str(delivery.pk)}
     if delivery.kind=='visit':
         from AppVisits.models import VisitaTecnica

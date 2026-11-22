@@ -25,6 +25,8 @@ class DocumentView(APIView):
         delivery=Delivery.objects.filter(pk=pk).first()
         if not delivery:
             return Response({'detail':'Documento no disponible.'},status=404)
+        if delivery.kind not in ('order', 'visit'):
+            return Response({'detail':'Documento no disponible.'},status=404)
         try:
             source=source_for(delivery.kind,delivery.object_id)
             if delivery.kind=='visit' and data.get('version')!=source.pdf_link_version:
@@ -77,7 +79,7 @@ class DeliveryAuditView(APIView):
 
     def get(self,request):
         records=Delivery.objects.order_by('-created_at')
-        if request.query_params.get('kind') in ('order','visit'):
+        if request.query_params.get('kind') in ('order','visit','visit_confirmation'):
             records=records.filter(kind=request.query_params['kind'])
         if request.query_params.get('object_id','').isdigit():
             records=records.filter(object_id=request.query_params['object_id'])

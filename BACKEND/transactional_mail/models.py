@@ -4,7 +4,7 @@ from django.db import models
 
 class Delivery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    kind = models.CharField(max_length=20, choices=[('order', 'Compra aprobada'), ('visit', 'Visita finalizada')])
+    kind = models.CharField(max_length=20, choices=[('order', 'Compra aprobada'), ('visit', 'Visita finalizada'), ('visit_confirmation', 'Visita programada')])
     object_id = models.PositiveBigIntegerField()
     recipient = models.EmailField(blank=True)
     state = models.CharField(max_length=20, default='pending', choices=[
