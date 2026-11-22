@@ -43,6 +43,51 @@ logger = logging.getLogger(__name__)
 INACTIVITY_WARNING_TEXT = 'Este chat se cerrará por inactividad en 1 minuto. Si necesitas continuar, envía un mensaje.'
 
 
+def enqueue_outbound(message_id):
+    """Queue after commit; never fall back to a blocking provider call."""
+    message = ChatMessage.objects.filter(pk=message_id, status='queued').first()
+    if not message:
+        return
+    if not ChatMessage.objects.filter(pk=message_id, status='queued').update(
+            metadata={**message.metadata, 'dispatch_queued_at': timezone.now().isoformat()}):
+        return
+    try:
+        send_outbound_message.apply_async(args=[message_id], retry=False)
+    except Exception as exc:
+        message = ChatMessage.objects.filter(pk=message_id, status='queued').first()
+        if message:
+            message.status = 'failed'
+            message.metadata = {**message.metadata, 'error_code': 'queue_unavailable',
+                                'error': 'El procesador no está disponible. Puedes reintentar.'}
+            message.save(update_fields=['status', 'metadata'])
+            publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
+        logger.warning('CRM queue unavailable message_id=%s reason=%s', message_id, type(exc).__name__)
+
+
+@shared_task(bind=True, max_retries=2, acks_late=True, reject_on_worker_lost=True)
+def send_outbound_message(self, message_id):
+    message = ChatMessage.objects.select_related('session__integration').get(pk=message_id)
+    if message.status == 'failed':
+        return {'message_id': message.pk, 'skipped': 'not_queued'}
+    try:
+        dispatch_outbound_message(message)
+    except Exception as exc:
+        message.refresh_from_db()
+        # A timeout after provider acceptance is not proof of non-delivery.
+        if (not message.metadata.get('delivery_uncertain')
+                and isinstance(exc.__cause__, requests.RequestException)
+                and self.request.retries < self.max_retries):
+            message.status = 'queued'
+            message.save(update_fields=['status'])
+            raise self.retry(exc=RuntimeError('CRM_TRANSPORT_TEMPORARILY_UNAVAILABLE'),
+                             countdown=2 ** (self.request.retries + 1))
+        return {'message_id': message.pk, 'status': message.status}
+    finally:
+        publish_crm_event('message.updated', session_id=message.session_id, message_id=message.pk)
+    return {'message_id': message.pk, 'status': message.status,
+            'simulated': bool(message.metadata.get('simulated'))}
+
+
 def enqueue_bot_reply(message_id):
     """Persist the pending job if the broker is unavailable; Beat can recover it."""
     try:
@@ -147,6 +192,8 @@ def _open_public_stream(url, headers):
     antes de abrirlo y la autorización se elimina si cambia el host.
     """
 
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
     current_url = url
     current_headers = dict(headers)
     maximum_redirects = getattr(settings, 'CRM_ATTACHMENT_MAX_REDIRECTS', 3)
@@ -512,6 +559,26 @@ def recover_stalled_chat_tasks():
     cutoff = timezone.now() - timedelta(seconds=180)
     BotConversationLease.objects.filter(expires_at__lt=timezone.now()).delete()
     recovered = 0
+    if getattr(settings, 'CRM_ASYNC_OUTBOUND_ENABLED', True):
+        with transaction.atomic():
+            stranded = ChatMessage.objects.select_for_update(skip_locked=True).filter(
+                direction='outbound', sender_type='agent', status='queued', created_at__lt=cutoff,
+            ).order_by('pk')[:100]
+            for message in stranded:
+                from django.utils.dateparse import parse_datetime
+                queued_at = parse_datetime(message.metadata.get('dispatch_queued_at', ''))
+                if queued_at and queued_at > cutoff:
+                    continue
+                count = int(message.metadata.get('queue_recovery_attempts', 0))
+                if count >= 2:
+                    message.status = 'failed'
+                    message.metadata = {**message.metadata, 'error_code': 'queue_recovery_exhausted',
+                                        'error': 'No fue posible procesar el envío. Puedes reintentar.'}
+                else:
+                    message.metadata = {**message.metadata, 'queue_recovery_attempts': count + 1}
+                    transaction.on_commit(lambda pk=message.pk: enqueue_outbound(pk))
+                    recovered += 1
+                message.save(update_fields=['status', 'metadata'])
     for message in ChatMessage.objects.filter(
         sender_type='user', direction='inbound', status__in=['processing', 'queued'],
         created_at__lt=cutoff, bot_reply__isnull=True, session__status='bot',

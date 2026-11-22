@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def gateway_request(path, payload):
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
     if not settings.CRM_INTERNAL_SERVICE_TOKEN:
         raise MetaAPIError('Falta CRM_INTERNAL_SERVICE_TOKEN para WhatsApp Web Gateway.')
     raw = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode()

@@ -8,6 +8,7 @@ const assert = require('node:assert/strict')
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   await page.addInitScript(() => {
+    if (location.hostname !== 'crm.localhost') return
     localStorage.setItem('authToken', 'synthetic')
     localStorage.setItem('user', JSON.stringify({ id: 990, email: 'qa@example.invalid', name: 'QA' }))
     sessionStorage.setItem('chatSessionId', '990')
