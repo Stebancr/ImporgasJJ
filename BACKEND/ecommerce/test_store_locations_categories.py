@@ -46,7 +46,7 @@ class StoreCategoriesAndNorthPinTests(APITestCase):
 
     def test_admin_can_reassign_and_public_catalog_filters_by_id(self):
         original = Category.objects.create(name='Histórica')
-        target = Category.objects.get(slug='electricidad')
+        target, _ = Category.objects.get_or_create(slug='electricidad', defaults={'name': 'Electricidad', 'icon': 'zap'})
         brand = Brand.objects.create(name='Marca de prueba')
         product = Product.objects.create(name='Válvula de prueba', category=original, brand=brand, price=45000)
         admin = Credenciales.objects.create(usuario='qa-catalog', estado=1, tipo_usuario=4)

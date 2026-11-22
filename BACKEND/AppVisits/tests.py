@@ -32,6 +32,9 @@ from ecommerce.models import Notification
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class VisitCompletionTests(APITestCase):
     def setUp(self):
+        # TransactionTestCase can flush data-migration rows when --keepdb is reused.
+        for code, label in VisitaTecnica.TIPO_TAREA_CHOICES:
+            TipoVisita.objects.get_or_create(codigo=code, defaults={'nombre': label, 'activo': True})
         self.media_dir = tempfile.mkdtemp(prefix='visits-pdf-test-')
         self.media_settings = override_settings(MEDIA_ROOT=self.media_dir)
         self.media_settings.enable()

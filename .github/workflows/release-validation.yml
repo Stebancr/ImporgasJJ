@@ -20,7 +20,7 @@ jobs:
           docker compose -f docker-compose.ci.yml run --rm backend python manage.py migrate --plan
           docker compose -f docker-compose.ci.yml run --rm backend python manage.py migrate --noinput
           docker compose -f docker-compose.ci.yml run --rm backend python manage.py showmigrations
-          docker compose -f docker-compose.ci.yml run --rm backend python manage.py test --noinput
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py test --testrunner crmChat.audit_runner.AuditRunner --noinput
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
