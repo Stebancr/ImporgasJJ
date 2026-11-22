@@ -24,7 +24,7 @@ import { Plus, Search, Edit, Trash2, FolderTree, Loader2 } from 'lucide-react'
 import { categoriesService } from '@/admin/services/admin_categories'
 import type { Category } from '@/admin/types'
 
-import { CategoryIcon, categoryIcons } from '@/components/CategoryIcon'
+import { CategoryIcon, categoryIcons, resolveCategoryIcon } from '@/components/CategoryIcon'
 
 const availableIcons = Object.entries(categoryIcons).map(([value, entry]) => ({ value, label: entry.label }))
 
@@ -77,7 +77,7 @@ export default function CategoriesPage() {
       setFormData({
         name: category.name,
         description: category.description,
-        icon: category.icon || 'flame',
+        icon: resolveCategoryIcon(category.slug, category.icon) || 'flame',
         order: category.order.toString(),
         is_active: category.is_active,
       })
@@ -106,7 +106,7 @@ export default function CategoriesPage() {
         name: formData.name.trim(),
         slug: toSlug(formData.name),
         description: formData.description.trim(),
-        icon: formData.icon,
+        icon: editingCategory && resolveCategoryIcon(editingCategory.slug) ? editingCategory.icon : formData.icon,
         order: parseInt(formData.order) || 0,
         is_active: formData.is_active,
       }
@@ -200,7 +200,7 @@ export default function CategoriesPage() {
                         <TableCell>
                           <div className="flex items-center gap-3">
                             <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                              <CategoryIcon name={category.icon} className="h-5 w-5" />
+                              <CategoryIcon slug={category.slug} name={category.icon} className="h-5 w-5" />
                             </div>
                             <span className="font-medium">{category.name}</span>
                           </div>
@@ -280,6 +280,7 @@ export default function CategoriesPage() {
                 <select
                   id="icon"
                   value={formData.icon}
+                  disabled={Boolean(editingCategory && resolveCategoryIcon(editingCategory.slug))}
                   onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                 >
@@ -289,6 +290,10 @@ export default function CategoriesPage() {
                     </option>
                   ))}
                 </select>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <CategoryIcon slug={editingCategory?.slug} name={formData.icon} className="h-5 w-5 shrink-0" />
+                  <span>{editingCategory && resolveCategoryIcon(editingCategory.slug) ? 'Icono de la categoría definido por su slug.' : 'Vista previa del icono'}</span>
+                </div>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="order">Orden</Label>
