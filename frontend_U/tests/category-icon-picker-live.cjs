@@ -69,4 +69,4 @@ const base='http://crm.localhost'
   assert.equal(posts,4,'failed attempt plus one actual create per viewport')
   assert.deepEqual(errors,[]);assert.deepEqual(escapes,[])
  }finally{await browser.close()}
-})().catch(e=>{console.error(String(e.message).replace(/Bearer\\s+[A-Za-z0-9._-]+/g,'Bearer [redacted]').replace(/eyJ[A-Za-z0-9._-]+/g,'[token redacted]'));process.exitCode=1})
+})().catch(e=>{console.error(String(e.message).replace(/Bearer\s+[A-Za-z0-9._-]+/g,'Bearer [redacted]').replace(/eyJ[A-Za-z0-9._-]+/g,'[token redacted]'));process.exitCode=1})
