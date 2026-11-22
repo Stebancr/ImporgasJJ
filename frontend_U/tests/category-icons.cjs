@@ -68,8 +68,7 @@ const output=process.env.ICON_EVIDENCE || '/evidence'
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'admin overflow '+width)
    await page.getByRole('row').filter({has:page.getByText('Manómetro',{exact:true})}).getByRole('button',{name:'Editar',exact:true}).click()
    const dialog=page.getByRole('dialog')
-   assert.equal(await dialog.getByLabel('Icono',{exact:true}).inputValue(),'gauge')
-   assert(await dialog.getByLabel('Icono',{exact:true}).isDisabled())
+   assert.equal(await dialog.getByRole('radio',{name:'Manómetro — gauge',exact:true}).getAttribute('aria-checked'),'true')
    await dialog.getByRole('button',{name:'Cancelar',exact:true}).click()
    // Editing scrolls the wide table to its action column; restore the icon column for evidence.
    await page.evaluate(()=>{document.querySelectorAll('*').forEach(el=>{if(el.scrollLeft)el.scrollLeft=0});window.scrollTo(0,0)})

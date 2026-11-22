@@ -74,6 +74,7 @@ class Category(models.Model):
     name        = models.CharField(max_length=100, verbose_name="Nombre")
     slug        = models.SlugField(max_length=120, unique=True, blank=True)
     icon        = models.CharField(max_length=100, blank=True, verbose_name="Icono")
+    icon_key    = models.CharField(max_length=64, blank=True, null=True, default=None, verbose_name="Icono seleccionado")
     description = models.TextField(blank=True, verbose_name="Descripción")
     parent      = models.ForeignKey(
         "self",

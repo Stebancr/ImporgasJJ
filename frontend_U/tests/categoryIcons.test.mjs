@@ -40,6 +40,13 @@ test('icons inherit currentColor, consistent stroke, 24x24 viewbox and are decor
 test('home, public desktop/mobile filters and admin use the same slug resolver', () => {
   for (const file of ['../src/app/pages/HomePage.tsx', '../src/app/pages/ProductsPage.tsx', '../src/admin/pages/CategoriesPage.tsx']) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8')
-    assert.match(source, /<CategoryIcon slug=\{category.slug\}/)
+    assert.match(source, /<CategoryIcon[^>]*slug=\{category.slug\}/)
   }
+})
+
+test('persisted icon keys override slug defaults, invalid keys retain a safe fallback', () => {
+  assert.equal(resolveCategoryIcon('calentadores', 'flame', 'valve'), 'valve')
+  assert.match(render({slug:'calentadores',name:'flame',iconKey:'valve'}), /lucide-flow-valve/)
+  assert.equal(resolveCategoryIcon('calentadores', 'flame', 'invalid'), 'instant-water-heater')
+  assert.equal(resolveCategoryIcon('new', 'invalid', '__proto__'), undefined)
 })

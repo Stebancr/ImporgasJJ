@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -25,8 +25,9 @@ import { categoriesService } from '@/admin/services/admin_categories'
 import type { Category } from '@/admin/types'
 
 import { CategoryIcon, categoryIcons, resolveCategoryIcon } from '@/components/CategoryIcon'
+import { CategoryIconPicker } from '@/components/CategoryIconPicker'
+import { isAxiosError } from 'axios'
 
-const availableIcons = Object.entries(categoryIcons).map(([value, entry]) => ({ value, label: entry.label }))
 
 const toSlug = (name: string) =>
   name
@@ -40,6 +41,8 @@ export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const saving = useRef(false)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -72,12 +75,13 @@ export default function CategoriesPage() {
 
   const handleOpenDialog = (category?: Category) => {
     setError(null)
+    setFieldErrors({})
     if (category) {
       setEditingCategory(category)
       setFormData({
         name: category.name,
         description: category.description,
-        icon: resolveCategoryIcon(category.slug, category.icon) || 'flame',
+        icon: resolveCategoryIcon(category.slug, category.icon, category.icon_key) || 'flame',
         order: category.order.toString(),
         is_active: category.is_active,
       })
@@ -95,18 +99,26 @@ export default function CategoriesPage() {
   }
 
   const handleSave = async () => {
+    if (saving.current) return
     if (!formData.name.trim()) {
-      setError('El nombre es requerido')
+      setFieldErrors({name: 'El nombre es requerido'})
       return
     }
+    if (!Object.prototype.hasOwnProperty.call(categoryIcons, formData.icon)) {
+      setFieldErrors({icon_key: 'Selecciona un icono disponible.'})
+      return
+    }
+    setFieldErrors({})
+    saving.current = true
     setIsSaving(true)
     setError(null)
     try {
       const payload = {
         name: formData.name.trim(),
-        slug: toSlug(formData.name),
+        slug: editingCategory?.slug || toSlug(formData.name),
         description: formData.description.trim(),
-        icon: editingCategory && resolveCategoryIcon(editingCategory.slug) ? editingCategory.icon : formData.icon,
+        icon: editingCategory?.icon || formData.icon,
+        icon_key: formData.icon,
         order: parseInt(formData.order) || 0,
         is_active: formData.is_active,
       }
@@ -117,9 +129,17 @@ export default function CategoriesPage() {
       }
       setIsDialogOpen(false)
       await fetchCategories()
-    } catch {
-      setError('Error al guardar la categoria')
+    } catch (caught) {
+      const data = isAxiosError(caught) ? caught.response?.data : undefined
+      const fields: Record<string, string> = {}
+      for (const key of ['name', 'slug', 'icon_key']) {
+        const message = data?.[key]
+        if (Array.isArray(message) && typeof message[0] === 'string') fields[key] = message[0].slice(0, 200)
+      }
+      setFieldErrors(fields)
+      setError('No se pudo guardar la categoría. Revisa los campos e inténtalo de nuevo.')
     } finally {
+      saving.current = false
       setIsSaving(false)
     }
   }
@@ -200,7 +220,7 @@ export default function CategoriesPage() {
                         <TableCell>
                           <div className="flex items-center gap-3">
                             <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                              <CategoryIcon slug={category.slug} name={category.icon} className="h-5 w-5" />
+                              <CategoryIcon iconKey={category.icon_key} slug={category.slug} name={category.icon} className="h-5 w-5" />
                             </div>
                             <span className="font-medium">{category.name}</span>
                           </div>
@@ -245,7 +265,7 @@ export default function CategoriesPage() {
 
       {/* Category Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent aria-describedby={undefined}>
+        <DialogContent aria-describedby={undefined} className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               {editingCategory ? 'Editar Categoria' : 'Agregar Categoria'}
@@ -261,8 +281,9 @@ export default function CategoriesPage() {
                 id="name"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Ej: Calentadores"
+                aria-invalid={Boolean(fieldErrors.name)} aria-describedby={fieldErrors.name ? 'category-name-error' : undefined} placeholder="Ej: Calentadores"
               />
+              {fieldErrors.name && <p id="category-name-error" role="alert" className="text-sm text-destructive">{fieldErrors.name}</p>}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="description">Descripcion</Label>
@@ -275,26 +296,7 @@ export default function CategoriesPage() {
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="icon">Icono</Label>
-                <select
-                  id="icon"
-                  value={formData.icon}
-                  disabled={Boolean(editingCategory && resolveCategoryIcon(editingCategory.slug))}
-                  onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                >
-                  {availableIcons.map((icon) => (
-                    <option key={icon.value} value={icon.value}>
-                      {icon.label}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <CategoryIcon slug={editingCategory?.slug} name={formData.icon} className="h-5 w-5 shrink-0" />
-                  <span>{editingCategory && resolveCategoryIcon(editingCategory.slug) ? 'Icono de la categoría definido por su slug.' : 'Vista previa del icono'}</span>
-                </div>
-              </div>
+              <CategoryIconPicker value={formData.icon} onChange={icon => setFormData({ ...formData, icon })} error={fieldErrors.icon_key} />
               <div className="grid gap-2">
                 <Label htmlFor="order">Orden</Label>
                 <Input

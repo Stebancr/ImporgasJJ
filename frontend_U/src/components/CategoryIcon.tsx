@@ -1,6 +1,12 @@
 import { createLucideIcon, Construction, Cylinder, Flame, FolderTree, Gauge, Heater, Link2, PenTool, SlidersHorizontal, Timer, Wind, Wrench, Zap } from 'lucide-react'
 
 // Original 24×24 drawings rendered by Lucide: currentColor, round caps, 2px stroke.
+const FlowValve = createLucideIcon('FlowValve', [
+  ['path', { d: 'M3 9v8l9-4 9 4V9l-9 4Zm9 4V4M8 4h8', key: 'valve' }],
+])
+const StraightPipe = createLucideIcon('StraightPipe', [
+  ['path', { d: 'M2 9h20v6H2ZM5 8v8m14-8v8', key: 'pipe' }],
+])
 const InstantWaterHeater = createLucideIcon('InstantWaterHeater', [
   ['rect', { x: '5', y: '2', width: '14', height: '17', rx: '2', key: 'body' }],
   ['path', { d: 'M9 19v3m6-3v3M12 5c0 3-3 3-3 6a3 3 0 0 0 6 0c0-1-1-2-1-2s0 2-2 2c-1-1 1-3 0-6Z', key: 'heat' }],
@@ -61,6 +67,9 @@ export const categoryIcons = {
   'pipe-elbow': { Icon: PipeElbow, label: 'Codo de tubería' },
   'storage-tank': { Icon: StorageTank, label: 'Tanque de almacenamiento' },
   // Preserve stored keys for other categories without rewriting the database.
+  valve: { Icon: FlowValve, label: 'Válvula' },
+  pipe: { Icon: StraightPipe, label: 'Tubería' },
+  'folder-tree': { Icon: FolderTree, label: 'Categoría (respaldo)' },
   'pen-tool': { Icon: PenTool, label: 'Herramientas' },
   flame: { Icon: Flame, label: 'Llama' },
   wind: { Icon: Wind, label: 'Viento' },
@@ -89,15 +98,16 @@ export const categoryIconBySlug = {
   'tanque-de-acumulacion': 'storage-tank',
 } as const satisfies Record<string, keyof typeof categoryIcons>
 
-export function resolveCategoryIcon(slug?: string, name?: string) {
+export function resolveCategoryIcon(slug?: string, name?: string, iconKey?: string | null) {
+  if (iconKey && Object.prototype.hasOwnProperty.call(categoryIcons, iconKey)) return iconKey as keyof typeof categoryIcons
   if (Object.prototype.hasOwnProperty.call(categoryIconBySlug, slug ?? '')) {
     return categoryIconBySlug[slug as keyof typeof categoryIconBySlug]
   }
   return Object.prototype.hasOwnProperty.call(categoryIcons, name ?? '') ? name as keyof typeof categoryIcons : undefined
 }
 
-export function CategoryIcon({ slug, name, className }: { slug?: string; name?: string; className?: string }) {
-  const key = resolveCategoryIcon(slug, name)
+export function CategoryIcon({ slug, name, iconKey, className }: { slug?: string; name?: string; iconKey?: string | null; className?: string }) {
+  const key = resolveCategoryIcon(slug, name, iconKey)
   const Icon = key ? categoryIcons[key].Icon : FolderTree
   return <Icon className={className} aria-hidden="true" focusable="false" />
 }

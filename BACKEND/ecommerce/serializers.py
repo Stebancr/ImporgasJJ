@@ -39,9 +39,31 @@ class LocationSerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     product_count = serializers.ReadOnlyField()
 
+    def validate_icon_key(self, value):
+        from .category_icons import ICON_KEYS
+        if value not in (None, '') and value not in ICON_KEYS:
+            raise serializers.ValidationError('Selecciona un icono disponible.')
+        return value or None
+
+    def validate_name(self, value):
+        import unicodedata
+        from django.utils.text import slugify
+        def normalized(text):
+            return ' '.join(''.join(c for c in unicodedata.normalize('NFKD', text)
+                                  if not unicodedata.combining(c)).casefold().split())
+        if self.instance and normalized(value) == normalized(self.instance.name):
+            return value.strip()
+        candidates = Category.objects.all()
+        if self.instance:
+            candidates = candidates.exclude(pk=self.instance.pk)
+        if (any(normalized(name) == normalized(value) for name in candidates.values_list('name', flat=True))
+                or (not self.instance and candidates.filter(slug=slugify(value)).exists())):
+            raise serializers.ValidationError('Ya existe una categoría con este nombre o slug.')
+        return value.strip()
+
     class Meta:
         model = Category
-        fields = ['id', 'name', 'slug', 'icon', 'description', 'parent_id', 'order', 'is_active', 'product_count', 'created_at']
+        fields = ['id', 'name', 'slug', 'icon', 'icon_key', 'description', 'parent_id', 'order', 'is_active', 'product_count', 'created_at']
         read_only_fields = ['id', 'slug', 'product_count', 'created_at']
 
 

@@ -121,12 +121,12 @@ function HomePage() {
   const [productsError, setProductsError] = useState(false)
   const [reloadProducts, setReloadProducts] = useState(0)
   const [isLoadingProducts, setIsLoadingProducts] = useState(true)
-  const [extraCategories, setExtraCategories] = useState<{ id: number; name: string; slug: string; icon: string }[]>([])
+  const [extraCategories, setExtraCategories] = useState<{ id: number; name: string; slug: string; icon: string; icon_key?: string | null }[]>([])
   useEffect(() => {
     let active = true
-    api.get<{ categories: { id: number; name: string; slug: string; icon: string }[] }>('/products?per_page=1')
+    api.get<{ categories: { id: number; name: string; slug: string; icon: string; icon_key?: string | null }[] }>('/products?per_page=1')
       .then(result => {
-        if (active) setExtraCategories((result.categories ?? []).filter(item => !categories.some(featured => featured.slug === item.slug)))
+        if (active) setExtraCategories(result.categories ?? [])
       })
       .catch(() => {})
     return () => { active = false }
@@ -305,8 +305,8 @@ function HomePage() {
           </div>
           
           <div className="home-categories__grid">
-              {[...categories, ...extraCategories.map(({ id, name, slug, icon }) => ({
-              id, name, slug,
+              {[...categories.map(featured => ({ ...featured, icon_key: extraCategories.find(item => item.slug === featured.slug)?.icon_key })), ...extraCategories.filter(item => !categories.some(featured => featured.slug === item.slug)).map(({ id, name, slug, icon, icon_key }) => ({
+              id, name, slug, icon_key,
               icon,
               color: 'from-[#001575] to-[#00104f]',
               bgColor: 'bg-[#e8ecff]',
@@ -322,7 +322,7 @@ function HomePage() {
                 
                 <div className="relative z-10 flex flex-col items-center text-center">
                   <div className={`w-14 h-14 lg:w-16 lg:h-16 ${category.bgColor} group-hover:bg-white/20 rounded-2xl flex items-center justify-center mb-4 transition-colors`}>
-                    <CategoryIcon slug={category.slug} name={category.icon} className={`w-7 h-7 lg:w-8 lg:h-8 ${category.textColor} group-hover:text-white transition-colors`} />
+                    <CategoryIcon iconKey={'icon_key' in category ? category.icon_key : undefined} slug={category.slug} name={category.icon} className={`w-7 h-7 lg:w-8 lg:h-8 ${category.textColor} group-hover:text-white transition-colors`} />
                   </div>
                   <h3 className="font-semibold text-[#1A1D21] group-hover:text-white text-lg transition-colors">
                     {category.name}
