@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { authService } from '../services/auth'
 import type { User } from '../types'
 import {useQueryClient} from '@tanstack/react-query'
-import { revokeBrowserSession } from '../services/sessionSecurity'
+import { revokeBrowserSession, isSameBrowserSession } from '../services/sessionSecurity'
 import {clearDeliveryEstimates,shippingDestinationKey} from '../services/shipping'
 
 interface AuthState { user: User | null; isAuthenticated: boolean; isLoading: boolean; token: string | null }
@@ -43,9 +43,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true
     if (token) {
       authService.getCurrentUser().then(user => {
-        if (active && token === localStorage.getItem('authToken')) setState({ user, isAuthenticated: true, isLoading: false, token })
+        if (active && isSameBrowserSession(token, localStorage.getItem('authToken'))) setState({ user, isAuthenticated: true, isLoading: false, token: localStorage.getItem('authToken') })
       }).catch(() => {
-        if (active && (!localStorage.getItem('authToken') || token === localStorage.getItem('authToken'))) { clearDelivery();authService.logout(); setState({ user: null, isAuthenticated: false, isLoading: false, token: null }) }
+        if (active && (!localStorage.getItem('authToken') || isSameBrowserSession(token, localStorage.getItem('authToken')))) { clearDelivery();authService.logout(); setState({ user: null, isAuthenticated: false, isLoading: false, token: null }) }
       })
     } else setState({ user: null, isAuthenticated: false, isLoading: false, token: null })
     const handleForceLogout = () => {clearDelivery();void cache.cancelQueries();cache.clear();setState({ user: null, isAuthenticated: false, isLoading: false, token: null })}

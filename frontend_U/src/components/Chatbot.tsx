@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { revokeBrowserSession } from '../services/sessionSecurity'
+import { authService } from '../services/auth'
 import MessageText from './chat/MessageText'
 import ChatAttachmentView, { type AttachmentData } from './chat/ChatAttachmentView'
 import { Link } from 'react-router-dom'
@@ -172,9 +173,14 @@ function Chatbot() {
       socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/crm-chat/sessions/${sessionId}/`, ['crm-chat', `jwt.${token}`])
       socket.onopen = () => { attempts = 0; void refreshMessages.current() }
       socket.onmessage = () => { void refreshMessages.current() }
-      socket.onclose = event => {
-        if (event.code === 4401 || event.code === 4403) { stopped = true; revokeBrowserSession(); return }
-        if (!stopped) timer = setTimeout(connect, Math.min(30000, 1000 * 2 ** ++attempts))
+      socket.onclose = async event => {
+        if (stopped) return
+        if (event.code === 4401 || event.code === 4403) {
+          try { await authService.getCurrentUser(); if (!stopped) connect() }
+          catch { stopped = true; revokeBrowserSession({ key: 'authToken', value: token }) }
+          return
+        }
+        if (!stopped && ++attempts <= 5) timer = setTimeout(connect, Math.min(30000, 1000 * 2 ** attempts))
       }
       socket.onerror = () => socket?.close()
     }
@@ -339,7 +345,7 @@ Fecha: ${result.created_at}
     setIsOpen(false)
   }
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     // Reinicia el chat a modo local para una nueva consulta
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
     setSessionId(null)
@@ -352,7 +358,19 @@ Fecha: ${result.created_at}
     setInputValue('')
     setPendingAction(null)
     sessionStorage.removeItem('chatSessionId')
-  }
+  }, [])
+
+  useEffect(() => {
+    const close = () => {
+      handleReset()
+      setIsOpen(false)
+      setSelectedFile(undefined)
+      pendingSend.current = null
+      sendLock.current = false
+    }
+    window.addEventListener('auth:logout', close)
+    return () => window.removeEventListener('auth:logout', close)
+  }, [handleReset])
 
   // ── status label ──────────────────────────────────────────────────────────
   const { dot, statusText } = (() => {

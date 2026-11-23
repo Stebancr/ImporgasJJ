@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { refreshAdminToken } from './admin_token'
-import { revokeBrowserSession } from '../../services/sessionSecurity'
+import { revokeBrowserSession, isSameBrowserSession } from '../../services/sessionSecurity'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -32,7 +32,7 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/token/')) {
       const sentToken = String(error.config?.headers?.Authorization || '').replace(/^Bearer /, '')
-      if (sentToken && localStorage.getItem('token') && sentToken !== localStorage.getItem('token')) return Promise.reject(error)
+      if (sentToken && localStorage.getItem('token') && !isSameBrowserSession(sentToken, localStorage.getItem('token'))) return Promise.reject(error)
       if (error.response?.data?.code === 'SESSION_REVOKED') {
         revokeBrowserSession(sentToken ? { key: 'token', value: sentToken } : undefined)
         return Promise.reject(error)

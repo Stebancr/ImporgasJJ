@@ -472,7 +472,9 @@ class InternalRealtimeValidationView(InternalAPIView):
             if not hmac.compare_digest(signature, expected):
                 raise ValueError()
             claims = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
-            if claims.get('token_type') != 'gateway_realtime' or claims.get('role') != 'admin' or int(claims['exp']) <= time.time():
+            if (claims.get('token_type') != 'gateway_realtime' or claims.get('role') != 'admin'
+                    or type(claims.get('iat')) is not int or type(claims.get('exp')) is not int
+                    or not claims['iat'] <= time.time() < claims['exp'] or not 0 < claims['exp'] - claims['iat'] <= 120):
                 raise ValueError()
             user = Credenciales.objects.get(pk=claims['user_id'], estado=1, tipo_usuario__in=(1, 4))
             validate_claims(user, claims)

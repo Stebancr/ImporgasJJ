@@ -18,6 +18,7 @@ export function verifyRealtimeToken(token: string): boolean {
       && Number.isInteger(payload.password_version) && typeof payload.session_id === 'string'
       && Number.isInteger(payload.iat) && payload.iat * 1000 <= Date.now()
       && Number.isInteger(payload.exp) && payload.exp * 1000 > Date.now()
+      && payload.exp > payload.iat && payload.exp - payload.iat <= 120
   } catch { return false }
 }
 
