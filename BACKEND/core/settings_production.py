@@ -7,6 +7,11 @@ from .settings import *  # noqa: F401,F403
 
 
 DEBUG = False
+from django.core.exceptions import ImproperlyConfigured
+_jwt_key = os.environ.get('JWT_SIGNING_KEY', '')
+if len(_jwt_key) < 32 or _jwt_key == SECRET_KEY:
+    raise ImproperlyConfigured('JWT_SIGNING_KEY must be an independent cryptographic key (at least 32 characters).')
+SIMPLE_JWT = {**SIMPLE_JWT, 'SIGNING_KEY': _jwt_key}
 ROOT_URLCONF = 'core.urls_production'
 
 ALLOWED_HOSTS = [

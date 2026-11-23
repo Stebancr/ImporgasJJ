@@ -8,6 +8,7 @@
 from django.db import models
 import uuid
 from django.contrib.auth.models import AbstractBaseUser, UserManager
+from .auth_models import GlobalAuthState, AuthSession, PersistentTokenVersion, AuthRevocation
 
 
 class Cargo(models.Model):

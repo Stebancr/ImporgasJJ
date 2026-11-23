@@ -47,6 +47,8 @@ class CustomerRealtimeTests(TransactionTestCase):
         from django.urls import path
         from .consumers import CustomerChatConsumer
         owner = Credenciales.objects.create(usuario='ws-owner', tipo_usuario=2, estado=1)
+        from auth.serializers import TokenLMSSerializer
+        owner._auth_claims = TokenLMSSerializer.get_token(owner).access_token.payload
         other = Credenciales.objects.create(usuario='ws-other', tipo_usuario=2, estado=1)
         session = ChatSession.objects.create(channel='ecommerce', user_id_ref=owner.pk)
         app = URLRouter([path('ws/<int:session_id>/', CustomerChatConsumer.as_asgi())])
