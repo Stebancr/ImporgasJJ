@@ -73,10 +73,12 @@ export const authService = {
     })
   },
   logout: () => {
-    void api.post('/auth/logout/', {}).catch(() => undefined)
+    const hadSession = !!localStorage.getItem('authToken')
+    if (hadSession) void api.post('/auth/logout/', {}).catch(() => undefined)
     localStorage.removeItem('authToken')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('user')
+    if (hadSession) window.dispatchEvent(new Event('auth:logout'))
   },
   getStoredUser: (): User | null => {
     const raw = localStorage.getItem('user')

@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import type { User, LoginCredentials, RegisterData, AuthState } from '@/admin/types'
 import { authService } from '@/admin/services/admin_index'
 import { refreshAdminToken, tokenExpiresIn } from '@/admin/services/admin_token'
-import { revokeBrowserSession } from '../../services/sessionSecurity'
+import { revokeBrowserSession, isSameBrowserSession } from '../../services/sessionSecurity'
 import { useQueryClient } from '@tanstack/react-query'
 
 interface AuthContextType extends AuthState {
@@ -38,12 +38,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (tokenExpiresIn(token) <= 60_000) token = await refreshAdminToken()
         if (!token) { reset(); return }
         const user = await authService.getProfile()
-        if (!active || token !== authService.getStoredToken()) return
+        if (!active || !isSameBrowserSession(token, authService.getStoredToken())) return
+        token = authService.getStoredToken()
         if (!token) { reset(); return }
         if (!user.is_active || user.role !== 'admin') { reset(); return }
         authService.setAuth(user, token)
         setState({ user, token, isAuthenticated: true, isLoading: false })
-      } catch { if (active && (!authService.getStoredToken() || authService.getStoredToken() === token)) reset() }
+      } catch { if (active && (!authService.getStoredToken() || (token && isSameBrowserSession(token, authService.getStoredToken())))) reset() }
     }
     const onStorage = (event: StorageEvent) => {
       if (event.key === 'token' || event.key === null) {
@@ -79,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       if (await refreshAdminToken()) return
-      if (!stopped && !authService.getStoredToken()) window.dispatchEvent(new Event('admin:logout'))
+      if (!stopped && current) revokeBrowserSession({ key: 'token', value: current })
       } finally { checking = false }
     }
     const onRefreshed = (event: Event) => {

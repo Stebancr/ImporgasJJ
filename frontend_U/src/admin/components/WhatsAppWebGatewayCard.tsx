@@ -30,6 +30,7 @@ export default function WhatsAppWebGatewayCard() {
     let socket: ReturnType<typeof io> | undefined
     let refreshTimer: ReturnType<typeof setInterval> | undefined
     let refreshing = false
+    let authorizationFailures = 0
     const stop = () => { disposed = true; if (refreshTimer) clearInterval(refreshTimer); socket?.disconnect() }
     window.addEventListener('session:revoked', stop)
 
@@ -47,8 +48,9 @@ export default function WhatsAppWebGatewayCard() {
             autoConnect: false,
             reconnection: true,
             reconnectionDelayMax: 10_000,
+            reconnectionAttempts: 5,
           })
-          socket.on('connect', () => setError(''))
+          socket.on('connect', () => { authorizationFailures = 0; setError('') })
           socket.on('auth.revalidate', () => { socket?.disconnect(); void refreshToken(true) })
           socket.on('gateway.state', (next: WhatsAppGatewayState) => {
             setLiveState(next)
@@ -58,7 +60,11 @@ export default function WhatsAppWebGatewayCard() {
           socket.on('connect_error', (reason) => {
             if (disposed) return
             setError(`No fue posible recibir el estado en tiempo real: ${reason.message}`)
-            if (reason.message === 'unauthorized') void refreshToken(true)
+            if (reason.message === 'unauthorized') {
+              authorizationFailures += 1
+              if (authorizationFailures <= 1) void refreshToken(true)
+              else { socket?.io.reconnection(false); socket?.disconnect() }
+            }
           })
           socket.connect()
         } else {
