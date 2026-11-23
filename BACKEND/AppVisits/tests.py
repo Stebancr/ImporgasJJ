@@ -227,7 +227,7 @@ class VisitCompletionTests(APITestCase):
         with self.captureOnCommitCallbacks(execute=True):
             finished = self.client.post(
                 reverse('visitas-sincronizar', args=[visit_id]), report,
-                format='multipart', HTTP_IDEMPOTENCY_KEY='final-cost-operation-001',
+                format='multipart', HTTP_IDEMPOTENCY_KEY='final-cost-operation-001',  # gitleaks:allow -- deterministic synthetic test fixture, not a live credential
                 HTTP_IF_MATCH=created.data['sync_version'],
             )
         self.assertEqual(finished.status_code, 200, finished.data)

@@ -27,7 +27,7 @@ Content-Type: application/json
 **Respuesta Exitosa (200 OK)**:
 ```json
 {
-    "token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
+    "token": "<TOKEN_DE_PRUEBA_DESDE_ENTORNO>"
 }
 ```
 

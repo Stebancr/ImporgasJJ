@@ -10,7 +10,9 @@ def _resolve_user(raw_token):
     authentication = PasswordVersionJWTAuthentication()
     try:
         validated = authentication.get_validated_token(raw_token)
-        return authentication.get_user(validated)
+        user = authentication.get_user(validated)
+        user._auth_claims = dict(validated.payload)
+        return user
     except Exception:
         return AnonymousUser()
 

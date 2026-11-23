@@ -19,7 +19,7 @@ from crmChat.models import ChannelIntegration, ChatAttachment, ChatMessage, Chat
 from crmChat.apps.whatsapp_web.services import send_message
 
 
-TEST_SECRET = 'test-internal-secret-with-at-least-32-bytes'
+TEST_SECRET = 'test-internal-secret-with-at-least-32-bytes'  # gitleaks:allow -- deterministic synthetic test fixture, not a live credential
 
 
 @override_settings(
@@ -285,7 +285,9 @@ class WhatsAppWebAdminAndOutboundTests(APITestCase):
         self.assertEqual(response.data[0]['avatar_url'], 'https://cdn.example.test/avatar.jpg')
 
     def test_realtime_token_is_short_lived_and_contains_no_service_secret(self):
-        self.client.force_authenticate(self.admin)
+        from auth.serializers import TokenLMSSerializer
+        self.client.force_authenticate(None)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {TokenLMSSerializer.get_token(self.admin).access_token}')
         response = self.client.post('/crm-chat/whatsapp-web/realtime-token/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['expires_in'], 120)

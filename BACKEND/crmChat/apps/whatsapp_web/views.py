@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -444,9 +445,40 @@ class GatewayRealtimeTokenView(APIView):
     def post(self, request):
         if not settings.CRM_INTERNAL_SERVICE_TOKEN:
             return Response({'detail': 'Gateway no configurado.'}, status=503)
-        encoded = base64.urlsafe_b64encode(json.dumps({'role': 'admin', 'user_id': request.user.pk, 'exp': int(time.time()) + 120}, separators=(',', ':')).encode()).rstrip(b'=').decode()
+        from auth.session_security import current_version
+        from usuarios.models import PersistentTokenVersion
+        session_id = request.auth.get('session_id') if hasattr(request.auth, 'get') else request.session.get('auth_session_id')
+        if not session_id and request.auth:
+            metadata = PersistentTokenVersion.objects.filter(token=request.auth).first()
+            session_id = str(metadata.session_id) if metadata else None
+        if not session_id:
+            return Response({'code': 'SESSION_REVOKED'}, status=401)
+        payload = {'role': 'admin', 'user_id': request.user.pk, 'exp': int(time.time()) + 120,
+            'iat': int(time.time()), 'token_type': 'gateway_realtime', 'session_id': str(session_id),
+            'password_version': request.user.password_version, 'global_auth_version': current_version()}
+        encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(',', ':')).encode()).rstrip(b'=').decode()
         signature = base64.urlsafe_b64encode(hmac.new(settings.CRM_INTERNAL_SERVICE_TOKEN.encode(), encoded.encode(), hashlib.sha256).digest()).rstrip(b'=').decode()
         return Response({'token': f'{encoded}.{signature}', 'expires_in': 120})
+
+
+class InternalRealtimeValidationView(InternalAPIView):
+    def post(self, request):
+        from auth.session_security import validate_claims
+        from usuarios.models import Credenciales
+        from rest_framework.exceptions import AuthenticationFailed
+        try:
+            encoded, signature = request.data.get('token', '').split('.')
+            expected = base64.urlsafe_b64encode(hmac.new(settings.CRM_INTERNAL_SERVICE_TOKEN.encode(), encoded.encode(), hashlib.sha256).digest()).rstrip(b'=').decode()
+            if not hmac.compare_digest(signature, expected):
+                raise ValueError()
+            claims = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+            if claims.get('token_type') != 'gateway_realtime' or claims.get('role') != 'admin' or int(claims['exp']) <= time.time():
+                raise ValueError()
+            user = Credenciales.objects.get(pk=claims['user_id'], estado=1, tipo_usuario__in=(1, 4))
+            validate_claims(user, claims)
+        except (ValueError, TypeError, KeyError, AttributeError, UnicodeDecodeError, binascii.Error, Credenciales.DoesNotExist, AuthenticationFailed):
+            return Response({'valid': False})
+        return Response({'valid': True})
 
 
 class GatewayCommandView(APIView):

@@ -1,3 +1,4 @@
+from auth.serializers import TokenLMSSerializer
 from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
@@ -15,7 +16,7 @@ class CustomerRealtimeAccessTests(TransactionTestCase):
         for index,change in enumerate(({'estado':0},{'password_version':1})):
             user=Credenciales.objects.create(usuario=f'customer-socket-{index}',estado=1,tipo_usuario=0)
             session=ChatSession.objects.create(user_id_ref=user.pk,channel='ecommerce')
-            token=str(AccessToken.for_user(user))
+            token=str(TokenLMSSerializer.get_token(user).access_token)
             async def scenario():
                 socket=WebsocketCommunicator(application,f'/ws/crm-chat/sessions/{session.pk}/',subprotocols=['crm-chat',f'jwt.{token}'])
                 self.assertTrue((await socket.connect())[0])
@@ -33,7 +34,7 @@ class CustomerRealtimeAccessTests(TransactionTestCase):
         from core.asgi import application
         user=Credenciales.objects.create(usuario='foreign-socket',estado=1,tipo_usuario=0)
         session=ChatSession.objects.create(user_id_ref=user.pk+1000,channel='ecommerce')
-        token=str(AccessToken.for_user(user))
+        token=str(TokenLMSSerializer.get_token(user).access_token)
         async def scenario():
             socket=WebsocketCommunicator(application,f'/ws/crm-chat/sessions/{session.pk}/',subprotocols=['crm-chat',f'jwt.{token}'])
             self.assertFalse((await socket.connect())[0])
