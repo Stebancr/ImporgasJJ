@@ -103,6 +103,7 @@ export const authService = {
   },
 
   async logout(): Promise<void> {
+    try { await api.post('/auth/logout/') } catch { /* Local credentials are still cleared. */ }
     localStorage.removeItem('token')
     localStorage.removeItem('refresh')
     localStorage.removeItem('adminUser')
@@ -134,6 +135,7 @@ export const authService = {
   },
 
   setAuth(user: User, token: string): void {
+    sessionStorage.removeItem('auth:revoked')
     localStorage.setItem('adminUser', JSON.stringify(user))
     localStorage.setItem('token', token)
   },

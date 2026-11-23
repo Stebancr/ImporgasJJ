@@ -2,17 +2,17 @@ import crypto from 'node:crypto'
 import axios from 'axios'
 import { env } from '../config/env.js'
 
-export async function crmPost<T>(path: string, body: unknown): Promise<T> {
+export async function crmPost<T>(path: string, body: unknown, policy = { attempts: 5, timeout: 20_000 }): Promise<T> {
   const raw = JSON.stringify(body)
   let lastError: unknown
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < policy.attempts; attempt += 1) {
     const timestamp = Math.floor(Date.now() / 1000).toString()
     const requestId = crypto.randomUUID()
     const signature = crypto.createHmac('sha256', env.CRM_INTERNAL_SERVICE_TOKEN)
       .update(`${timestamp}.${requestId}.${raw}`).digest('hex')
     try {
       const response = await axios.post<T>(`${env.CRM_API_URL}${path}`, body, {
-        timeout: 20_000,
+        timeout: policy.timeout,
         headers: {
           Authorization: `Bearer ${env.CRM_INTERNAL_SERVICE_TOKEN}`,
           'Content-Type': 'application/json',
@@ -30,9 +30,9 @@ export async function crmPost<T>(path: string, body: unknown): Promise<T> {
       const retryable = status === undefined || status === 408 || status === 429 || status >= 500
       console.error(JSON.stringify({
         event: 'gateway.crm_post_failed', path, status: status || 'network',
-        attempt: attempt + 1, retrying: retryable && attempt < 4,
+        attempt: attempt + 1, retrying: retryable && attempt < policy.attempts - 1,
       }))
-      if (!retryable || attempt === 4) {
+      if (!retryable || attempt === policy.attempts - 1) {
         const responseData = axios.isAxiosError(error) ? error.response?.data as any : undefined
         const detail = String(responseData?.detail || (error as any)?.message || 'Falló la comunicación con Django.').slice(0, 300)
         throw new Error(detail)

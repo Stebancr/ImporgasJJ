@@ -30,6 +30,8 @@ export default function WhatsAppWebGatewayCard() {
     let socket: ReturnType<typeof io> | undefined
     let refreshTimer: ReturnType<typeof setInterval> | undefined
     let refreshing = false
+    const stop = () => { disposed = true; if (refreshTimer) clearInterval(refreshTimer); socket?.disconnect() }
+    window.addEventListener('session:revoked', stop)
 
     const refreshToken = async (reconnect = false) => {
       if (disposed || refreshing) return
@@ -47,6 +49,7 @@ export default function WhatsAppWebGatewayCard() {
             reconnectionDelayMax: 10_000,
           })
           socket.on('connect', () => setError(''))
+          socket.on('auth.revalidate', () => { socket?.disconnect(); void refreshToken(true) })
           socket.on('gateway.state', (next: WhatsAppGatewayState) => {
             setLiveState(next)
             setError('')
@@ -74,6 +77,7 @@ export default function WhatsAppWebGatewayCard() {
     // se autentique de nuevo si el gateway se reinicia o cambia de IP.
     refreshTimer = setInterval(() => { void refreshToken(false) }, 90_000)
     return () => {
+      window.removeEventListener('session:revoked', stop)
       disposed = true
       if (refreshTimer) clearInterval(refreshTimer)
       socket?.removeAllListeners()

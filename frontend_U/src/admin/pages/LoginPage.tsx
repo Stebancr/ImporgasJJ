@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 
+import { revokedMessage } from '../../services/sessionSecurity'
+import axios from 'axios'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { login } = useAuth()
@@ -27,8 +29,10 @@ export default function LoginPage() {
     try {
       await login(formData)
       navigate('/admin/dashboard')
-    } catch {
-      setError('Credenciales incorrectas. Por favor, intenta de nuevo.')
+    } catch (reason) {
+      setError(axios.isAxiosError(reason) && reason.response?.status === 429
+        ? 'Demasiados intentos. Espera un minuto antes de intentar nuevamente.'
+        : 'Credenciales incorrectas. Por favor, intenta de nuevo.')
     } finally {
       setIsLoading(false)
     }
@@ -60,6 +64,7 @@ export default function LoginPage() {
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
+              {sessionStorage.getItem('auth:revoked') && <p role="status" className="text-sm">{revokedMessage}</p>}
               {error && (
                 <div role="alert" className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
                   {error}

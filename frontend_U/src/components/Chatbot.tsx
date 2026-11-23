@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { revokeBrowserSession } from '../services/sessionSecurity'
 import MessageText from './chat/MessageText'
 import ChatAttachmentView, { type AttachmentData } from './chat/ChatAttachmentView'
 import { Link } from 'react-router-dom'
@@ -171,7 +172,10 @@ function Chatbot() {
       socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/crm-chat/sessions/${sessionId}/`, ['crm-chat', `jwt.${token}`])
       socket.onopen = () => { attempts = 0; void refreshMessages.current() }
       socket.onmessage = () => { void refreshMessages.current() }
-      socket.onclose = () => { if (!stopped) timer = setTimeout(connect, Math.min(30000, 1000 * 2 ** ++attempts)) }
+      socket.onclose = event => {
+        if (event.code === 4401 || event.code === 4403) { stopped = true; revokeBrowserSession(); return }
+        if (!stopped) timer = setTimeout(connect, Math.min(30000, 1000 * 2 ** ++attempts))
+      }
       socket.onerror = () => socket?.close()
     }
     connect()

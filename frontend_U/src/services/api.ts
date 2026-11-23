@@ -1,3 +1,4 @@
+import { revokeBrowserSession } from './sessionSecurity'
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 interface RequestOptions {
@@ -44,20 +45,15 @@ async function tryRefreshToken(): Promise<string | null> {
       body: JSON.stringify({ refresh: refreshToken }),
     })
     if (!response.ok) {
-      localStorage.removeItem('authToken')
-      localStorage.removeItem('refreshToken')
-      localStorage.removeItem('user')
-      window.dispatchEvent(new Event('auth:logout'))
+      revokeBrowserSession({ key: 'refreshToken', value: refreshToken })
       return null
     }
     const data = await response.json()
+    if (localStorage.getItem('refreshToken') !== refreshToken) return null
     localStorage.setItem('authToken', data.access)
     return data.access
   } catch {
-    localStorage.removeItem('authToken')
-    localStorage.removeItem('refreshToken')
-    localStorage.removeItem('user')
-    window.dispatchEvent(new Event('auth:logout'))
+    revokeBrowserSession({ key: 'refreshToken', value: refreshToken })
     return null
   }
 }
@@ -87,6 +83,10 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   if (options.signal) config.signal = AbortSignal.any([options.signal, config.signal as AbortSignal])
 
   let response = await fetch(`${API_BASE_URL}${endpoint}`, config)
+  if (response.status === 401 && token) {
+    const failure = await response.clone().json().catch(() => ({}))
+    if (failure.code === 'SESSION_REVOKED' || !localStorage.getItem('refreshToken')) revokeBrowserSession({ key: 'authToken', value: token })
+  }
 
   // If 401 and we have a refresh token, try to refresh and retry once
   if (response.status === 401 && localStorage.getItem('refreshToken')) {

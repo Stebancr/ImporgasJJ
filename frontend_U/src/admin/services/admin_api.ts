@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { refreshAdminToken } from './admin_token'
+import { revokeBrowserSession } from '../../services/sessionSecurity'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -30,6 +31,12 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/token/')) {
+      const sentToken = String(error.config?.headers?.Authorization || '').replace(/^Bearer /, '')
+      if (sentToken && localStorage.getItem('token') && sentToken !== localStorage.getItem('token')) return Promise.reject(error)
+      if (error.response?.data?.code === 'SESSION_REVOKED') {
+        revokeBrowserSession(sentToken ? { key: 'token', value: sentToken } : undefined)
+        return Promise.reject(error)
+      }
       if (!error.config?._retried) {
         error.config._retried = true
         const token = await refreshAdminToken()
@@ -43,10 +50,7 @@ api.interceptors.response.use(
       if (/\/products\/(?:\d+\/)?editor$/.test(error.config?.url || '')) {
         return Promise.reject(error)
       }
-      localStorage.removeItem('token')
-      localStorage.removeItem('adminUser')
-      localStorage.removeItem('refresh')
-      window.dispatchEvent(new Event('admin:logout'))
+      revokeBrowserSession(sentToken ? { key: 'token', value: sentToken } : undefined)
     }
     return Promise.reject(error)
   }

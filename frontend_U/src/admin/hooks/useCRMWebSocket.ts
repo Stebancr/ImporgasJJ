@@ -1,5 +1,6 @@
 /** Mantiene la bandeja sincronizada sin exponer el JWT en la URL. */
 import { useEffect, useRef, useState } from 'react'
+import { revokeBrowserSession } from '../../services/sessionSecurity'
 
 export interface CRMRealtimeEvent {
   type: string
@@ -35,8 +36,9 @@ export function useCRMWebSocket(onEvent: (event: CRMRealtimeEvent) => void, onCo
         if (stopped) return
         try { callback.current(JSON.parse(message.data) as CRMRealtimeEvent) } catch { /* payload ajeno */ }
       }
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         setConnected(false)
+        if (event.code === 4401 || event.code === 4403) { stopped = true; revokeBrowserSession(); return }
         if (!stopped) {
           attempts += 1
           reconnectTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** attempts))
@@ -46,7 +48,10 @@ export function useCRMWebSocket(onEvent: (event: CRMRealtimeEvent) => void, onCo
     }
 
     connect()
+    const stop = () => { stopped = true; if (reconnectTimer) clearTimeout(reconnectTimer); socket?.close() }
+    window.addEventListener('session:revoked', stop)
     return () => {
+      window.removeEventListener('session:revoked', stop)
       stopped = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
       socket?.close()
