@@ -1,5 +1,7 @@
 import io
 import json
+from unittest.mock import patch
+from django.core.management.base import CommandError
 from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
@@ -65,6 +67,16 @@ class GlobalRevocationTests(APITestCase):
         self.assertEqual(current_version(), 2)
         self.assertEqual(AuthRevocation.objects.count(), 1)
         self.assertEqual(self.revoke('second-release')['global_auth_version'], 3)
+
+    def test_root_deployment_is_explicit_audited_and_does_not_impersonate_an_account(self):
+        with patch('os.geteuid', return_value=1000), self.assertRaises(CommandError):
+            call_command('revoke_all_sessions', reason='test_release', system_actor='deployment-root', operation_id='root-denied', stdout=io.StringIO())
+        self.assertEqual(current_version(), 1)
+        with patch('os.geteuid', return_value=0):
+            call_command('revoke_all_sessions', reason='test_release', system_actor='deployment-root', operation_id='root-authorized', stdout=io.StringIO())
+        event = AuthRevocation.objects.get(pk='root-authorized')
+        self.assertIsNone(event.actor_id)
+        self.assertEqual(event.executor_label, 'os:root')
 
     def test_drf_legacy_rejected_new_issue_revoked_and_rotated(self):
         legacy = Token.objects.create(user=self.user)
