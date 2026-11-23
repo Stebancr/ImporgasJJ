@@ -23,10 +23,12 @@ Actualizaciones transitivas limitadas a los paquetes afectados y su cohorte de h
 | Vite | Desarrollo, transitivo Vitest | Alta | Herramienta de pruebas, corregido 8.3.8 |
 | source-map-js | Desarrollo, transitivo | Alta | Mapas de código, actualización transitiva permitida |
 
-Validación Docker: instalación limpia reproducible, **npm audit 0 en todas las severidades**, 38 pruebas aprobadas y TypeScript/build aprobado. Se prueban eventos de conexión y reconexión, persistencia de credenciales sintéticas, reinicio solicitado por Baileys, mensajes entrantes/salientes y adjuntos simulados, cola, idempotencia, logout y conservación de sesión inválida para diagnóstico. No se conectó una cuenta real ni se enviaron mensajes a proveedores.
+Validación Docker: instalación limpia reproducible, **npm audit 0 en todas las severidades**, 40 pruebas aprobadas y TypeScript/build aprobado. Se prueban eventos de conexión y reconexión, persistencia de credenciales sintéticas, reinicio solicitado por Baileys, mensajes entrantes/salientes y adjuntos simulados, cola, idempotencia, logout y conservación de sesión inválida para diagnóstico. No se conectó una cuenta real ni se enviaron mensajes a proveedores.
 
 La revocación global y Socket.IO versionado pertenecen al PR de autenticación. Deben probarse nuevamente al combinar ambas ramas; esta rama no pretende corregir por sí sola ese mecanismo.
 
 CI: se habilita el mismo workflow para PR hacia dev y se añade audit al job del gateway, manteniendo los controles existentes. No se habilitan conexiones a clientes. Antes de producción, revisar todos los checks y las pruebas de integración con la rama de autenticación.
 
 Rollback: restaurar únicamente los dos manifiestos del commit anterior en una rama correctiva y reconstruir una imagen aislada. Eso reintroduciría avisos conocidos y no debe promoverse a producción sin revisión. No borrar el directorio de autenticación Baileys ni volúmenes; nunca revertir la revocación de sesiones para solucionar una dependencia.
+
+Validación adicional en node:22-bookworm-slim (base del Dockerfile): transformación PNG→JPEG con Sharp/libvips y generación QR sintética aprobadas, sin conectar una cuenta WhatsApp. Las 40 pruebas y el build pasan con audit 0.
