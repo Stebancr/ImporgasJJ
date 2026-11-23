@@ -13,6 +13,7 @@ export interface CreateCategoryData {
   name: string
   slug: string
   icon?: string
+  icon_key?: string | null
   description?: string
   parent_id?: number | null
   order?: number

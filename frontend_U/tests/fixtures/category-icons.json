@@ -1,0 +1,17 @@
+[
+  {"name":"Calentadores de paso","slug":"calentadores","icon":"flame"},
+  {"name":"Medidores y Reguladores para gas","slug":"reguladores","icon":"gauge"},
+  {"name":"Calefactores","slug":"calefactores","icon":"flame"},
+  {"name":"Repuestos","slug":"repuestos","icon":"wrench"},
+  {"name":"Generadores de Vapor","slug":"generadores-de-vapor","icon":"wind"},
+  {"name":"Accesorios Laton","slug":"accesorios-laton","icon":"flame"},
+  {"name":"Calentadores de acumulación","slug":"calentadores-de-acumulacion","icon":"flame"},
+  {"name":"Calentadores electricos","slug":"calentadores-electricos","icon":"flame"},
+  {"name":"Electricidad","slug":"electricidad","icon":"zap"},
+  {"name":"Medidor de gas","slug":"medidor-de-gas","icon":"meter"},
+  {"name":"Manómetro","slug":"manometro","icon":"gauge"},
+  {"name":"Regulador de gas","slug":"regulador-de-gas","icon":"sliders"},
+  {"name":"Latón","slug":"laton","icon":"link"},
+  {"name":"Galvanizado","slug":"galvanizado","icon":"construction"},
+  {"name":"Tanque de acumulación","slug":"tanque-de-acumulacion","icon":"cylinder"}
+]

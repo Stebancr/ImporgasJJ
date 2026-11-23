@@ -1,0 +1,33 @@
+x-e2e: &e2e
+  image: imporgas-readiness-backend:local
+  working_dir: /app
+  volumes: ["./BACKEND:/app"]
+  environment: &e2e-env
+    DJANGO_SETTINGS_MODULE: core.settings
+    SECRET_KEY: isolated-readiness-fixture-only
+    DEBUG: 'True'
+    ALLOWED_HOSTS: '*'
+    DB_ENGINE: django.db.backends.postgresql
+    DB_NAME: crm_audit
+    DB_USER: crm_audit
+    DB_PASSWORD: isolated-test-only
+    DB_HOST: database
+    CRM_TEST_POSTGRES: '1'
+    CRM_TEST_MODE: 'True'
+    CRM_EXTERNAL_SEND_ENABLED: 'False'
+    CELERY_BROKER_URL: memory://
+    CELERY_RESULT_BACKEND: cache+memory://
+    CHANNEL_REDIS_URL: redis://redis:6379/2
+    EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+    TRANSACTIONAL_EMAIL_ENABLED: 'False'
+    EXTERNAL_PRODUCT_URL_TEMPLATE: https://www.imporgasjj.com/producto/{id}
+services:
+  tcc-e2e-backend:
+    <<: *e2e
+    command: python -m shipping.e2e_server --tcc-e2e
+  general-e2e-backend:
+    <<: *e2e
+    command: python -m ecommerce.e2e_server --isolated-e2e
+  password-reset-browser:
+    <<: *e2e
+    command: python -m usuarios.recovery_e2e --isolated-password-test

@@ -19,7 +19,7 @@ from crmChat.models import ChannelIntegration, ChatAttachment, ChatMessage, Chat
 from crmChat.apps.whatsapp_web.services import send_message
 
 
-TEST_SECRET = 'test-internal-secret-with-at-least-32-bytes'
+TEST_SECRET = 'test-internal-secret-with-at-least-32-bytes'  # gitleaks:allow -- deterministic synthetic test fixture, not a live credential
 
 
 @override_settings(

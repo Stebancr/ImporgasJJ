@@ -1,13 +1,14 @@
 // Docker-only browser and real isolated Django/PostgreSQL. All external calls blocked.
 const {chromium}=require('/tmp/crm-ui/node_modules/playwright')
 const assert=require('node:assert/strict')
+const chooseLocation=require('./location-select.cjs')
 const api='http://general-e2e-backend:8099'
 ;(async()=>{
  const browser=await chromium.launch({args:['--host-resolver-rules=MAP crm.localhost nginx']})
  const page=await browser.newPage();page.setDefaultTimeout(15000)
  const errors=[],carrierRequests=[]
  page.on('pageerror',error=>errors.push(error.message))
- page.on('request',request=>{if(/tcc|\/shipping\//i.test(request.url()))carrierRequests.push(request.url())})
+ page.on('request',request=>{if(/(?:testsomos|tcc\.com\.co)|\/shipping\/(?:quote|quotes|checkout|shipments)(?:[/?]|$)/i.test(request.url()))carrierRequests.push(request.url())})
  try{
   let state
   for(let attempt=0;attempt<60;attempt++){
@@ -21,6 +22,7 @@ const api='http://general-e2e-backend:8099'
   const user={id:String(profile.id),email:profile.correo,name:profile.nombre_completo,phone:profile.telefono,role:'client',is_active:true}
   assert.equal((await page.request.post(api+'/cart',{headers,data:{product_id:state.product_id,quantity:1}})).status(),201)
   await page.addInitScript(({token,user})=>{
+   if(location.origin==='null')return
    localStorage.setItem('authToken',token.access);localStorage.setItem('user',JSON.stringify(user))
    window.WidgetCheckout=class{constructor(options){window.__qaPayment=options}open(){}}
   },{token,user})
@@ -32,13 +34,15 @@ const api='http://general-e2e-backend:8099'
   })
   await page.goto('http://crm.localhost/direcciones?nueva=1')
   const form=page.getByRole('form',{name:'Formulario de dirección de entrega'})
-  await form.getByLabel('Departamento',{exact:true}).selectOption({label:'VALLE DEL CAUCA'})
-  await form.getByLabel('Ciudad o municipio',{exact:true}).selectOption({label:'SANTIAGO DE CALI'})
+  await form.getByLabel('Nombre de quien recibe',{exact:true}).fill('Cliente QA')
+  await form.getByLabel('Número de teléfono',{exact:true}).fill('3000000000')
+  await chooseLocation(page,'Departamento de entrega','VALLE DEL CAUCA')
+  await chooseLocation(page,'Ciudad o municipio de entrega','76001000')
   await form.getByLabel('Dirección',{exact:true}).fill('Calle sintética 123')
   await form.getByRole('button',{name:'Guardar dirección',exact:true}).click()
   await form.waitFor({state:'hidden'})
   const addresses=(await(await page.request.get(api+'/ecommerce/user/addresses',{headers})).json()).data
-  assert.equal(addresses.length,1);assert.equal(addresses[0].city,'SANTIAGO DE CALI')
+  assert.equal(addresses.length,1);assert.equal(addresses[0].tcc_city_code,'76001000')
   for(const width of [1280,768,390]){
    await page.setViewportSize({width,height:900})
    await page.goto('http://crm.localhost/carrito')
@@ -48,8 +52,10 @@ const api='http://general-e2e-backend:8099'
   await page.goto('http://crm.localhost/checkout')
   await page.getByRole('button',{name:'Agregar nueva dirección',exact:true}).click()
   const checkoutAddress=page.getByRole('form',{name:'Formulario de dirección de entrega'})
-  await checkoutAddress.getByLabel('Departamento',{exact:true}).selectOption({label:'VALLE DEL CAUCA'})
-  await checkoutAddress.getByLabel('Ciudad o municipio',{exact:true}).selectOption({label:'SANTIAGO DE CALI'})
+  await checkoutAddress.getByLabel('Nombre de quien recibe',{exact:true}).fill('Cliente QA')
+  await checkoutAddress.getByLabel('Número de teléfono',{exact:true}).fill('3000000000')
+  await chooseLocation(page,'Departamento de entrega','VALLE DEL CAUCA')
+  await chooseLocation(page,'Ciudad o municipio de entrega','76001000')
   await checkoutAddress.getByLabel('Dirección',{exact:true}).fill('Dirección nueva del checkout QA')
   await checkoutAddress.getByLabel('Barrio (opcional)',{exact:true}).fill('Barrio QA')
   await checkoutAddress.getByRole('button',{name:'Guardar dirección',exact:true}).click()

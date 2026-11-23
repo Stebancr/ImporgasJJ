@@ -1,0 +1,35 @@
+services:
+  backend:
+    image: imporgas-readiness-backend:local
+    build:
+      context: ./BACKEND
+      dockerfile: Dockerfile.prod
+    command: daphne --access-log /dev/null -b 0.0.0.0 -p 8001 core.asgi:application
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings
+      CRM_INTERNAL_SERVICE_TOKEN: ${READINESS_INTERNAL_TOKEN:?synthetic test token required}
+    volumes:
+      - readiness_media:/app/media
+  worker:
+    image: imporgas-readiness-backend:local
+    environment:
+      CRM_INTERNAL_SERVICE_TOKEN: ${READINESS_INTERNAL_TOKEN:?synthetic test token required}
+    volumes:
+      - readiness_media:/app/media
+  beat:
+    image: imporgas-readiness-backend:local
+    extends:
+      file: docker-compose.crm-audit.yml
+      service: worker
+    profiles: [smoke]
+    command: celery -A core beat --loglevel=WARNING --schedule=/tmp/readiness-celerybeat --pidfile=/tmp/readiness-celerybeat.pid
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./qa/readiness/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [backend]
+volumes:
+  readiness_media:

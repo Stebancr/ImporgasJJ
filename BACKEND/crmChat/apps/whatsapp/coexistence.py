@@ -71,6 +71,9 @@ def consume_signup_state(state, user_id):
 def exchange_signup_code(code):
     """Intercambia el código de Facebook Login sin exponer el App Secret."""
 
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
+
     if not code:
         raise MetaAPIError('Meta no devolvió el código de autorización de WhatsApp.')
     root = _required_setting('META_GRAPH_API_URL').rstrip('/')

@@ -1249,6 +1249,8 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
     logo_height = 2.75 * cm
     logo = RLImage(logo_buffer, width=logo_height / logo_ratio, height=logo_height)
 
+    from transactional_mail.configuration import visit_contact_address
+    technical_contact = escape(visit_contact_address(required=False))
     # ── Header ──
     header_data = [[
         logo,
@@ -1257,7 +1259,7 @@ def _generar_pdf(visita: VisitaTecnica) -> bytes:
                   '<b>IMPORGAS JJ</b><br/>'
                   'Teléfono: 3165266734 / 3176467820<br/>'
                   'Número de identificación empresarial:<br/>'
-                  'Email: servicioimporgas@gmail.com<br/>'
+                  f'Email: {technical_contact}<br/>'
                   'Dirección: Sede Norte / Sede Sur', normal),
     ]]
     header_table = Table(header_data, colWidths=[3.5 * cm, w - 3.5 * cm])

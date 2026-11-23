@@ -24,6 +24,7 @@ export interface Category {
   name: string
   slug: string
   icon: string
+  icon_key?: string | null
   productCount: number
 }
 

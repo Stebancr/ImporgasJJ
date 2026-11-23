@@ -32,6 +32,9 @@ from ecommerce.models import Notification
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class VisitCompletionTests(APITestCase):
     def setUp(self):
+        # TransactionTestCase can flush data-migration rows when --keepdb is reused.
+        for code, label in VisitaTecnica.TIPO_TAREA_CHOICES:
+            TipoVisita.objects.get_or_create(codigo=code, defaults={'nombre': label, 'activo': True})
         self.media_dir = tempfile.mkdtemp(prefix='visits-pdf-test-')
         self.media_settings = override_settings(MEDIA_ROOT=self.media_dir)
         self.media_settings.enable()
@@ -227,7 +230,7 @@ class VisitCompletionTests(APITestCase):
         with self.captureOnCommitCallbacks(execute=True):
             finished = self.client.post(
                 reverse('visitas-sincronizar', args=[visit_id]), report,
-                format='multipart', HTTP_IDEMPOTENCY_KEY='final-cost-operation-001',
+                format='multipart', HTTP_IDEMPOTENCY_KEY='final-cost-operation-001',  # gitleaks:allow -- deterministic synthetic test fixture, not a live credential
                 HTTP_IF_MATCH=created.data['sync_version'],
             )
         self.assertEqual(finished.status_code, 200, finished.data)

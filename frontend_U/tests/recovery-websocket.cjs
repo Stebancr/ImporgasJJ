@@ -5,7 +5,7 @@ const assert=require('node:assert/strict')
  const browser=await chromium.launch()
  try{
   const page=await browser.newPage()
-  const response=await page.request.post('http://backend:8000/auth/token/',{data:{usuario:'qa-recovery-socket',password:'Synthetic-qa-socket-only-942!'}})
+  const response=await page.request.post((process.env.QA_SOCKET_API_URL||'http://backend:8000')+'/auth/token/',{data:{usuario:'qa-recovery-socket',password:'Synthetic-qa-socket-only-942!'}})
   assert.equal(response.status(),200)
   const token=(await response.json()).access
   const result=await page.evaluate(token=>new Promise((resolve,reject)=>{

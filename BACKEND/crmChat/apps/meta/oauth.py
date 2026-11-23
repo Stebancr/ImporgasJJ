@@ -72,6 +72,8 @@ def _safe_json(response, operation):
 
 
 def _request(method, url, *, token='', params=None, data=None):
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
     headers = {'Accept': 'application/json'}
     if token:
         headers['Authorization'] = f'Bearer {token}'

@@ -1,0 +1,10 @@
+{% autoescape off %}IMPORGAS JJ
+{{ title }}
+
+Hola {{ name }},
+{{ summary }}
+{{ number }} · {{ date }}
+{% for label,value in details %}{{ label }}: {{ value }}
+{% endfor %}
+Contacto: {{ contact }} · {{ phone }}
+{% endautoescape %}

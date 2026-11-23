@@ -1,7 +1,7 @@
 name: Development release validation
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
     branches: [dev, main]
 permissions:
@@ -20,7 +20,7 @@ jobs:
           docker compose -f docker-compose.ci.yml run --rm backend python manage.py migrate --plan
           docker compose -f docker-compose.ci.yml run --rm backend python manage.py migrate --noinput
           docker compose -f docker-compose.ci.yml run --rm backend python manage.py showmigrations
-          docker compose -f docker-compose.ci.yml run --rm backend python manage.py test --noinput
+          docker compose -f docker-compose.ci.yml run --rm backend python manage.py test --testrunner crmChat.audit_runner.AuditRunner --noinput
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -29,7 +29,7 @@ jobs:
       - name: Lint, typecheck, build and dependency audit in Docker
         run: >-
           docker run --rm -v "$PWD/frontend_U:/app" -w /app node:20
-          sh -c 'npm ci --legacy-peer-deps && npm run lint && npx tsc --noEmit && npm run build && npm audit --omit=dev'
+          sh -c 'npm ci --legacy-peer-deps && npm run lint && npm test && npx tsc --noEmit && npm run build && npm audit --omit=dev'
   whatsapp:
     runs-on: ubuntu-latest
     timeout-minutes: 15

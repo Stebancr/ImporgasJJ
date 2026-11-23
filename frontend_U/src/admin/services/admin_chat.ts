@@ -30,6 +30,7 @@ export interface ChatMessage {
   direction: 'inbound' | 'outbound' | 'internal'
   message_type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'template' | 'interactive'
   status: 'received' | 'queued' | 'processing' | 'sent' | 'delivered' | 'read' | 'failed'
+  simulated?: boolean
   retry_allowed: boolean
   template_id?: number
   error: string
@@ -178,6 +179,8 @@ export type MetaIntegrationInput = Omit<MetaIntegration, 'id' | 'active' | 'disp
 }
 
 export interface MessagesResponse {
+  has_more?: boolean
+  before?: number | null
   messages: ChatMessage[]
   status: ChatSession['status']
   agent_name: string
@@ -186,8 +189,8 @@ export interface MessagesResponse {
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 export const adminChatService = {
-  getSessions: async (filters: SessionFilters = {}, signal?: AbortSignal): Promise<ChatSession[]> => {
-    const res = await api.get('/crm-chat/sessions/', { params: sessionParams(filters), signal })
+  getSessions: async (filters: SessionFilters = {}, signal?: AbortSignal, offset = 0): Promise<ChatSession[]> => {
+    const res = await api.get('/crm-chat/sessions/', { params: { ...sessionParams(filters), offset }, signal })
     return res.data
   },
 
@@ -200,8 +203,8 @@ export const adminChatService = {
     return (await api.get('/crm-chat/sessions/pending-count/', { params: sessionParams(filters), signal })).data
   },
 
-  getMessages: async (sessionId: number, afterId?: number, signal?: AbortSignal): Promise<MessagesResponse> => {
-    const params = afterId != null ? { after: afterId } : {}
+  getMessages: async (sessionId: number, afterId?: number, signal?: AbortSignal, beforeId?: number): Promise<MessagesResponse> => {
+    const params = { ...(afterId != null ? { after: afterId } : {}), ...(beforeId != null ? { before: beforeId } : {}), limit: 100 }
     const res = await api.get(`/crm-chat/sessions/${sessionId}/messages/`, { params, signal })
     return res.data
   },

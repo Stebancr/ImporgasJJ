@@ -549,7 +549,7 @@ class ProductListView(APIView):
         categories_data = list(
             Category.objects.filter(is_active=True)
             .annotate(product_count=Count('products', filter=Q(products__is_available=True)))
-            .values('id', 'name', 'slug', 'icon', 'product_count')
+            .values('id', 'name', 'slug', 'icon', 'icon_key', 'product_count')
             .order_by('order', 'name')
         )
 

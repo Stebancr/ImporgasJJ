@@ -94,6 +94,7 @@ def _serialize_message(m):
         'direction':   m.direction,
         'message_type': m.message_type,
         'status':      m.status,
+        'simulated': bool(metadata.get('simulated', False)),
         'error':       str(metadata.get('error') or '')[:500],
         'external_message_id': m.external_message_id,
         'client_message_id': m.client_message_id,
@@ -144,7 +145,13 @@ class SessionListCreateView(APIView):
         qs = filtered_sessions(request.query_params).select_related('contact').annotate(
             latest_text=Subquery(last.values('text')[:1]),
         ).order_by('-updated_at', '-id')
-        return Response([_serialize_session(s, s.latest_text) for s in qs[:100]])
+        try:
+            offset = int(request.query_params.get('offset', 0))
+            if offset < 0:
+                raise ValueError
+        except ValueError:
+            return Response({'error': 'Página de conversaciones inválida.'}, status=400)
+        return Response([_serialize_session(s, s.latest_text) for s in qs[offset:offset + 100]])
 
     def post(self, request):
         user = request.user
@@ -327,6 +334,15 @@ class MessageListCreateView(APIView):
             activity_at=Coalesce('external_timestamp', 'created_at'),
         ).order_by('activity_at', 'id')
         after = request.query_params.get('after')
+        before = request.query_params.get('before')
+        try:
+            limit = max(1, min(100, int(request.query_params.get('limit', 100))))
+            if before:
+                anchor = qs.get(pk=int(before))
+                qs = qs.filter(Q(activity_at__lt=anchor.activity_at) |
+                               Q(activity_at=anchor.activity_at, id__lt=anchor.pk))
+        except (ValueError, ChatMessage.DoesNotExist):
+            return Response({'error': 'Página de mensajes inválida.'}, status=400)
         if after:
             try:
                 qs = qs.filter(id__gt=int(after))
@@ -339,8 +355,15 @@ class MessageListCreateView(APIView):
             session.save(update_fields=['unread_by_agent'])
             transaction.on_commit(lambda: publish_crm_event('session.read', session_id=session.pk))
 
+        page = list((qs if after else qs.order_by('-activity_at', '-id'))[:limit + 1])
+        has_more = len(page) > limit
+        page = page[:limit]
+        if not after:
+            page.reverse()
         return Response({
-            'messages': [_serialize_message(m) for m in qs],
+            'messages': [_serialize_message(m) for m in page],
+            'has_more': has_more,
+            'before': page[0].pk if page and not after else None,
             'status':   session.status,
             'agent_name': session.agent_name,
         })
@@ -502,7 +525,13 @@ class MessageListCreateView(APIView):
 
         if is_agent:
             try:
-                dispatch_outbound_message(msg)
+                if settings.CRM_ASYNC_OUTBOUND_ENABLED and session.channel != 'ecommerce':
+                    from .tasks import enqueue_outbound
+                    msg.status = 'queued'
+                    msg.save(update_fields=['status'])
+                    transaction.on_commit(lambda: enqueue_outbound(msg.pk))
+                else:
+                    dispatch_outbound_message(msg)
             except MetaAPIError as exc:
                 return Response(
                     {'error': str(exc), 'message': _serialize_message(msg)},
@@ -547,6 +576,17 @@ class RetryMessageView(APIView):
             return Response({'error': 'El mensaje no admite reintento.'}, status=409)
         if message.metadata.get('delivery_uncertain'):
             return Response({'error': 'Entrega no confirmada: verifica el canal antes de repetir para evitar duplicados.'}, status=409)
+        if settings.CRM_ASYNC_OUTBOUND_ENABLED and message.session.channel != 'ecommerce' and message.status == 'failed':
+            from .tasks import enqueue_outbound
+            with transaction.atomic():
+                locked = ChatMessage.objects.select_for_update().get(pk=message.pk)
+                if locked.status != 'failed':
+                    return Response({'error': 'El mensaje ya está en procesamiento.'}, status=409)
+                locked.status = 'queued'
+                locked.metadata = {**locked.metadata, 'queue_recovery_attempts': 0}
+                locked.save(update_fields=['status', 'metadata'])
+                transaction.on_commit(lambda: enqueue_outbound(locked.pk))
+            return Response(_serialize_message(locked), status=202)
         try:
             dispatch_outbound_message(message)
         except MetaAPIError as exc:

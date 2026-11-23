@@ -24,6 +24,7 @@ const api=process.env.QA_API_URL,web=process.env.QA_WEB_URL||'http://crm.localho
   const address=(await saved.json()).data
   assert.equal((await page.request.post(api+'/ecommerce/cart',{headers,data:{product_id:state.product_id,quantity:1}})).status(),201)
   await page.addInitScript(({tokens,profile})=>{
+   if(location.origin==='null')return
    localStorage.setItem('authToken',tokens.access);localStorage.setItem('refreshToken',tokens.refresh)
    localStorage.setItem('user',JSON.stringify({id:String(profile.id),name:profile.nombre_completo,email:profile.correo,role:'client'}))
    window.WidgetCheckout=class{constructor(options){window.qaPayment=options}open(){}}

@@ -33,10 +33,16 @@ def queue(kind, pk):
         if source.wompi_status != 'APPROVED' or source.payment_confirmation_email_sent_at:
             return False
         recipient = source.customer_email.strip()
-    else:
+    elif kind == 'visit':
         if source.correo_completada_en or not hasattr(source, 'reporte'):
             return False
         recipient = source.cliente.correo.strip()
+    elif kind == 'visit_confirmation':
+        if source.estado not in (source.ESTADO_PENDIENTE, source.ESTADO_EN_PROCESO):
+            return False
+        recipient = source.cliente.correo.strip()
+    else:
+        raise ValueError('unsupported_transactional_kind')
     with transaction.atomic():
         delivery, created = Delivery.objects.get_or_create(kind=kind, object_id=pk, defaults={'recipient':recipient})
     if delivery.state in ('sent','sending','uncertain','cancelled'):
@@ -52,8 +58,16 @@ def queue(kind, pk):
 
 
 def context_for(delivery, source):
-    context = {**logo_context(), 'document_url':document_link(delivery),
+    context = {**logo_context(), 'document_url':None if delivery.kind == 'visit_confirmation' else document_link(delivery),
         'contact':settings.TRANSACTIONAL_REPLY_TO, 'phone':'3165266734 / 3176467820'}
+    if delivery.kind == 'visit_confirmation':
+        tech = getattr(getattr(source.tecnico, 'usuario_rel', None), 'nombre_completo', '')
+        context.update(name=source.cliente.nombre, title='Tu visita técnica está programada', number=source.numero_tarea,
+            date=source.fecha.strftime('%d/%m/%Y'), summary='Confirmamos la programación de tu visita técnica.',
+            details=[('Servicio', source.tipo_tarea_etiqueta or source.tipo_tarea),
+                     ('Hora', source.hora.strftime('%H:%M')), ('Dirección', source.cliente.direccion),
+                     ('Técnico', tech or 'Equipo de servicio técnico')])
+        return context
     if delivery.kind == 'order':
         context.update(name=source.customer_name, title='Tu compra está confirmada', number=source.order_number,
             date=timezone.localtime(source.created_at,ZoneInfo('America/Bogota')).strftime('%d/%m/%Y %H:%M'),
@@ -96,6 +110,9 @@ def send(pk):
         source=source_for(delivery.kind,delivery.object_id)
         if delivery.kind=='order' and source.wompi_status!='APPROVED':
             raise ValueError('payment_not_approved')
+        if delivery.kind == 'visit_confirmation' and source.estado not in (source.ESTADO_PENDIENTE, source.ESTADO_EN_PROCESO):
+            Delivery.objects.filter(pk=pk).update(state='cancelled', last_error='visit_no_longer_scheduled')
+            return False
         validate_email(delivery.recipient)
         if settings.DEBUG and delivery.recipient.lower() not in [v.lower() for v in settings.TRANSACTIONAL_EMAIL_ALLOWED_RECIPIENTS]:
             raise ValueError('recipient_not_authorized_in_dev')
@@ -105,10 +122,11 @@ def send(pk):
         context=context_for(delivery,source)
         message_id=f'<{delivery.pk}@imporgasjj.com>'
         delivery.message_id=message_id;delivery.save(update_fields=['message_id'])
+        template = 'visit_confirmation' if delivery.kind == 'visit_confirmation' else 'message'
         message=EmailMultiAlternatives(f'{context["title"]} — {context["number"]}',
-            render_to_string('transactional_mail/message.txt',context),from_email,[delivery.recipient],
+            render_to_string(f'transactional_mail/{template}.txt',context),from_email,[delivery.recipient],
             reply_to=[settings.TRANSACTIONAL_REPLY_TO],headers={'Message-ID':message_id})
-        message.attach_alternative(render_to_string('transactional_mail/message.html',context),'text/html')
+        message.attach_alternative(render_to_string(f'transactional_mail/{template}.html',context),'text/html')
         attach_logo(message, context)
         stage='smtp'
         if message.send(fail_silently=False)!=1:
@@ -134,7 +152,7 @@ def send(pk):
             if delivery.kind=='order':
                 from ecommerce.models import Order
                 Order.objects.filter(pk=delivery.object_id).update(payment_confirmation_email_error=code)
-            else:
+            elif delivery.kind == 'visit':
                 from AppVisits.models import VisitaTecnica
                 VisitaTecnica.objects.filter(pk=delivery.object_id).update(correo_completada_error=code)
         except Exception:
@@ -144,7 +162,7 @@ def send(pk):
     Delivery.objects.filter(pk=pk).update(state='sent',sent_at=timezone.now(),last_error='',next_attempt_at=None)
     if delivery.kind=='order':
         type(source).objects.filter(pk=source.pk).update(payment_confirmation_email_sent_at=timezone.now(),payment_confirmation_email_error='')
-    else:
+    elif delivery.kind == 'visit':
         type(source).objects.filter(pk=source.pk).update(correo_completada_en=timezone.now(),correo_completada_error='')
     logger.info('transactional_email sent event=%s',pk)
     return True

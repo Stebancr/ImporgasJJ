@@ -11,15 +11,21 @@ class VisitSenderConfigurationError(ImproperlyConfigured):
     pass
 
 
-def sender_for(kind):
-    if kind != 'visit':
-        return settings.DEFAULT_FROM_EMAIL
+def visit_contact_address(required=True):
     address = getattr(settings, 'SERVER_EMAIL_APLICACION', '')
     try:
         validate_email(address)
     except ValidationError:
+        if not required:
+            return ''
         raise VisitSenderConfigurationError('Configura SERVER_EMAIL_APLICACION con una dirección de correo válida.') from None
-    return formataddr(('Servicio Técnico ImporGas JJ', address), charset='utf-8')
+    return address
+
+
+def sender_for(kind):
+    if kind not in ('visit', 'visit_confirmation'):
+        return settings.DEFAULT_FROM_EMAIL
+    return formataddr(('ImporGas JJ Servicio Técnico', visit_contact_address()), charset='utf-8')
 
 
 def validate_smtp():

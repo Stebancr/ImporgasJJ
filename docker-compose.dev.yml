@@ -20,6 +20,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
+      - CRM_EXTERNAL_SEND_ENABLED=${CRM_EXTERNAL_SEND_ENABLED:-False}
+      - CRM_TEST_MODE=${CRM_TEST_MODE:-False}
+      - CRM_ASYNC_OUTBOUND_ENABLED=${CRM_ASYNC_OUTBOUND_ENABLED:-True}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
@@ -76,6 +79,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
+      - CRM_EXTERNAL_SEND_ENABLED=${CRM_EXTERNAL_SEND_ENABLED:-False}
+      - CRM_TEST_MODE=${CRM_TEST_MODE:-False}
+      - CRM_ASYNC_OUTBOUND_ENABLED=${CRM_ASYNC_OUTBOUND_ENABLED:-True}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
@@ -128,6 +134,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
+      - CRM_EXTERNAL_SEND_ENABLED=${CRM_EXTERNAL_SEND_ENABLED:-False}
+      - CRM_TEST_MODE=${CRM_TEST_MODE:-False}
+      - CRM_ASYNC_OUTBOUND_ENABLED=${CRM_ASYNC_OUTBOUND_ENABLED:-True}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
@@ -179,6 +188,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/1
       - CHANNEL_REDIS_URL=redis://redis:6379/2
+      - CRM_EXTERNAL_SEND_ENABLED=${CRM_EXTERNAL_SEND_ENABLED:-False}
+      - CRM_TEST_MODE=${CRM_TEST_MODE:-False}
+      - CRM_ASYNC_OUTBOUND_ENABLED=${CRM_ASYNC_OUTBOUND_ENABLED:-True}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}

@@ -151,6 +151,9 @@ def graph_request(
 ):
     """Ejecuta una solicitud Graph sin incluir tokens en URL, logs o errores."""
 
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
+
     encrypted_token = integration.access_token_encrypted
     if not encrypted_token and integration.meta_facebook_page_id:
         encrypted_token = integration.meta_facebook_page.page_access_token_encrypted
@@ -177,7 +180,12 @@ def graph_request(
             params=params,
             timeout=getattr(settings, 'META_HTTP_TIMEOUT', 15),
         )
-        data = response.json() if response.content else {}
+        try:
+            data = response.json() if response.content else {}
+        except ValueError:
+            raise MetaAPIError('Meta devolvió una respuesta inválida.', phase='delivery_confirmation') from None
+        if not isinstance(data, dict):
+            raise MetaAPIError('Meta devolvió una respuesta inválida.', phase='delivery_confirmation')
         if not response.ok:
             error = data.get('error', {}) if isinstance(data, dict) else {}
             code = error.get('code', 'desconocido')
@@ -226,6 +234,9 @@ def graph_request(
 
 def validate_whatsapp_token_permissions(integration):
     """Introspección de solo lectura; jamás envía mensajes de prueba."""
+
+    from crmChat.transport_safety import assert_provider_io_allowed
+    assert_provider_io_allowed()
 
     app_id = integration.app_id or getattr(settings, 'META_APP_ID', '')
     encrypted_secret = integration.app_secret_encrypted
@@ -858,8 +869,11 @@ def _dispatch_outbound_message(message):
         )
         raise MetaAPIError(detail)
 
+    if not getattr(settings, 'CRM_TEST_MODE', False):
+        from crmChat.transport_safety import assert_provider_io_allowed
+        assert_provider_io_allowed()
     logger.info(
-        'Enviando mensaje externo: session_id=%s message_id=%s contact_id=%s channel=%s '
+        'Procesando salida CRM: session_id=%s message_id=%s contact_id=%s channel=%s '
         'type=%s status=%s destination=%s',
         session.id, message.id, session.contact_id, session.channel,
         message.message_type, message.status, _mask_destination(recipient),
@@ -881,7 +895,11 @@ def _dispatch_outbound_message(message):
             token = signing.dumps(attachment.pk, salt='crm-chat-delivery')
             outbound_payload = {'url': f'{base}/api/crm-chat/attachments/{attachment.pk}/delivery/?{urlencode({"token": token})}',
                                 'filename': attachment.original_name, 'mime_type': attachment.mime_type}
-        if session.channel == ChannelIntegration.CHANNEL_WHATSAPP_WEB:
+        if getattr(settings, 'CRM_TEST_MODE', False):
+            from crmChat.transport_safety import simulated_message_id
+            external_id = simulated_message_id(message)
+            message.metadata = {**message.metadata, 'simulated': True, 'transport_mode': 'local_simulator'}
+        elif session.channel == ChannelIntegration.CHANNEL_WHATSAPP_WEB:
             from crmChat.apps.whatsapp_web.services import send_message as gateway_send
             response = gateway_send(message, outbound_payload)
             external_id = response.get('external_message_id', '')
@@ -943,11 +961,12 @@ def _dispatch_outbound_message(message):
         message.direction = persisted_message.direction
         message.external_timestamp = persisted_message.external_timestamp
         message.metadata = persisted_message.metadata
-        ChannelIntegration.objects.filter(pk=session.integration_id, active=True).update(
-            connection_status='connected', last_error='',
-        )
+        if not getattr(settings, 'CRM_TEST_MODE', False):
+            ChannelIntegration.objects.filter(pk=session.integration_id, active=True).update(
+                connection_status='connected', last_error='',
+            )
         logger.info(
-            'Meta aceptó el mensaje: session_id=%s message_id=%s channel=%s '
+            'Salida CRM procesada: session_id=%s message_id=%s channel=%s '
             'external_message_id_present=true status=%s',
             session.id, message.id, session.channel, message.status,
         )
@@ -972,6 +991,9 @@ def _dispatch_outbound_message(message):
 
 def send_read_receipt(message):
     """Confirma lectura usando la operación disponible en cada canal."""
+
+    if getattr(settings, 'CRM_TEST_MODE', False):
+        return {'simulated': True}
 
     session = message.session
     if not message.external_message_id or not session.integration or not session.integration.active:

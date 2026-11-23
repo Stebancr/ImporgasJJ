@@ -45,6 +45,12 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
+# Preserve deployed behavior; development Compose explicitly disables provider IO.
+# Explicit test mode always wins over the send switch.
+CRM_EXTERNAL_SEND_ENABLED = config('CRM_EXTERNAL_SEND_ENABLED', default=True, cast=bool)
+CRM_TEST_MODE = config('CRM_TEST_MODE', default=False, cast=bool)
+CRM_ASYNC_OUTBOUND_ENABLED = config('CRM_ASYNC_OUTBOUND_ENABLED', default=True, cast=bool)
+
 def _csv_env(name, default=''):
     return [value.strip() for value in os.getenv(name, default).split(',') if value.strip()]
 
