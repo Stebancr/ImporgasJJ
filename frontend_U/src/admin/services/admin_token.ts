@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { revokeBrowserSession } from '../../services/sessionSecurity'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -23,11 +24,12 @@ export function refreshAdminToken(): Promise<string | null> {
     { refresh },
     { timeout: 20000 },
   ).then(({ data }) => {
+    if (localStorage.getItem('refresh') !== refresh) return null
     localStorage.setItem('token', data.access)
     if (data.refresh) localStorage.setItem('refresh', data.refresh)
     window.dispatchEvent(new CustomEvent<string>('admin:token-refreshed', { detail: data.access }))
     return data.access
-  }).catch(() => null).finally(() => {
+  }).catch(() => { revokeBrowserSession({ key: 'refresh', value: refresh }); return null }).finally(() => {
     pendingRefresh = null
   })
   return pendingRefresh

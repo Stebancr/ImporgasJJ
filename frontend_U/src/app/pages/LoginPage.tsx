@@ -1,4 +1,5 @@
 import './styles/LoginPage.css'
+import { revokedMessage } from '../../services/sessionSecurity'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Flame, Eye, EyeOff, Mail, Lock, User, Phone, ArrowRight, Shield, Truck, Headphones, CreditCard } from 'lucide-react'
@@ -18,7 +19,7 @@ function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState((location.state as { message?: string } | null)?.message || '')
+  const [notice, setNotice] = useState((location.state as { message?: string } | null)?.message || (sessionStorage.getItem('auth:revoked') ? revokedMessage : ''))
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [termsVersion, setTermsVersion] = useState('')
   const [form, setForm] = useState({
