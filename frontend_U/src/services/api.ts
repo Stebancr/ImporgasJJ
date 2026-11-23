@@ -83,6 +83,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   if (options.signal) config.signal = AbortSignal.any([options.signal, config.signal as AbortSignal])
 
   let response = await fetch(`${API_BASE_URL}${endpoint}`, config)
+  if (token && localStorage.getItem('authToken') !== token) throw new Error('La sesión cambió. Vuelve a intentar la operación.')
   if (response.status === 401 && token) {
     const failure = await response.clone().json().catch(() => ({}))
     if (failure.code === 'SESSION_REVOKED' || !localStorage.getItem('refreshToken')) revokeBrowserSession({ key: 'authToken', value: token })

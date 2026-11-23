@@ -3,6 +3,7 @@ import type { User, LoginCredentials, RegisterData, AuthState } from '@/admin/ty
 import { authService } from '@/admin/services/admin_index'
 import { refreshAdminToken, tokenExpiresIn } from '@/admin/services/admin_token'
 import { revokeBrowserSession } from '../../services/sessionSecurity'
+import { useQueryClient } from '@tanstack/react-query'
 
 interface AuthContextType extends AuthState {
   login: (credentials: LoginCredentials) => Promise<void>
@@ -14,6 +15,7 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const cache = useQueryClient()
   const [state, setState] = useState<AuthState>({
     user: null,
     token: null,
@@ -25,6 +27,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true
     const reset = () => {
       authService.clearAuth()
+      void cache.cancelQueries()
+      cache.clear()
       if (active) setState({ user: null, token: null, isAuthenticated: false, isLoading: false })
     }
     const validate = async () => {
@@ -55,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('admin:logout', reset)
       window.removeEventListener('storage', onStorage)
     }
-  }, [])
+  }, [cache])
 
   useEffect(() => {
     if (!state.token) return

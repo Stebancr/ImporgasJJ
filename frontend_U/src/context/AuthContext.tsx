@@ -48,10 +48,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (active && (!localStorage.getItem('authToken') || token === localStorage.getItem('authToken'))) { clearDelivery();authService.logout(); setState({ user: null, isAuthenticated: false, isLoading: false, token: null }) }
       })
     } else setState({ user: null, isAuthenticated: false, isLoading: false, token: null })
-    const handleForceLogout = () => {clearDelivery();setState({ user: null, isAuthenticated: false, isLoading: false, token: null })}
+    const handleForceLogout = () => {clearDelivery();void cache.cancelQueries();cache.clear();setState({ user: null, isAuthenticated: false, isLoading: false, token: null })}
     window.addEventListener('auth:logout', handleForceLogout)
     return () => { active = false; window.removeEventListener('auth:logout', handleForceLogout) }
-  }, [clearDelivery])
+  }, [clearDelivery, cache])
 
   const login = useCallback(async (identifier: string, password: string) => {
     const { token, user } = await authService.login({ email: identifier, password })
