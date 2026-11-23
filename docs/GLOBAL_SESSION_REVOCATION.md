@@ -30,7 +30,7 @@ Dentro del contenedor backend, durante mantenimiento:
 python manage.py revoke_all_sessions --reason=production_release --operation-id=release-IDENTIFICADOR --actor-id=ID_ADMIN_VALIDADO
 ```
 
-Los dos identificadores del ejemplo son marcadores. Actor administrativo activo obligatorio en producción. Motivo y operación aceptan códigos acotados, sin datos personales. La transacción bloquea el estado global, incrementa versión, revoca familias, elimina tokens DRF y sesiones Django y registra conteos. No modifica usuarios, contraseñas, correo, rol ni perfiles.
+Los dos identificadores del ejemplo son marcadores. Identidad administrativa explícita obligatoria en producción: administrador de aplicación activo o --system-actor=deployment-root ejecutado realmente con UID 0. Motivo y operación aceptan códigos acotados, sin datos personales. La transacción bloquea el estado global, incrementa versión, revoca familias, elimina tokens DRF y sesiones Django y registra conteos. No modifica usuarios, contraseñas, correo, rol ni perfiles.
 
 Repetir el mismo operation-id y parámetros devuelve el primer resultado sin incrementar ni borrar sesiones posteriores. Reutilizarlo con parámetros diferentes falla. Otra operación deliberada usa otro ID. Sin operation-id se genera una operación independiente: es segura, pero incrementa otra vez. El contador de refresh corresponde a familias JWT persistidas; no cuenta access stateless. Salida limitada a resultado, versión y conteos.
 
@@ -44,9 +44,9 @@ No se detectó un consumidor productivo propio de TokenAuthentication que deba m
 
 ## Migración y pruebas
 
-usuarios.0010_global_auth_revocation crea cuatro tablas y una restricción de singleton. No renombra ni elimina columnas históricas, no cambia productos y no toca media. Probada en PostgreSQL QA nuevo tras pg_dump lógico verificado (888 bytes, base inicialmente vacía; no es respaldo de producción).
+usuarios.0010_global_auth_revocation crea cuatro tablas y una restricción de singleton. usuarios.0011_revocation_executor_identity añade únicamente executor_label a la nueva tabla de auditoría; no modifica usuarios. No renombra ni elimina columnas históricas, no cambia productos y no toca media. Probada en PostgreSQL QA nuevo tras pg_dump lógico verificado (888 bytes, base inicialmente vacía; no es respaldo de producción).
 
-Docker: check, makemigrations --check, plan y migrate correctos; suite completa **527 aprobadas** (incluye cinco pruebas de saneamiento de scripts). Gateway de autenticación: **42 aprobadas**, incluyendo handshakes polling reales, dos transportes, revocación backend simulada y rechazo de reconexión. Frontend: pruebas de limpieza idempotente/credenciales antiguas, Wompi, lint, TypeScript y build.
+Docker: check, makemigrations --check, plan y migrate correctos; suite completa **528 aprobadas** (incluye cinco pruebas de saneamiento de scripts). Gateway de autenticación: **42 aprobadas**, incluyendo handshakes polling reales, dos transportes, revocación backend simulada y rechazo de reconexión. Frontend: pruebas de limpieza idempotente/credenciales antiguas, Wompi, lint, TypeScript y build.
 
 Chromium contra Django/Redis/Nginx y arnés Socket.IO sin Baileys: login sintético, dos pestañas, comando real de revocación QA, access anterior 401 y reingreso con la misma contraseña en 1440, 768 y 390 px. El límite de cinco logins/minuto permanece; el arnés espera una ventana al ejecutar las tres resoluciones. El test solicita al controlador ejecutar la revocación y espera su confirmación, evitando confundir latencia de herramientas con latencia de cierre.
 
@@ -63,3 +63,5 @@ qa/security/gateway-harness.mjs no importa Baileys ni abre cuentas reales. brows
 7. **No volver a imágenes que ignoren la versión global ni a claves comprometidas.** Rollback solo a una imagen compatible con el guard, preservando clave nueva y versión persistente. Si la única imagen anterior carece del mecanismo, mantener mantenimiento y corregir hacia adelante: volver a ella reabriría credenciales. No revertir esta migración ni restaurar automáticamente la base. Rollback de frontend no debe retirar el control backend/gateway.
 
 No se ha ejecutado este despliegue ni revocado sesiones productivas. Los conteos y versiones QA no son valores de producción.
+
+Operador de despliegue sin compartir credenciales de aplicación: usar docker exec --user 0 y --system-actor=deployment-root. Se audita executor_label=os:root y actor de aplicación nulo, sin suplantar a Luis Esteban ni a otra cuenta. Un proceso que no sea UID 0 no puede usar esa identidad. La alternativa --actor-id continúa validando un administrador activo; ambas opciones son excluyentes y forman parte de la clave de reintento idempotente.

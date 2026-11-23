@@ -37,6 +37,7 @@ class AuthRevocation(models.Model):
     version = models.PositiveBigIntegerField()
     reason = models.CharField(max_length=80)
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    executor_label = models.CharField(max_length=40, default='')
     executed_at = models.DateTimeField(auto_now_add=True)
     django_sessions = models.PositiveIntegerField(default=0)
     refresh_sessions = models.PositiveIntegerField(default=0)

@@ -4,6 +4,8 @@ $repo=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Push-Location $repo
 try {
  New-Item -ItemType Directory .artifacts -Force | Out-Null
+ # Mountpoint only: all generated media goes to the named QA volume, never Git/media data.
+ New-Item -ItemType Directory BACKEND/media -Force | Out-Null
  $envFile=Join-Path $repo '.artifacts/security-qa.env'
  if(-not (Test-Path $envFile)){
   $service=[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
