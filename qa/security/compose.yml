@@ -1,0 +1,49 @@
+services:
+  database:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: security_qa
+      POSTGRES_USER: security_qa
+      POSTGRES_PASSWORD: isolated-test-only
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U security_qa']
+      interval: 2s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+  backend:
+    image: imporgas-ci-backend:latest
+    command: sleep infinity
+    working_dir: /app
+    volumes:
+      - ../../BACKEND:/app:ro
+      - security_media:/app/media
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings
+      SECRET_KEY: ${SECURITY_QA_DJANGO_KEY:?synthetic Django key required}
+      DEBUG: 'True'
+      ALLOWED_HOSTS: '*'
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: security_qa
+      DB_USER: security_qa
+      DB_PASSWORD: isolated-test-only
+      DB_HOST: database
+      CRM_TEST_POSTGRES: '1'
+      CRM_TEST_MODE: 'True'
+      CRM_EXTERNAL_SEND_ENABLED: 'False'
+      CHANNEL_REDIS_URL: redis://redis:6379/2
+      CELERY_BROKER_URL: memory://
+      CELERY_RESULT_BACKEND: cache+memory://
+      EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+      TRANSACTIONAL_EMAIL_ENABLED: 'False'
+      TCC_SHIPPING_ENABLED: 'False'
+      TCC_DISPATCH_ENABLED: 'False'
+      EXTERNAL_PRODUCT_URL_TEMPLATE: https://www.imporgasjj.com/producto/{id}
+    depends_on:
+      database:
+        condition: service_healthy
+networks:
+  default:
+    internal: true
+volumes:
+  security_media:

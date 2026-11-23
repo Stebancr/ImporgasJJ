@@ -1,0 +1,513 @@
+[
+  {
+    "migrations": [],
+    "base": "97f2bc96d52beaa0c6cf14447c7bf3e108787a01",
+    "ref": "refs/heads/codex/backup-dev-before-tcc-recovery",
+    "state": "Backup/obsolete",
+    "behind": 35,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [],
+    "sha": "97f2bc96d52beaa0c6cf14447c7bf3e108787a01",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "b85efd53a763cce8addf6841c4cc00492f577bc1",
+    "ref": "refs/heads/codex/chatbot-simplificado",
+    "state": "Already integrated",
+    "behind": 55,
+    "action": "Preserve reference, no duplicate integration",
+    "exclusive_commits": [],
+    "sha": "b85efd53a763cce8addf6841c4cc00492f577bc1",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ref": "refs/heads/codex/crm-full-audit",
+    "state": "Included in PR15, not released",
+    "behind": 8,
+    "action": "Do not duplicate; repeat integrated regression after security review",
+    "exclusive_commits": [
+      "a549072ca3247ce10eff317216aa45fe860676cc",
+      "4f4686cc1e29b864d2ee53e7cd87737c98b6e95b",
+      "3101f276812984fbd192f0359be11b9302229173"
+    ],
+    "sha": "a549072ca3247ce10eff317216aa45fe860676cc",
+    "ahead": 3
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0017_resume_provider_address.py"
+    ],
+    "base": "d8c6d067f0cd2d57de1a248629f5fd127b1a97e4",
+    "ref": "refs/heads/codex/dev-tcc",
+    "state": "Backup/obsolete",
+    "behind": 43,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [
+      "749ccf5630251e6e33644a621070b6e4604ad05f"
+    ],
+    "sha": "749ccf5630251e6e33644a621070b6e4604ad05f",
+    "ahead": 1
+  },
+  {
+    "migrations": [],
+    "base": "e45bf1c46bc49a0cab7f6e31264e40b22440f6bf",
+    "ref": "refs/heads/codex/fix-frontend-audit-dependencies",
+    "state": "Already released by prior PR",
+    "behind": 7,
+    "action": "Do not integrate again; compare functional tree when necessary",
+    "exclusive_commits": [],
+    "sha": "e45bf1c46bc49a0cab7f6e31264e40b22440f6bf",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "96f2ea7c12fe1f87571c657f2685e58b9a890a74",
+    "ref": "refs/heads/codex/fix-locations-product-categories",
+    "state": "Already released by prior PR",
+    "behind": 2,
+    "action": "Do not integrate again; compare functional tree when necessary",
+    "exclusive_commits": [],
+    "sha": "96f2ea7c12fe1f87571c657f2685e58b9a890a74",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5",
+    "ref": "refs/heads/codex/fix-usuarios-trabajadores",
+    "state": "Superseded",
+    "behind": 44,
+    "action": "PR8 replaced by later production corrections; exclude old branch",
+    "exclusive_commits": [
+      "88592f0c4d2e026e8da96519af9f564e7da65d03",
+      "cac808e0b5f913db8a91de50e6155ecda05d6b2e"
+    ],
+    "sha": "88592f0c4d2e026e8da96519af9f564e7da65d03",
+    "ahead": 2
+  },
+  {
+    "migrations": [],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/heads/codex/improve-category-icons",
+    "state": "Included in PR15, not released",
+    "behind": 0,
+    "action": "Do not duplicate; repeat integrated regression after security review",
+    "exclusive_commits": [
+      "c9e041809b073cc2b0a89e382a3a645b0f9308f9",
+      "d477e8fd8dbb3c1a3f549b5250e95cf31554a63e",
+      "5ef6ac9bf0b7925181470e4932a001e405df8985",
+      "98c4ca076b1af8c8e52dfde25894acb6279bcbf2",
+      "4bac6f5585a63adc3ccca1f88ab37bf7adab6288"
+    ],
+    "sha": "c9e041809b073cc2b0a89e382a3a645b0f9308f9",
+    "ahead": 5
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0024_category_icon_key.py",
+      "BACKEND/transactional_mail/migrations/0003_visit_confirmation_kind.py"
+    ],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/heads/codex/integration-production-readiness",
+    "state": "Blocked",
+    "behind": 0,
+    "action": "PR15 draft; pending security integration and historical credential revocation",
+    "exclusive_commits": [
+      "b74be265a04913769b54e81310937dcd63dbfc21",
+      "fb28c1d662cfd19b357e23a6bdee48ffa28c9d6e",
+      "f30e21709dabfb223039e9013abb4456395fb283",
+      "be396f277ddaa76727614488dcc0832aa2632b19",
+      "9f5fcb82734eb16d25a6dd8f9b4695d78e31b247",
+      "9573fb8536a5cd07469459b4d168312410c2760d",
+      "f8c031e4256f48a32277ed9ae0cb9c43f45f3a11",
+      "4d651d8aebe6b07efeb7b2254bf9f99e5ea26a9d",
+      "6ba49c597af4a048e6f8cf5f232d1d4dbefc9cd7",
+      "c9e041809b073cc2b0a89e382a3a645b0f9308f9",
+      "d477e8fd8dbb3c1a3f549b5250e95cf31554a63e",
+      "5ef6ac9bf0b7925181470e4932a001e405df8985",
+      "98c4ca076b1af8c8e52dfde25894acb6279bcbf2",
+      "4bac6f5585a63adc3ccca1f88ab37bf7adab6288",
+      "a549072ca3247ce10eff317216aa45fe860676cc",
+      "4f4686cc1e29b864d2ee53e7cd87737c98b6e95b",
+      "3101f276812984fbd192f0359be11b9302229173"
+    ],
+    "sha": "b74be265a04913769b54e81310937dcd63dbfc21",
+    "ahead": 17
+  },
+  {
+    "migrations": [],
+    "base": "1ede30cb463b3b7cfeba19461327d1cdc9cb34cc",
+    "ref": "refs/heads/codex/preserved-local-20260922",
+    "state": "Backup/obsolete",
+    "behind": 72,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [
+      "e39f8a41820e7b63f2eb358fa9cb789d2b6cceb8",
+      "6b4f13357ed33c89bc246cc0e8713fdd6571d1f2"
+    ],
+    "sha": "e39f8a41820e7b63f2eb358fa9cb789d2b6cceb8",
+    "ahead": 2
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0019_restore_provider_address.py",
+      "BACKEND/shipping/migrations/0001_initial.py",
+      "BACKEND/shipping/migrations/0002_shippingquote_provider_summary.py",
+      "BACKEND/shipping/migrations/0003_productshippingprofile_declared_value_from_price.py",
+      "BACKEND/shipping/migrations/__init__.py"
+    ],
+    "base": "97f2bc96d52beaa0c6cf14447c7bf3e108787a01",
+    "ref": "refs/heads/codex/recover-tcc-on-current-dev",
+    "state": "Backup/obsolete",
+    "behind": 35,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [
+      "7e84464ccd8c3809ca52b923bc9f9611f8e94d07",
+      "26ab84cb4a8ca34c9355885a22e4ed790f4db052",
+      "3f61e5885911cbfc296542e5844eda706fd2359c",
+      "b012a0522f434ea09e5002e9f51e75b94f479961",
+      "02157ad222c772272683924d844c2533df4255c7",
+      "3767452572adff9bcc987927ad7d6606a82e5da4",
+      "4aa57f486809dd4c8197a8e9af6639d9c65c230b",
+      "3499fa6fdf25ae98af2ece87c09a0a6622e5719d",
+      "96ba852453d53f46ccdc379189743ea1923b2be9",
+      "62ac54659317d58b9b95ca22a8a35828263936a6",
+      "8f11e0b9bd1a18e4a7a7401f278ec7f1f867f328"
+    ],
+    "sha": "7e84464ccd8c3809ca52b923bc9f9611f8e94d07",
+    "ahead": 11
+  },
+  {
+    "migrations": [],
+    "base": "f5fdf28ab0ec916492715bd3948241950c28ecf8",
+    "ref": "refs/heads/codex/safety-dev-before-general-pr",
+    "state": "Backup/obsolete",
+    "behind": 39,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [],
+    "sha": "f5fdf28ab0ec916492715bd3948241950c28ecf8",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5",
+    "ref": "refs/heads/codex/safety-dev-before-tcc-split",
+    "state": "Backup/obsolete",
+    "behind": 44,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [],
+    "sha": "e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/heads/codex/security-gateway-dependencies",
+    "state": "Ready for review",
+    "behind": 0,
+    "action": "PR16, audit0, 38 tests, CI green; no merge before release gates",
+    "exclusive_commits": [
+      "be5c30bef90905ab50dd9bfdcc68d0c8862446b1"
+    ],
+    "sha": "be5c30bef90905ab50dd9bfdcc68d0c8862446b1",
+    "ahead": 1
+  },
+  {
+    "migrations": [
+      "BACKEND/usuarios/migrations/0010_global_auth_revocation.py"
+    ],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/heads/codex/security-global-session-revocation",
+    "state": "Security implemented; PR review pending",
+    "behind": 0,
+    "action": "527 backend, 42 gateway and responsive revocation validated; keep separate",
+    "exclusive_commits": [
+      "0afbcddb7f64f7b5c3edaf45300ecebfcef32967",
+      "8a3dfa6d91a98d31fdd8b5c4a09e30f8cfc76fe8"
+    ],
+    "sha": "0afbcddb7f64f7b5c3edaf45300ecebfcef32967",
+    "ahead": 2
+  },
+  {
+    "migrations": [],
+    "base": "d8c6d067f0cd2d57de1a248629f5fd127b1a97e4",
+    "ref": "refs/heads/codex/tcc-pre-separation-reference",
+    "state": "Backup/obsolete",
+    "behind": 43,
+    "action": "Preserve; exclude from release",
+    "exclusive_commits": [],
+    "sha": "d8c6d067f0cd2d57de1a248629f5fd127b1a97e4",
+    "ahead": 0
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0016_rollback_safe_tcc_defaults.py"
+    ],
+    "base": "e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5",
+    "ref": "refs/heads/codex/tcc-safe-production-rollout",
+    "state": "Already released by prior PR",
+    "behind": 44,
+    "action": "Do not replay historical migrations",
+    "exclusive_commits": [
+      "87f5cf9c7e15a27b2bf36772bbce09aa90e2d5aa",
+      "88592f0c4d2e026e8da96519af9f564e7da65d03",
+      "cac808e0b5f913db8a91de50e6155ecda05d6b2e"
+    ],
+    "sha": "87f5cf9c7e15a27b2bf36772bbce09aa90e2d5aa",
+    "ahead": 3
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0022_world_office_inventory_mapping.py",
+      "BACKEND/ecommerce/migrations/0023_world_office_reservations_and_audit.py",
+      "BACKEND/ecommerce/migrations/0024_world_office_verified_unit.py",
+      "BACKEND/ecommerce/migrations/0025_world_office_unpriced_drafts.py"
+    ],
+    "base": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ref": "refs/heads/codex/world-office-inventory",
+    "state": "Excluded: incomplete",
+    "behind": 8,
+    "action": "Company/stock contract unresolved, preserve isolated development",
+    "exclusive_commits": [
+      "d5112e17a313f592f8fc93a9c265d7f961bbbad8",
+      "1ee4f62d083672f19476e68778b6217c4dcacfa6",
+      "86f7a91f1cf36c35fb20d540870d0d577db5686c",
+      "76e0f87cd5f37f48276143242b772b021266c97f",
+      "0c0f1f584c86fac210c8f537e47eddd62df9c26f",
+      "db4b2c0cd4384f1184005e01ea95aef76378e37f",
+      "006ca7427bdaaeea9efcd5b7e43da6630563f3b5"
+    ],
+    "sha": "d5112e17a313f592f8fc93a9c265d7f961bbbad8",
+    "ahead": 7
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0022_world_office_inventory_mapping.py",
+      "BACKEND/ecommerce/migrations/0023_world_office_reservations_and_audit.py",
+      "BACKEND/ecommerce/migrations/0024_world_office_verified_unit.py",
+      "BACKEND/ecommerce/migrations/0025_world_office_unpriced_drafts.py",
+      "BACKEND/ecommerce/migrations/0026_world_office_candidates.py",
+      "BACKEND/ecommerce/migrations/0027_world_office_candidate_reception.py",
+      "BACKEND/ecommerce/migrations/0028_world_office_candidate_import_validation.py",
+      "BACKEND/ecommerce/migrations/0029_world_office_commercial_drafts.py"
+    ],
+    "base": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ref": "refs/heads/codex/world-office-product-classification",
+    "state": "Excluded: incomplete",
+    "behind": 8,
+    "action": "Company/stock contract unresolved, preserve isolated development",
+    "exclusive_commits": [
+      "79189d58a8912f10af47cfc040ecca5dd82329f5",
+      "46fd879fb6f55fa62535795d738acd715484d5bb",
+      "7367e597e1391317ea9618a4c134e0ac34e6b332",
+      "37874b40da1bf50ce0b317a57addde52d2912bc7",
+      "aa5962e20fbb93cc316af0c2783242817927deec",
+      "8f382a9639e1a6c6dde5187929cc0c3b8fe1ec0c",
+      "f5c1c88973e4c60746795db830bd4ee266e588af",
+      "f9099b047247feeade5ef96d4a011a9c8c31465f",
+      "1776c3c4e79c51d6bb0912931c581ff21cb65ad1",
+      "9b7cc978b2d1eaaa2aae50329747ec6a1452eecf",
+      "765f99113b38394a6b1767d74e7f14ce71c99dc4",
+      "9cea250c887e261450d7e43c7b6af2466de7a11a",
+      "96a5ad684f44534feb800a0da06bc324970bc4df",
+      "bf747a37542553bf1ce4ea28175e159454d41962",
+      "6053eeb6d314b7ee224b749dda81bd82c2f72892"
+    ],
+    "sha": "79189d58a8912f10af47cfc040ecca5dd82329f5",
+    "ahead": 15
+  },
+  {
+    "migrations": [],
+    "base": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ref": "refs/heads/dev",
+    "state": "Baseline reference",
+    "behind": 8,
+    "action": "Do not modify directly",
+    "exclusive_commits": [],
+    "sha": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ref": "refs/heads/main",
+    "state": "Baseline reference",
+    "behind": 8,
+    "action": "Do not modify directly",
+    "exclusive_commits": [],
+    "sha": "fc76b3838d1da6f6e1c69f71bac66b363d9d476d",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "9d1edf491f9d892209f515b63a56fa9adbb764d7",
+    "ref": "refs/remotes/origin/HEAD",
+    "state": "Baseline reference",
+    "behind": 1,
+    "action": "Do not modify directly",
+    "exclusive_commits": [],
+    "sha": "9d1edf491f9d892209f515b63a56fa9adbb764d7",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "b85efd53a763cce8addf6841c4cc00492f577bc1",
+    "ref": "refs/remotes/origin/codex/chatbot-simplificado",
+    "state": "Already integrated",
+    "behind": 55,
+    "action": "Preserve reference, no duplicate integration",
+    "exclusive_commits": [],
+    "sha": "b85efd53a763cce8addf6841c4cc00492f577bc1",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "e45bf1c46bc49a0cab7f6e31264e40b22440f6bf",
+    "ref": "refs/remotes/origin/codex/fix-frontend-audit-dependencies",
+    "state": "Already released by prior PR",
+    "behind": 7,
+    "action": "Do not integrate again; compare functional tree when necessary",
+    "exclusive_commits": [],
+    "sha": "e45bf1c46bc49a0cab7f6e31264e40b22440f6bf",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "96f2ea7c12fe1f87571c657f2685e58b9a890a74",
+    "ref": "refs/remotes/origin/codex/fix-locations-product-categories",
+    "state": "Already released by prior PR",
+    "behind": 2,
+    "action": "Do not integrate again; compare functional tree when necessary",
+    "exclusive_commits": [],
+    "sha": "96f2ea7c12fe1f87571c657f2685e58b9a890a74",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5",
+    "ref": "refs/remotes/origin/codex/fix-usuarios-trabajadores",
+    "state": "Superseded",
+    "behind": 44,
+    "action": "PR8 replaced by later production corrections; exclude old branch",
+    "exclusive_commits": [
+      "88592f0c4d2e026e8da96519af9f564e7da65d03",
+      "cac808e0b5f913db8a91de50e6155ecda05d6b2e"
+    ],
+    "sha": "88592f0c4d2e026e8da96519af9f564e7da65d03",
+    "ahead": 2
+  },
+  {
+    "migrations": [],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/remotes/origin/codex/improve-category-icons",
+    "state": "Included in PR15, not released",
+    "behind": 0,
+    "action": "Do not duplicate; repeat integrated regression after security review",
+    "exclusive_commits": [
+      "c9e041809b073cc2b0a89e382a3a645b0f9308f9",
+      "d477e8fd8dbb3c1a3f549b5250e95cf31554a63e",
+      "5ef6ac9bf0b7925181470e4932a001e405df8985",
+      "98c4ca076b1af8c8e52dfde25894acb6279bcbf2",
+      "4bac6f5585a63adc3ccca1f88ab37bf7adab6288"
+    ],
+    "sha": "c9e041809b073cc2b0a89e382a3a645b0f9308f9",
+    "ahead": 5
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0024_category_icon_key.py",
+      "BACKEND/transactional_mail/migrations/0003_visit_confirmation_kind.py"
+    ],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/remotes/origin/codex/integration-production-readiness",
+    "state": "Blocked",
+    "behind": 0,
+    "action": "PR15 draft; pending security integration and historical credential revocation",
+    "exclusive_commits": [
+      "b74be265a04913769b54e81310937dcd63dbfc21",
+      "fb28c1d662cfd19b357e23a6bdee48ffa28c9d6e",
+      "f30e21709dabfb223039e9013abb4456395fb283",
+      "be396f277ddaa76727614488dcc0832aa2632b19",
+      "9f5fcb82734eb16d25a6dd8f9b4695d78e31b247",
+      "9573fb8536a5cd07469459b4d168312410c2760d",
+      "f8c031e4256f48a32277ed9ae0cb9c43f45f3a11",
+      "4d651d8aebe6b07efeb7b2254bf9f99e5ea26a9d",
+      "6ba49c597af4a048e6f8cf5f232d1d4dbefc9cd7",
+      "c9e041809b073cc2b0a89e382a3a645b0f9308f9",
+      "d477e8fd8dbb3c1a3f549b5250e95cf31554a63e",
+      "5ef6ac9bf0b7925181470e4932a001e405df8985",
+      "98c4ca076b1af8c8e52dfde25894acb6279bcbf2",
+      "4bac6f5585a63adc3ccca1f88ab37bf7adab6288",
+      "a549072ca3247ce10eff317216aa45fe860676cc",
+      "4f4686cc1e29b864d2ee53e7cd87737c98b6e95b",
+      "3101f276812984fbd192f0359be11b9302229173"
+    ],
+    "sha": "b74be265a04913769b54e81310937dcd63dbfc21",
+    "ahead": 17
+  },
+  {
+    "migrations": [],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/remotes/origin/codex/security-gateway-dependencies",
+    "state": "Ready for review",
+    "behind": 0,
+    "action": "PR16, audit0, 38 tests, CI green; no merge before release gates",
+    "exclusive_commits": [
+      "be5c30bef90905ab50dd9bfdcc68d0c8862446b1"
+    ],
+    "sha": "be5c30bef90905ab50dd9bfdcc68d0c8862446b1",
+    "ahead": 1
+  },
+  {
+    "migrations": [
+      "BACKEND/ecommerce/migrations/0016_rollback_safe_tcc_defaults.py"
+    ],
+    "base": "e46de09cc7a5572f0d1f6c411cf6dd8226d54dc5",
+    "ref": "refs/remotes/origin/codex/tcc-safe-production-rollout",
+    "state": "Already released by prior PR",
+    "behind": 44,
+    "action": "Do not replay historical migrations",
+    "exclusive_commits": [
+      "87f5cf9c7e15a27b2bf36772bbce09aa90e2d5aa",
+      "88592f0c4d2e026e8da96519af9f564e7da65d03",
+      "cac808e0b5f913db8a91de50e6155ecda05d6b2e"
+    ],
+    "sha": "87f5cf9c7e15a27b2bf36772bbce09aa90e2d5aa",
+    "ahead": 3
+  },
+  {
+    "migrations": [],
+    "base": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ref": "refs/remotes/origin/dev",
+    "state": "Baseline reference",
+    "behind": 0,
+    "action": "Do not modify directly",
+    "exclusive_commits": [],
+    "sha": "4cc209fcbb4e31cbfb2480bd63ed1a495f670cda",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "9d1edf491f9d892209f515b63a56fa9adbb764d7",
+    "ref": "refs/remotes/origin/main",
+    "state": "Baseline reference",
+    "behind": 1,
+    "action": "Do not modify directly",
+    "exclusive_commits": [],
+    "sha": "9d1edf491f9d892209f515b63a56fa9adbb764d7",
+    "ahead": 0
+  },
+  {
+    "migrations": [],
+    "base": "d61725ab7463cd1bebae5368d97ef3788580d09a",
+    "ref": "refs/remotes/server/main",
+    "state": "Baseline reference",
+    "behind": 65,
+    "action": "Do not modify directly",
+    "exclusive_commits": [],
+    "sha": "d61725ab7463cd1bebae5368d97ef3788580d09a",
+    "ahead": 0
+  }
+]
