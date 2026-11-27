@@ -41,4 +41,4 @@ jobs:
           docker run --rm -v "$PWD/whatsapp-gateway:/app" -w /app \
             -e CRM_INTERNAL_SERVICE_TOKEN -e CRM_API_URL=http://backend.invalid \
             -e WHATSAPP_GATEWAY_ENV=test -e TCC_API_TOKEN= -e TCC_PRODUCTION_API_TOKEN= \
-            node:22 sh -c 'npm ci && npm test && npm run build'
+            node:22 sh -c 'npm ci && npm audit --omit=dev && npm test && npm run build'
