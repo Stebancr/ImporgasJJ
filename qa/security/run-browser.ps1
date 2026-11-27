@@ -16,6 +16,9 @@ try {
  $compose=@('compose','--env-file',$envFile,'-p','security-revocation-qa','-f','qa/security/compose.yml','-f','qa/security/compose.browser.yml')
  & docker @compose up -d
  if($LASTEXITCODE){throw 'QA startup failed'}
+ # A previous execution may have left an old preview build and detached install networks.
+ & docker @compose up -d --no-deps --force-recreate frontend gateway
+ if($LASTEXITCODE){throw 'QA frontend/gateway refresh failed'}
  & docker exec security-revocation-qa-database-1 pg_dump -Fc -U security_qa -f "/tmp/security-before-$run.dump" security_qa
  if($LASTEXITCODE){throw 'QA backup failed'}
  & docker exec security-revocation-qa-database-1 pg_restore --list "/tmp/security-before-$run.dump" | Out-Null

@@ -50,6 +50,10 @@ async function tryRefreshToken(): Promise<string | null> {
     }
     const data = await response.json()
     if (localStorage.getItem('refreshToken') !== refreshToken) return null
+    if (typeof data.access !== 'string' || !data.access) {
+      revokeBrowserSession({ key: 'refreshToken', value: refreshToken })
+      return null
+    }
     localStorage.setItem('authToken', data.access)
     return data.access
   } catch {
@@ -86,14 +90,15 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   if (token && !isSameBrowserSession(token, localStorage.getItem('authToken'))) throw new Error('La sesión cambió. Vuelve a intentar la operación.')
   if (response.status === 401 && token) {
     const failure = await response.clone().json().catch(() => ({}))
-    if (failure.code === 'SESSION_REVOKED' || !localStorage.getItem('refreshToken')) revokeBrowserSession({ key: 'authToken', value: token })
-  }
-
-  // If 401 and we have a refresh token, try to refresh and retry once
-  if (response.status === 401 && localStorage.getItem('refreshToken')) {
+    const current = localStorage.getItem('authToken')
+    if (!current || !isSameBrowserSession(token, current)) throw new Error('La sesión cambió. Vuelve a intentar la operación.')
     let newToken: string | null = null
-
-    if (!isRefreshing) {
+    if (failure.code === 'SESSION_REVOKED' || !localStorage.getItem('refreshToken')) {
+      revokeBrowserSession({ key: 'authToken', value: token })
+    } else if (current !== token) {
+      // A delayed 401 from a request made before the shared refresh.
+      newToken = current
+    } else if (!isRefreshing) {
       isRefreshing = true
       newToken = await tryRefreshToken()
       isRefreshing = false
@@ -105,11 +110,12 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
       })
     }
 
-    if (newToken) {
+    if (newToken && localStorage.getItem('authToken') === newToken && isSameBrowserSession(token, newToken)) {
       const retryConfig = buildConfig(method, body, headers, newToken)
       if (options.signal) retryConfig.signal = AbortSignal.any([options.signal, retryConfig.signal as AbortSignal])
       response = await fetch(`${API_BASE_URL}${endpoint}`, retryConfig)
       if (!isSameBrowserSession(newToken, localStorage.getItem('authToken'))) throw new Error('La sesión cambió. Vuelve a intentar la operación.')
+      if (response.status === 401) revokeBrowserSession({ key: 'authToken', value: newToken })
     }
   }
 
