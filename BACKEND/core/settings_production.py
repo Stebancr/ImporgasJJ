@@ -3,10 +3,20 @@
 import os
 from datetime import timedelta
 
+from django.core.exceptions import ImproperlyConfigured
+
 from .settings import *  # noqa: F401,F403
 
 
 DEBUG = False
+if os.environ.get('DJANGO_SETTINGS_MODULE') == 'core.settings_production_worker':
+    # Celery uses Django models and URL reversing but does not authenticate HTTP clients.
+    _jwt_key = None
+else:
+    _jwt_key = os.environ.get('JWT_SIGNING_KEY', '')
+    if len(_jwt_key) < 32 or _jwt_key == SECRET_KEY:
+        raise ImproperlyConfigured('JWT_SIGNING_KEY must be an independent cryptographic key (at least 32 characters).')
+SIMPLE_JWT = {**SIMPLE_JWT, 'SIGNING_KEY': _jwt_key}
 ROOT_URLCONF = 'core.urls_production'
 
 ALLOWED_HOSTS = [

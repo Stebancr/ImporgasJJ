@@ -1,3 +1,4 @@
+from auth.serializers import TokenLMSSerializer
 import hashlib
 import hmac
 import json
@@ -2103,7 +2104,7 @@ class WebSocketSecurityTests(APITestCase):
 
     def test_administrator_connects_and_receives_pong(self):
         advisor = Credenciales.objects.create(usuario='ws_advisor', tipo_usuario=1, estado=1)
-        token = str(AccessToken.for_user(advisor))
+        token = str(TokenLMSSerializer.get_token(advisor).access_token)
 
         async def scenario():
             communicator = WebsocketCommunicator(

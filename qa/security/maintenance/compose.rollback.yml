@@ -1,0 +1,24 @@
+# Emergency fail-closed rollback. Keep DB, Redis, media, keys and auth version intact.
+# Stop application workers/beat first; never start an old unversioned authenticator.
+services:
+  backend:
+    image: imporgas-security-maintenance:${SECURITY_MAINTENANCE_TAG:?verified maintenance image tag required}
+    command: [nginx, -g, 'daemon off;']
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:8001/health']
+      interval: 10s
+      retries: 3
+  frontend:
+    image: imporgas-security-maintenance:${SECURITY_MAINTENANCE_TAG:?verified maintenance image tag required}
+    command: [nginx, -g, 'daemon off;']
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1/health']
+      interval: 10s
+      retries: 3
+  whatsapp-gateway:
+    image: imporgas-security-maintenance:${SECURITY_MAINTENANCE_TAG:?verified maintenance image tag required}
+    command: [nginx, -g, 'daemon off;']
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:3001/health']
+      interval: 10s
+      retries: 3

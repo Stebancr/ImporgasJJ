@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import type { User, LoginCredentials, RegisterData, AuthState } from '@/admin/types'
 import { authService } from '@/admin/services/admin_index'
 import { refreshAdminToken, tokenExpiresIn } from '@/admin/services/admin_token'
+import { revokeBrowserSession, isSameBrowserSession } from '../../services/sessionSecurity'
+import { useQueryClient } from '@tanstack/react-query'
 
 interface AuthContextType extends AuthState {
   login: (credentials: LoginCredentials) => Promise<void>
@@ -13,6 +15,7 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const cache = useQueryClient()
   const [state, setState] = useState<AuthState>({
     user: null,
     token: null,
@@ -24,22 +27,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true
     const reset = () => {
       authService.clearAuth()
+      void cache.cancelQueries()
+      cache.clear()
       if (active) setState({ user: null, token: null, isAuthenticated: false, isLoading: false })
     }
     const validate = async () => {
       let token = authService.getStoredToken()
       if (!token) { reset(); return }
       try {
-        if (tokenExpiresIn(token) <= 60_000) token = await refreshAdminToken()
-        if (!token) { reset(); return }
+        if (tokenExpiresIn(token) <= 60_000) {
+          const previous = token
+          token = await refreshAdminToken()
+          if (!token) {
+            revokeBrowserSession({ key: 'token', value: previous })
+            if (!authService.getStoredToken()) reset()
+            return
+          }
+        }
         const user = await authService.getProfile()
-        if (!active) return
+        if (!active || !isSameBrowserSession(token, authService.getStoredToken())) return
         token = authService.getStoredToken()
         if (!token) { reset(); return }
         if (!user.is_active || user.role !== 'admin') { reset(); return }
         authService.setAuth(user, token)
         setState({ user, token, isAuthenticated: true, isLoading: false })
-      } catch { if (active) reset() }
+      } catch { if (active && (!authService.getStoredToken() || (token && isSameBrowserSession(token, authService.getStoredToken())))) reset() }
     }
     const onStorage = (event: StorageEvent) => {
       if (event.key === 'token' || event.key === null) {
@@ -55,20 +67,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('admin:logout', reset)
       window.removeEventListener('storage', onStorage)
     }
-  }, [])
+  }, [cache])
 
   useEffect(() => {
     if (!state.token) return
     let timer: ReturnType<typeof setTimeout>
+    let stopped = false
+    let checking = false
     const check = async () => {
+      if (stopped || checking) return
+      checking = true
+      try {
       clearTimeout(timer)
       const current = authService.getStoredToken()
       if (current && tokenExpiresIn(current) > 60_000) {
-        timer = setTimeout(check, Math.min(tokenExpiresIn(current) - 60_000, 2147483647))
+        try { await authService.getProfile() } catch { revokeBrowserSession({ key: 'token', value: current }); return }
+        if (stopped) return
+        timer = setTimeout(check, Math.min(tokenExpiresIn(current) - 60_000, 15_000))
         return
       }
       if (await refreshAdminToken()) return
-      window.dispatchEvent(new Event('admin:logout'))
+      if (!stopped && current) revokeBrowserSession({ key: 'token', value: current })
+      } finally { checking = false }
     }
     const onRefreshed = (event: Event) => {
       setState(previous => ({ ...previous, token: (event as CustomEvent<string>).detail }))
@@ -78,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('focus', onFocus)
     window.addEventListener('admin:token-refreshed', onRefreshed)
     return () => {
+      stopped = true
       clearTimeout(timer)
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('admin:token-refreshed', onRefreshed)
