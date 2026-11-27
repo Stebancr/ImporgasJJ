@@ -119,12 +119,9 @@ export const productsService = {
     return toProduct(res.data)
   },
 
-  getFeatured: async (): Promise<Product[]> => {
-    const res = await productGet<PaginatedResponse>('/products?is_featured=true&per_page=8')
-    if (res.data.length > 0) return res.data.map(toProduct)
-    // Fall back to best available products (sorted by rating desc)
-    const fallback = await productGet<PaginatedResponse>('/products?is_available=true&per_page=8')
-    return fallback.data.map(toProduct)
+  getHomeProducts: async (): Promise<Product[]> => {
+    const res = await productGet<PaginatedResponse>('/products?is_available=true&in_stock=true&per_page=4')
+    return res.data.filter(product => product.is_available && product.total_stock > 0).map(toProduct)
   },
 
   getRelated: async (productId: string): Promise<Product[]> => {

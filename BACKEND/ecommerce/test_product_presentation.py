@@ -32,6 +32,17 @@ class ProductPresentationTests(APITestCase):
     def url(self, image):
         return reverse('product-image-detail', args=[self.product.id, image.id])
 
+    def test_home_filter_returns_only_available_products_with_stock(self):
+        defaults = {'price': 100, 'category': self.product.category, 'brand': self.product.brand}
+        Product.objects.create(name='Unpublished with stock', is_available=False, total_stock=3, **defaults)
+        available = Product.objects.create(name='Published with stock', total_stock=1, **defaults)
+        self.client.force_authenticate(None)
+        response = self.client.get(reverse('product-list'), {'is_available': 'true', 'in_stock': 'true', 'per_page': 4})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row['id'] for row in response.data['data']], [available.pk])
+        catalog = self.client.get(reverse('product-list'), {'is_available': 'true'})
+        self.assertIn(self.product.pk, [row['id'] for row in catalog.data['data']])
+
     def test_selection_persists_and_preserves_gallery_and_product(self):
         response = self.client.patch(self.url(self.images[2]), {'is_primary': True}, format='json')
         self.assertEqual(response.status_code, 200)

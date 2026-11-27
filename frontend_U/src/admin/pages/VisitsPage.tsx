@@ -20,8 +20,9 @@ import {
   Clock, MapPin, User, Phone,
 } from 'lucide-react'
 import { visitsService } from '@/admin/services/admin_visits'
+import VisitContactPicker from '@/admin/components/visits/VisitContactPicker'
 import type {
-  VisitaItem, VisitaDetalle, CreateVisitaData, Tecnico, CalendarioData, TipoVisita,
+  VisitaItem, VisitaDetalle, CreateVisitaData, Tecnico, CalendarioData, TipoVisita, ClienteVisita,
 } from '@/admin/services/admin_visits'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -150,6 +151,7 @@ export default function VisitsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
 
   const [form, setForm] = useState<CreateVisitaData>(blankForm())
+  const [contactConflicts, setContactConflicts] = useState<number[]>([])
   const [selectedVisit, setSelectedVisit] = useState<VisitaDetalle | null>(null)
   const [editVisit, setEditVisit] = useState<VisitaItem | null>(null)
   const [saving, setSaving] = useState(false)
@@ -212,6 +214,7 @@ export default function VisitsPage() {
   // ── Create ──
   const handleCreate = async () => {
     const errors = validateVisitForm(form, false)
+    if (!form.cliente_registrado_id && !form.registrar_cliente) errors.form = 'Selecciona un cliente o elige registrar uno nuevo.'
     if (!creationFlow) errors.form = 'Selecciona el flujo de creación.'
     if (completeNow) {
       for (const key of ['persona_atiende', 'motivo_servicio', 'solucion_realizada'] as const) {
@@ -237,10 +240,29 @@ export default function VisitsPage() {
       loadVisits()
       if (tab === 'calendario') loadCalendar()
     } catch (error) {
+      const data = (error as { response?: { data?: { cliente_coincidencias?: unknown } } }).response?.data
+      const ids = data?.cliente_coincidencias
+      setContactConflicts(Array.isArray(ids) ? ids.map(Number).filter(id => Number.isSafeInteger(id) && id > 0) : [])
       setFormErrors(apiValidationErrors(error))
     } finally {
       setSaving(false)
     }
+  }
+
+  const selectContact = (client: ClienteVisita) => {
+    setContactConflicts([])
+    setFormErrors({})
+    setForm(previous => ({
+      ...previous,
+      cliente_registrado_id: client.id,
+      registrar_cliente: false,
+      cliente_nombre: client.nombre,
+      cliente_identificacion: client.identificacion,
+      cliente_telefono: client.telefono,
+      cliente_correo: client.correo,
+      cliente_direccion: previous.cliente_registrado_id === client.id ? previous.cliente_direccion : client.direccion,
+      cliente_indicaciones_llegada: previous.cliente_registrado_id === client.id ? previous.cliente_indicaciones_llegada : client.indicaciones_llegada,
+    }))
   }
 
   // ── Detail ──
@@ -695,7 +717,7 @@ export default function VisitsPage() {
       )}
 
       {/* ── CREATE / EDIT FORM MODAL ──────────────────────────────────────── */}
-      <Dialog open={createOpen || editOpen} onOpenChange={(o) => { if (!o) { setCreateOpen(false); setEditOpen(false); setFormErrors({}) } }}>
+      <Dialog open={createOpen || editOpen} onOpenChange={(o) => { if (!o) { setCreateOpen(false); setEditOpen(false); setFormErrors({}); setContactConflicts([]) } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editOpen ? 'Editar Visita' : 'Nueva Visita Técnica'}</DialogTitle>
@@ -710,18 +732,32 @@ export default function VisitsPage() {
             {/* ── Client section (create only) ── */}
             {!editOpen && (
               <>
+                {createOpen && <VisitContactPicker selectedId={form.cliente_registrado_id}
+                  registering={Boolean(form.registrar_cliente)} conflicts={contactConflicts} onSelect={selectContact}
+                  onRegister={() => {
+                    setContactConflicts([])
+                    setFormErrors({})
+                    setForm(previous => ({
+                      ...previous, registrar_cliente: true, cliente_registrado_id: undefined,
+                      ...(previous.cliente_registrado_id ? {
+                        cliente_nombre: '', cliente_identificacion: '', cliente_telefono: '',
+                        cliente_correo: '', cliente_direccion: '', cliente_indicaciones_llegada: '',
+                      } : {}),
+                    }))
+                  }} />}
                 <div className="col-span-2">
                   <p className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Datos del Cliente</p>
                 </div>
                 <div>
                   <Label>Nombre completo *</Label>
-                  <Input value={form.cliente_nombre} onChange={(e) => setField('cliente_nombre', e.target.value)} />
+                  <Input readOnly={Boolean(form.cliente_registrado_id)} value={form.cliente_nombre} onChange={(e) => setField('cliente_nombre', e.target.value)} />
                   {fieldError('cliente_nombre')}
                 </div>
                 <div>
                   <Label>Identificación (opcional)</Label>
                   <Input
                     inputMode="numeric"
+                    readOnly={Boolean(form.cliente_registrado_id)}
                     maxLength={15}
                     value={form.cliente_identificacion || ''}
                     onChange={(e) => setDigitsOnly('cliente_identificacion', e.target.value, 'La cédula solo puede contener números.')}
@@ -732,6 +768,7 @@ export default function VisitsPage() {
                   <Label>Teléfono *</Label>
                   <Input
                     inputMode="numeric"
+                    readOnly={Boolean(form.cliente_registrado_id)}
                     maxLength={15}
                     value={form.cliente_telefono || ''}
                     onChange={(e) => setDigitsOnly('cliente_telefono', e.target.value, 'El número de celular solo puede contener números.')}
@@ -740,7 +777,7 @@ export default function VisitsPage() {
                 </div>
                 <div>
                   <Label>Correo *</Label>
-                  <Input type="email" value={form.cliente_correo || ''} onChange={(e) => setField('cliente_correo', e.target.value)} />
+                  <Input type="email" readOnly={Boolean(form.cliente_registrado_id)} value={form.cliente_correo || ''} onChange={(e) => setField('cliente_correo', e.target.value)} />
                   {fieldError('cliente_correo')}
                 </div>
                 <div className="col-span-2">
