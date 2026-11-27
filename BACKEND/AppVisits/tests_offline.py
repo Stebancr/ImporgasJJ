@@ -58,6 +58,13 @@ class OfflineSyncTests(APITestCase):
         self.assertIsNone(report.valor_servicio)
 
     def test_atomic_sync_updates_directions_and_removes_only_new_temporary_photo(self):
+        profile = ClienteVisita.objects.create(
+            nombre='Ficha', direccion='Dirección de la ficha', telefono='3001234567',
+            correo='tecnico-qa@example.com', telefono_clave='3001234567', correo_clave='tecnico-qa@example.com',
+        )
+        self.visit.cliente_registrado = profile
+        self.visit.save(update_fields=['cliente_registrado'])
+        self.version = visit_sync_version(self.visit)
         data = self.payload()
         data['cliente_indicaciones_llegada'] = 'Entrar por portería B'
         with self.captureOnCommitCallbacks(execute=True):
@@ -68,6 +75,14 @@ class OfflineSyncTests(APITestCase):
         evidence = self.visit.evidencias.get()
         self.assertEqual(self.visit.estado, VisitaTecnica.ESTADO_FINALIZADA)
         self.assertEqual(self.visit.cliente.indicaciones_llegada, 'Entrar por portería B')
+        profile.refresh_from_db()
+        self.assertEqual(profile.indicaciones_llegada, '')
+        self.assertEqual(ClienteVisita.fichas().count(), 1)
+        with self.visit.pdf_final.open('rb') as pdf:
+            text = ''.join(page.extract_text() or '' for page in PdfReader(pdf).pages)
+        self.assertIn('Calle 1', text)
+        self.assertNotIn('Dirección de la ficha', text)
+        self.assertNotIn('Entrar por portería B', text)
         self.assertEqual(evidence.imagen.name, '')
         self.assertIsNotNone(evidence.eliminada_en)
         self.assertTrue(self.visit.pdf_final)
