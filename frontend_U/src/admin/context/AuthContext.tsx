@@ -35,8 +35,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let token = authService.getStoredToken()
       if (!token) { reset(); return }
       try {
-        if (tokenExpiresIn(token) <= 60_000) token = await refreshAdminToken()
-        if (!token) { reset(); return }
+        if (tokenExpiresIn(token) <= 60_000) {
+          const previous = token
+          token = await refreshAdminToken()
+          if (!token) {
+            revokeBrowserSession({ key: 'token', value: previous })
+            if (!authService.getStoredToken()) reset()
+            return
+          }
+        }
         const user = await authService.getProfile()
         if (!active || !isSameBrowserSession(token, authService.getStoredToken())) return
         token = authService.getStoredToken()

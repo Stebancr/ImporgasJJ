@@ -30,19 +30,20 @@ export function isSameBrowserSession(previous: string, current: string | null): 
   } catch { return false }
 }
 
-export function revokeBrowserSession(expected?: { key: string; value: string }): void {
+export function revokeBrowserSession(expected?: { key: string; value: string }, broadcast = true): void {
   if (expected && !isSameBrowserSession(expected.value, localStorage.getItem(expected.key))) return
   const hadCredentials = credentialKeys.some(key => localStorage.getItem(key))
-  credentialKeys.forEach(key => localStorage.removeItem(key))
   if (!hadCredentials && sessionStorage.getItem('auth:revoked')) return
   sessionStorage.setItem('auth:revoked', '1')
-  localStorage.setItem('auth:revocation', String(Date.now()))
+  // Notify other tabs before their token-removal listeners unmount editors.
+  if (broadcast) localStorage.setItem('auth:revocation', String(Date.now()))
+  credentialKeys.forEach(key => localStorage.removeItem(key))
   window.dispatchEvent(new Event('session:revoked'))
   window.dispatchEvent(new Event('auth:logout'))
   window.dispatchEvent(new Event('admin:logout'))
 }
 
 window.addEventListener('storage', event => {
-  if (event.key === 'auth:revocation') revokeBrowserSession()
+  if (event.key === 'auth:revocation') revokeBrowserSession(undefined, false)
   else if (event.key === 'authToken' && event.newValue === null) window.dispatchEvent(new Event('auth:logout'))
 })
