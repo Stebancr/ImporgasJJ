@@ -38,6 +38,12 @@ x-backend-service: &backend-service
   networks:
     - imporgas_prod_network
 
+x-worker-environment: &worker-environment
+  <<: *backend-environment
+  DJANGO_SETTINGS_MODULE: core.settings_production_worker
+  # Override env_file without forwarding the backend signing secret.
+  JWT_SIGNING_KEY: ""
+
 services:
   backend:
     <<: *backend-service
@@ -67,6 +73,7 @@ services:
 
   celery-worker:
     <<: *backend-service
+    environment: *worker-environment
     container_name: imporgas-prod-celery-worker
     restart: unless-stopped
     command: ["celery", "-A", "core", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "celery"]
@@ -86,6 +93,7 @@ services:
 
   celery-chatbot:
     <<: *backend-service
+    environment: *worker-environment
     container_name: imporgas-prod-celery-chatbot
     restart: unless-stopped
     command: ["celery", "-A", "core", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "chatbot"]
@@ -105,6 +113,7 @@ services:
 
   celery-beat:
     <<: *backend-service
+    environment: *worker-environment
     container_name: imporgas-prod-celery-beat
     restart: unless-stopped
     command: ["celery", "-A", "core", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
