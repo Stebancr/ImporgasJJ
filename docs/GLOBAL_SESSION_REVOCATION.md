@@ -65,3 +65,8 @@ qa/security/gateway-harness.mjs no importa Baileys ni abre cuentas reales. brows
 No se ha ejecutado este despliegue ni revocado sesiones productivas. Los conteos y versiones QA no son valores de producción.
 
 Operador de despliegue sin compartir credenciales de aplicación: usar docker exec --user 0 y --system-actor=deployment-root. Se audita executor_label=os:root y actor de aplicación nulo, sin suplantar a Luis Esteban ni a otra cuenta. Un proceso que no sea UID 0 no puede usar esa identidad. La alternativa --actor-id continúa validando un administrador activo; ambas opciones son excluyentes y forman parte de la clave de reintento idempotente.
+# Aviso y recuperación del formulario
+
+El login de tienda y el administrativo muestran “Tu sesión expiró o fue cerrada por una actualización de seguridad. Inicia sesión nuevamente.” La tienda mantiene las páginas públicas abiertas como visitante y las rutas protegidas conservan un destino local validado para el regreso. Las respuestas 401 concurrentes y tardías comparten la renovación y la solicitud se repite una sola vez.
+
+El editor de productos conserva temporalmente la edición interrumpida y los archivos en la memoria de la pestaña, hasta 30 minutos. La recuperación exige volver a entrar con la misma cuenta y abrir el mismo producto, cuya versión debe seguir siendo la misma. El borrador de alta usa el almacenamiento local ya existente, separado por cuenta. Ningún borrador se envía automáticamente. Si el producto cambió mientras se cerraba la sesión, el editor muestra la versión del servidor y avisa del conflicto.
