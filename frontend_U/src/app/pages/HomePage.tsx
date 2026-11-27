@@ -2,8 +2,8 @@ import { CategoryIcon } from '../../components/CategoryIcon'
 import api from '../../services/api'
 import './styles/HomePage.css'
 import { Link } from 'react-router-dom'
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ThermometerSun, Gauge, PenToolIcon as Tool, ChevronLeft, ChevronRight, Flame, Utensils } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { ArrowRight, Truck, Shield, Headphones, Wrench, Zap, ThermometerSun, Gauge, PenToolIcon as Tool, Flame, Utensils } from 'lucide-react'
 import ProductCard from '../../components/ProductCard'
 import GoogleMap from '../../components/GoogleMap'
 import {useShippingConfig} from '../../hooks/useShippingConfig'
@@ -71,26 +71,6 @@ const features = [
   },
 ]
 
-// ── Hero Carousel slides ─────────────────────────────────────────────────────
-const heroSlides = [
-  {
-    title: 'Instalación y Reparación de Calentadores',
-    subtitle: 'Servicio técnico certificado para calentadores a gas y eléctricos. Atendemos toda Colombia.',
-    cta: 'Ver Servicios',
-    ctaHref: '/productos',
-    bg: 'from-[#001575] via-[#0022b3] to-[#001575]',
-    image: '/tecnicos calentador.jpg',
-  },
-  {
-    title: 'Estufas, Hornos y Campanas',
-    subtitle: 'Instalación profesional y reparación de equipos de cocina. Garantía en todos nuestros trabajos.',
-    cta: 'Solicitar Servicio',
-    ctaHref: '/contacto',
-    bg: 'from-[#8B3A00] via-[#b34a00] to-[#8B3A00]',
-    image: '/estufas tecnicos.jpg',
-  },
-]
-
 // ── Services data ────────────────────────────────────────────────────────────
 const services = [
   {
@@ -134,42 +114,10 @@ function HomePage() {
     return () => { active = false }
   }, [])
   const [storeLocations, setStoreLocations] = useState<ApiLocation[]>([])
-  const [currentSlide, setCurrentSlide]   = useState(0)
-  const [isAnimating, setIsAnimating]     = useState(false)
-  const touchStartX = useRef<number>(0)
-  const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const goToSlide = useCallback((index: number) => {
-    if (isAnimating) return
-    setIsAnimating(true)
-    setCurrentSlide((index + heroSlides.length) % heroSlides.length)
-    setTimeout(() => setIsAnimating(false), 600)
-  }, [isAnimating])
-
-  const nextSlide = useCallback(() => goToSlide(currentSlide + 1), [currentSlide, goToSlide])
-  const prevSlide = useCallback(() => goToSlide(currentSlide - 1), [currentSlide, goToSlide])
-
-  const resetAutoPlay = useCallback(() => {
-    if (autoPlayRef.current) clearInterval(autoPlayRef.current)
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    autoPlayRef.current = setInterval(nextSlide, 5000)
-  }, [nextSlide])
-
-  useEffect(() => {
-    autoPlayRef.current = setInterval(nextSlide, 5000)
-    return () => { if (autoPlayRef.current) clearInterval(autoPlayRef.current) }
-  }, [nextSlide])
-
-  const handleTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX }
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const diff = touchStartX.current - e.changedTouches[0].clientX
-    if (Math.abs(diff) > 50) { resetAutoPlay(); diff > 0 ? nextSlide() : prevSlide() }
-  }
-
   useEffect(() => {
     setIsLoadingProducts(true)
     setProductsError(false)
-    productsService.getFeatured()
+    productsService.getHomeProducts()
       .then(products => setFeaturedProducts(products))
       .catch(() => setProductsError(true))
       .finally(() => setIsLoadingProducts(false))
@@ -184,97 +132,60 @@ function HomePage() {
   return (
     <div className="min-h-screen bg-[#FAFBFC]">
       {shippingConfig.enabled&&shippingConfig.freeShippingThreshold&&<aside className="flex items-center justify-center gap-2 bg-[#001575] px-4 py-3 text-center text-sm font-semibold text-white"><Truck aria-hidden="true" className="h-4 w-4"/>Envío gratis en compras desde {Number(shippingConfig.freeShippingThreshold).toLocaleString('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0})}<span className="sr-only">Sujeto a cobertura y cotización de entrega.</span></aside>}
-      {/* ── Hero Carousel ──────────────────────────────────────────────── */}
-      <section
-        className="relative grid overflow-hidden select-none"
-        style={{ minHeight: 'clamp(420px, 56vw, 680px)' }}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        aria-label="Carrusel principal"
-      >
-        {/* Slides */}
-        {heroSlides.map((slide, i) => (
-          <div
-            key={i}
-            className={`relative col-start-1 row-start-1 py-16 transition-opacity duration-300 ease-in-out ${i === currentSlide ? 'opacity-100 z-10' : 'opacity-0 z-0 invisible'}`}
-            aria-hidden={i !== currentSlide}
-            inert={i !== currentSlide}
-          >
-            {/* Background image */}
-            <img
-              src={slide.image}
-              alt={slide.title}
-              className="absolute inset-0 w-full h-full object-cover"
-              loading={i === 0 ? 'eager' : 'lazy'}
-            />
-            {/* Overlay */}
-            <div className={`absolute inset-0 bg-gradient-to-r ${slide.bg} opacity-80`} />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20" />
-
-            {/* Content */}
-            <div className="relative z-10 h-full flex items-center">
-              <div className="max-w-7xl w-full mx-auto px-6 sm:px-8 lg:px-12">
-                <div className="max-w-2xl">
-                  <div className={`transition-all duration-700 delay-100 ${i === currentSlide ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-                    <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#F58634] text-[#00104f] text-sm font-semibold rounded-full mb-5">
-                      <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-                      ImporGas JJ S.A.S
-                    </span>
-                    <h1 className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold text-white mb-4 leading-tight drop-shadow-lg">
-                      {slide.title}
-                    </h1>
-                    <p className="text-base sm:text-lg lg:text-xl text-white/85 mb-8 leading-relaxed max-w-xl">
-                      {slide.subtitle}
-                    </p>
-                    <div className="flex flex-wrap gap-4">
-                      <Link to={slide.ctaHref}
-                        className="group inline-flex items-center gap-2 bg-[#F58634] hover:bg-[#d4711e] text-[#00104f] px-8 py-3.5 rounded-xl font-semibold shadow-xl shadow-[#F58634]/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200">
-                        {slide.cta}
-                        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                      </Link>
-                      <Link to="/contacto"
-                        className="inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 backdrop-blur border border-white/30 text-white px-8 py-3.5 rounded-xl font-semibold transition-all">
-                        Contáctanos
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+      <section className="bg-[#001575] text-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+          <h1 className="text-3xl lg:text-5xl font-bold leading-tight">Equipos y accesorios para gas</h1>
+          <p className="mt-3 max-w-xl text-white/90">Calentadores, reguladores, medidores y repuestos para el hogar y el negocio.</p>
+          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2">
+            <Link to="/productos" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#F58634] px-5 text-[#00104f] font-semibold hover:bg-[#ffa868] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">
+              Ver catálogo <ArrowRight aria-hidden="true" className="h-5 w-5" />
+            </Link>
+            <a href="#servicios" className="inline-flex min-h-11 items-center underline underline-offset-4 focus-visible:outline focus-visible:outline-2">Servicio técnico</a>
           </div>
-        ))}
+        </div>
+      </section>
 
-        {/* Arrows */}
-        <button
-          onClick={() => { resetAutoPlay(); prevSlide() }}
-          className="absolute left-4 bottom-3 z-20 w-11 h-11 bg-white/20 hover:bg-white/40 backdrop-blur rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
-          aria-label="Anterior">
-          <ChevronLeft className="w-6 h-6" />
-        </button>
-        <button
-          onClick={() => { resetAutoPlay(); nextSlide() }}
-          className="absolute right-4 bottom-3 z-20 w-11 h-11 bg-white/20 hover:bg-white/40 backdrop-blur rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
-          aria-label="Siguiente">
-          <ChevronRight className="w-6 h-6" />
-        </button>
+      {/* Featured Products */}
+      <section className="py-8 lg:py-10 bg-[#FAFBFC]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-3xl lg:text-4xl font-bold text-[#1A1D21] mb-2">
+                Productos disponibles
+              </h2>
 
-        {/* Dots */}
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 flex gap-2" role="tablist" aria-label="Slides">
-          {heroSlides.map((_, i) => (
-            <button
-              key={i}
-              onClick={() => { resetAutoPlay(); goToSlide(i) }}
-              className={`rounded-full transition-all duration-300 ${i === currentSlide ? 'w-8 h-3 bg-[#F58634]' : 'w-3 h-3 bg-white/50 hover:bg-white/80'}`}
-              role="tab"
-              aria-selected={i === currentSlide}
-              aria-label={`Ir al slide ${i + 1}`}
-            />
-          ))}
+            </div>
+            <Link
+              to="/productos"
+              className="group flex items-center gap-2 text-[#001575] font-semibold hover:gap-3 transition-all"
+            >
+              Ver todos
+              <ArrowRight className="w-5 h-5" />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {productsError && <div role="alert" className="col-span-full p-4 rounded-xl bg-red-50 text-red-800">No pudimos cargar los productos. <button className="underline min-h-11" onClick={() => setReloadProducts(value => value + 1)}>Reintentar</button></div>}
+            {isLoadingProducts
+              ? Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} aria-hidden="true" className="rounded-xl bg-gray-100 motion-safe:animate-pulse h-72" />
+                ))
+              : productsError ? null : featuredProducts.length > 0
+                ? featuredProducts.map((product) => (
+                    <ProductCard key={product.id} product={product} />
+                  ))
+                : (
+                  <p className="col-span-full text-center text-gray-500 py-12">
+                    No hay productos disponibles en este momento.
+                  </p>
+                )
+            }
+          </div>
         </div>
       </section>
 
       {/* Features */}
-      <section className="py-8 lg:py-0 lg:-mt-14 relative z-20">
+      <section className="py-8 lg:py-6 relative z-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="bg-white rounded-2xl lg:rounded-3xl shadow-xl shadow-black/5 p-6 lg:p-8">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
@@ -299,7 +210,7 @@ function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl lg:text-4xl font-bold text-[#1A1D21] mb-4">
-              Explora por Categoria
+              Explora por categoría
             </h2>
             <p className="text-[#6B7280] max-w-2xl mx-auto text-lg">
               Encuentra exactamente lo que necesitas para tu hogar o negocio
@@ -342,7 +253,7 @@ function HomePage() {
       </section>
 
       {/* ── Nuestros Servicios ────────────────────────────────────────── */}
-      <section className="py-16 lg:py-24 bg-white">
+      <section id="servicios" className="py-12 lg:py-16 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <span className="inline-block px-4 py-1.5 bg-[#fff3e8] text-[#F58634] text-sm font-semibold rounded-full mb-3">
@@ -399,48 +310,6 @@ function HomePage() {
         </div>
       </section>
 
-      {/* Featured Products */}
-      <section className="py-16 lg:py-24 bg-[#FAFBFC]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4 mb-12">
-            <div>
-              <span className="inline-block px-3 py-1 bg-[#e8ecff] text-[#001575] text-sm font-medium rounded-full mb-3">
-                Lo mas vendido
-              </span>
-              <h2 className="text-3xl lg:text-4xl font-bold text-[#1A1D21] mb-2">
-                Productos Destacados
-              </h2>
-              <p className="text-[#6B7280] text-lg">Los favoritos de nuestros clientes</p>
-            </div>
-            <Link
-              to="/productos"
-              className="group flex items-center gap-2 text-[#001575] font-semibold hover:gap-3 transition-all"
-            >
-              Ver todos
-              <ArrowRight className="w-5 h-5" />
-            </Link>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {productsError && <div role="alert" className="col-span-full p-4 rounded-xl bg-red-50 text-red-800">No pudimos cargar los productos. <button className="underline min-h-11" onClick={() => setReloadProducts(value => value + 1)}>Reintentar</button></div>}
-            {isLoadingProducts
-              ? Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} className="rounded-xl bg-gray-100 animate-pulse h-72" />
-                ))
-              : productsError ? null : featuredProducts.length > 0
-                ? featuredProducts.map((product) => (
-                    <ProductCard key={product.id} product={product} />
-                  ))
-                : (
-                  <p className="col-span-4 text-center text-gray-500 py-12">
-                    No hay productos disponibles en este momento.
-                  </p>
-                )
-            }
-          </div>
-        </div>
-      </section>
-
       {/* CTA Banner */}
       <section className="py-16 lg:py-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -477,7 +346,7 @@ function HomePage() {
       </section>
 
       {/* Location Map */}
-      <section className="py-16 lg:py-24 bg-white">
+      <section className="py-12 lg:py-16 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <span className="inline-block px-3 py-1 bg-[#D1FAE5] text-[#059669] text-sm font-medium rounded-full mb-3">

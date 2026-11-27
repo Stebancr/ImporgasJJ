@@ -518,6 +518,8 @@ class ProductListView(APIView):
         if request.query_params.get('is_featured'):
             val = request.query_params['is_featured'].lower() == 'true'
             qs = qs.filter(is_featured=val)
+        if request.query_params.get('in_stock') == 'true':
+            qs = qs.filter(total_stock__gt=0)
         if request.query_params.get('min_price'):
             qs = qs.filter(price__gte=request.query_params['min_price'])
         if request.query_params.get('max_price'):
