@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/admin/context/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,10 +7,11 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 
-import { revokedMessage } from '../../services/sessionSecurity'
+import { revokedMessage, safeLoginReturn } from '../../services/sessionSecurity'
 import axios from 'axios'
 export default function LoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { login } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -28,7 +29,7 @@ export default function LoginPage() {
 
     try {
       await login(formData)
-      navigate('/admin/dashboard')
+      navigate(safeLoginReturn(searchParams.get('redirect'), true), { replace: true })
     } catch (reason) {
       setError(axios.isAxiosError(reason) && reason.response?.status === 429
         ? 'Demasiados intentos. Espera un minuto antes de intentar nuevamente.'
@@ -64,7 +65,7 @@ export default function LoginPage() {
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
-              {sessionStorage.getItem('auth:revoked') && <p role="status" className="text-sm">{revokedMessage}</p>}
+              {sessionStorage.getItem('auth:revoked') && <p role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">{revokedMessage}</p>}
               {error && (
                 <div role="alert" className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
                   {error}

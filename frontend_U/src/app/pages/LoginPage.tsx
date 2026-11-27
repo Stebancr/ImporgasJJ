@@ -1,5 +1,5 @@
 import './styles/LoginPage.css'
-import { revokedMessage } from '../../services/sessionSecurity'
+import { revokedMessage, safeLoginReturn } from '../../services/sessionSecurity'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Flame, Eye, EyeOff, Mail, Lock, User, Phone, ArrowRight, Shield, Truck, Headphones, CreditCard } from 'lucide-react'
@@ -19,7 +19,8 @@ function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState((location.state as { message?: string } | null)?.message || (sessionStorage.getItem('auth:revoked') ? revokedMessage : ''))
+  const [notice, setNotice] = useState((location.state as { message?: string } | null)?.message || '')
+  const sessionNotice = sessionStorage.getItem('auth:revoked') ? revokedMessage : ''
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [termsVersion, setTermsVersion] = useState('')
   const [form, setForm] = useState({
@@ -49,9 +50,7 @@ function LoginPage() {
     try {
       if (mode === 'login') {
         await login(form.email, form.password)
-        const requested = searchParams.get('redirect') || '/'
-        const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
-        if (!readPendingCartIntent()) navigate(redirect)
+        if (!readPendingCartIntent()) navigate(safeLoginReturn(searchParams.get('redirect')), { replace: true })
       } else if (mode === 'register') {
         if (!termsAccepted || !termsVersion) {
           setError('Debes leer y aceptar los Términos y Condiciones y la Política de Tratamiento de Datos.')
@@ -73,9 +72,7 @@ function LoginPage() {
         })
         try { sessionStorage.setItem('delivery-address-invitation','yes') } catch { /* Optional invitation. */ }
         await login(form.email, form.password)
-        const requested = searchParams.get('redirect') || '/'
-        const redirect = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
-        if (!readPendingCartIntent()) navigate(redirect)
+        if (!readPendingCartIntent()) navigate(safeLoginReturn(searchParams.get('redirect')), { replace: true })
       } else if (mode === 'forgot') {
         await api.post('/user/password/reset/request', { email: form.email })
         setNotice('Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.')
@@ -119,6 +116,7 @@ function LoginPage() {
                 {error}
               </div>
             )}
+            {sessionNotice && <div role="status" className="p-3 text-sm text-blue-950 bg-blue-50 border border-blue-200 rounded-xl">{sessionNotice}</div>}
             {notice && <div role="status" className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl">{notice}</div>}
             {mode === 'register' && (
               <div>

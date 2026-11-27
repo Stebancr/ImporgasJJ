@@ -6,6 +6,6 @@ export default function StoreProtectedRoute({ children }: { children: React.Reac
   const { isLoading, isAuthenticated, user } = useAuth()
   const location = useLocation()
   if (isLoading) return <PageLoading />
-  if (!isAuthenticated || !user) return <Navigate replace to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`} />
+  if (!isAuthenticated || !user) return <Navigate replace to={`/login?redirect=${encodeURIComponent(location.pathname + location.search + location.hash)}`} />
   return <>{children}</>
 }

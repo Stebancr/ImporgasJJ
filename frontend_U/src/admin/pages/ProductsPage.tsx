@@ -40,6 +40,8 @@ import ProductDescription from '@/components/ProductDescription'
 import ShippingProfileFields from '@/components/ShippingProfileFields'
 import { emptyShippingProfile, type ShippingProfile } from '@/services/shipping'
 import { useShippingConfig } from '@/hooks/useShippingConfig'
+import { useAuth } from '@/admin/context/AuthContext'
+import { revokedMessage } from '@/services/sessionSecurity'
 
 interface FormData {
   shipping_profile?: ShippingProfile
@@ -65,9 +67,30 @@ const defaultForm: FormData = {
   is_featured: false,
 }
 
+type GalleryItem = { id?: number; file?: number; url: string; alt_text: string }
+type EditDraft = {
+  owner: number
+  productId: number
+  version: string
+  form: FormData
+  stock: Record<number, string>
+  existingSpecs: ProductSpec[]
+  newSpecs: { name: string; value: string }[]
+  gallery: Omit<GalleryItem, 'url'>[]
+  files: File[]
+  primary: number
+  operationKey: string
+}
+
+// Only one interrupted edit per tab, never persisted to disk.
+let interruptedEdit: EditDraft | undefined
+let draftExpiry: ReturnType<typeof setTimeout> | undefined
+
 export default function ProductsPage() {
+  const { user } = useAuth()
   const imageBusy = false
-  const [gallery, setGallery] = useState<{id?:number;file?:number;url:string;alt_text:string}[]>([])
+  const [gallery, setGallery] = useState<GalleryItem[]>([])
+  const creationDraftKey = useRef<string | null>(null)
   const [primary, setPrimary] = useState(0)
   const [fieldErrors, setFieldErrors] = useState<Record<string,string>>({})
   const errorRef = useRef<HTMLDivElement>(null)
@@ -147,16 +170,33 @@ export default function ProductsPage() {
   }, [])
 
   useEffect(() => {
-    if (!isDialogOpen || editingProduct || !draftReady) return
-    const key = productDraftKey()
+    const key = creationDraftKey.current
+    if (!key || !isDialogOpen || editingProduct || !draftReady) return
     saveProductDraft(key, { formData, newSpecRows, stockValues, operationKey:operation.current.key,
       gallery:gallery.filter(item=>item.file!==undefined).map(item=>({file:item.file!,alt_text:item.alt_text})),primary })
   }, [isDialogOpen, editingProduct, draftReady, formData, newSpecRows, stockValues, gallery, primary])
 
   useEffect(() => {
-    if (!isDialogOpen || editingProduct || !draftReady) return
-    void saveDraftImages(productDraftKey(), imageFiles)
+    const key = creationDraftKey.current
+    if (!key || !isDialogOpen || editingProduct || !draftReady) return
+    void saveDraftImages(key, imageFiles)
   }, [isDialogOpen, editingProduct, draftReady, imageFiles])
+
+  useEffect(() => {
+    if (!user || !isDialogOpen || !editorReady || !editingProduct?.updated_at) return
+    const preserve = () => {
+      interruptedEdit = {
+        owner: user.id, productId: editingProduct.id, version: editingProduct.updated_at!,
+        form: formData, stock: stockValues, existingSpecs, newSpecs: newSpecRows,
+        gallery: gallery.map(({ id, file, alt_text }) => ({ id, file, alt_text })),
+        files: imageFiles, primary, operationKey: operation.current.key,
+      }
+      clearTimeout(draftExpiry)
+      draftExpiry = setTimeout(() => { interruptedEdit = undefined }, 30 * 60 * 1000)
+    }
+    window.addEventListener('session:revoked', preserve)
+    return () => window.removeEventListener('session:revoked', preserve)
+  }, [user, isDialogOpen, editorReady, editingProduct, formData, stockValues, existingSpecs, newSpecRows, gallery, imageFiles, primary])
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
@@ -185,6 +225,8 @@ export default function ProductsPage() {
     setPrimary(prev=>prev===index?target:prev===target?index:prev)
   }
   const handleOpenDialog = async (product?: Product) => {
+    if (!user || !localStorage.getItem('token')) return
+    creationDraftKey.current = product ? null : productDraftKey()
     setEditorReady(false)
     setImageError('')
     setGallery([])
@@ -231,6 +273,31 @@ export default function ProductsPage() {
         const stockMap: Record<number, string> = {}
         stockEntries.forEach(s => { stockMap[s.location_id] = s.quantity.toString() })
         setStockValues(stockMap)
+        const saved = interruptedEdit
+        if (saved?.owner === user.id && saved.productId === full.id) {
+          interruptedEdit = undefined
+          clearTimeout(draftExpiry)
+          if (saved.version === full.updated_at) {
+            const previews = saved.files.map(file => URL.createObjectURL(file))
+            const remoteImages = new Map(full.images?.map(img => [img.id, img.image_url || img.image]))
+            const restored = saved.gallery.flatMap(item => {
+              const url = item.file === undefined ? remoteImages.get(item.id!) : previews[item.file]
+              return url ? [{ ...item, url }] : []
+            })
+            operation.current.key = saved.operationKey
+            setFormData(saved.form)
+            setStockValues(saved.stock)
+            setExistingSpecs(saved.existingSpecs)
+            setNewSpecRows(saved.newSpecs)
+            setImageFiles(saved.files)
+            setImagePreviews(previews)
+            setGallery(restored)
+            setPrimary(Math.min(saved.primary, Math.max(0, restored.length - 1)))
+            setDraftRestored(true)
+          } else {
+            setError('El producto cambió durante la interrupción. Revisa la versión actual antes de editarlo.')
+          }
+        }
         setEditorReady(true)
       } catch {
         setError('Error al cargar los datos del producto')
@@ -240,7 +307,7 @@ export default function ProductsPage() {
     } else {
       setEditingProduct(null)
       initialShipping.current=JSON.stringify(defaultForm.shipping_profile)
-      const key = productDraftKey()
+      const key = creationDraftKey.current!
       const draft = readProductDraft(key)
       if(draft?.operationKey) operation.current.key=draft.operationKey
       setFormData(draft?.formData ?? defaultForm)
@@ -263,6 +330,7 @@ export default function ProductsPage() {
 
   const handleSave = async () => {
     if(saveLock.current || !editorReady) return
+    if (!localStorage.getItem('token')) { setError(revokedMessage); return }
     const errors:Record<string,string>={}
     if(!formData.name.trim()) errors.name='Escribe el nombre del producto.'
     if(!formData.category) errors.category='Selecciona una categoría.'
@@ -300,7 +368,7 @@ export default function ProductsPage() {
       const fingerprint=JSON.stringify(payload)+files.map(file=>`${file.name}:${file.size}:${file.lastModified}`).join('|')
       operation.current.fingerprint=fingerprint
       await productsService.saveEditor(editingProduct?.id,{...payload,key:operation.current.key},files)
-      if(!editingProduct){setDraftReady(false);await clearProductDraft(productDraftKey())}
+      if(creationDraftKey.current){setDraftReady(false);await clearProductDraft(creationDraftKey.current)}
       setIsDialogOpen(false)
       await fetchProducts()
     } catch(err:unknown) {
@@ -308,9 +376,9 @@ export default function ProductsPage() {
       const status=response?.status
       if(status===400 && response?.data && typeof response.data==='object') {
         operation.current={key:crypto.randomUUID(),fingerprint:''}
-        if(!editingProduct) {
-          const draft=readProductDraft(productDraftKey())
-          if(draft) saveProductDraft(productDraftKey(),{...draft,operationKey:operation.current.key})
+        if(creationDraftKey.current) {
+          const draft=readProductDraft(creationDraftKey.current)
+          if(draft) saveProductDraft(creationDraftKey.current,{...draft,operationKey:operation.current.key})
         }
         const flatten=(value:unknown):string=>typeof value==='string'?value:Array.isArray(value)?value.map(flatten).join(' '):value&&typeof value==='object'?Object.values(value).map(flatten).join(' '):''
         showErrors(Object.fromEntries(Object.entries(response.data).map(([key,value])=>[key,flatten(value)])))
@@ -495,7 +563,7 @@ export default function ProductsPage() {
               {editingProduct ? 'Editar Producto' : 'Agregar Producto'}
             </DialogTitle>
           </DialogHeader>
-          {!editingProduct && draftRestored && (
+          {draftRestored && (
             <p className="text-sm text-muted-foreground">Se recuperó el borrador guardado en este navegador.</p>
           )}
           {error && <div ref={errorRef} tabIndex={-1} role="alert" className="mx-6 rounded border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"><p className="font-medium">{error}</p>{Object.entries(fieldErrors).map(([key,message])=><p key={key}>{message}</p>)}</div>}

@@ -25,6 +25,10 @@ export function refreshAdminToken(): Promise<string | null> {
     { timeout: 20000 },
   ).then(({ data }) => {
     if (localStorage.getItem('refresh') !== refresh) return null
+    if (typeof data.access !== 'string' || !data.access) {
+      revokeBrowserSession({ key: 'refresh', value: refresh })
+      return null
+    }
     localStorage.setItem('token', data.access)
     if (data.refresh) localStorage.setItem('refresh', data.refresh)
     window.dispatchEvent(new CustomEvent<string>('admin:token-refreshed', { detail: data.access }))

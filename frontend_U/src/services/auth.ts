@@ -48,7 +48,6 @@ function mapUser(profile: ProfileResponse, username: string, token: TokenRespons
 
 export const authService = {
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    sessionStorage.removeItem('auth:revoked')
     const token = await api.post<TokenResponse>('/auth/token/', {
       usuario: credentials.email,
       password: credentials.password,
@@ -58,6 +57,7 @@ export const authService = {
     const profile = await api.get<ProfileResponse>('/user/perfil')
     const user = mapUser(profile, credentials.email, token)
     localStorage.setItem('user', JSON.stringify(user))
+    sessionStorage.removeItem('auth:revoked')
     return { user, token: token.access }
   },
   register: async (data: RegisterData): Promise<void> => {

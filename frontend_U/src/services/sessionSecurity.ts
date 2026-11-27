@@ -1,5 +1,20 @@
 const credentialKeys = ['authToken', 'refreshToken', 'user', 'token', 'refresh', 'adminUser']
-export const revokedMessage = 'La plataforma fue actualizada. Por seguridad, inicia sesión nuevamente.'
+export const revokedMessage = 'Tu sesión expiró o fue cerrada por una actualización de seguridad. Inicia sesión nuevamente.'
+
+export function safeLoginReturn(path: string | null | undefined, admin = false): string {
+  const fallback = admin ? '/admin/dashboard' : '/'
+  if (!path?.startsWith('/') || path.startsWith('//') || path.includes('\\')
+    || Array.from(path).some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127)) return fallback
+  try {
+    const url = new URL(path, window.location.origin)
+    if (url.origin !== window.location.origin) return fallback
+    const pathname = decodeURIComponent(url.pathname)
+    if (pathname.startsWith('//') || pathname.includes('\\')) return fallback
+    const isAdmin = /^\/admin(?:\/|$)/i.test(pathname)
+    if (admin !== isAdmin || /^\/(?:admin\/)?login(?:\/|$)/i.test(pathname)) return fallback
+    return url.pathname + url.search + url.hash
+  } catch { return fallback }
+}
 
 // Race protection only. Claims here never authorize a request; the server verifies them.
 export function isSameBrowserSession(previous: string, current: string | null): boolean {

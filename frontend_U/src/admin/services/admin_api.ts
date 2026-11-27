@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { refreshAdminToken } from './admin_token'
-import { revokeBrowserSession, isSameBrowserSession } from '../../services/sessionSecurity'
+import { revokeBrowserSession, isSameBrowserSession, revokedMessage } from '../../services/sessionSecurity'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -18,6 +18,8 @@ api.interceptors.request.use(
     const token = localStorage.getItem('token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
+    } else if (/\/products\/(?:\d+\/)?editor$/.test(config.url || '')) {
+      throw new Error(revokedMessage)
     }
     return config
   },
@@ -32,23 +34,19 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/token/')) {
       const sentToken = String(error.config?.headers?.Authorization || '').replace(/^Bearer /, '')
-      if (sentToken && localStorage.getItem('token') && !isSameBrowserSession(sentToken, localStorage.getItem('token'))) return Promise.reject(error)
+      const current = localStorage.getItem('token')
+      if (!sentToken || !current || !isSameBrowserSession(sentToken, current)) return Promise.reject(error)
       if (error.response?.data?.code === 'SESSION_REVOKED') {
         revokeBrowserSession(sentToken ? { key: 'token', value: sentToken } : undefined)
         return Promise.reject(error)
       }
       if (!error.config?._retried) {
         error.config._retried = true
-        const token = await refreshAdminToken()
-        if (token) {
+        const token = current === sentToken ? await refreshAdminToken() : current
+        if (token && localStorage.getItem('token') === token && isSameBrowserSession(sentToken, token)) {
           error.config.headers.Authorization = `Bearer ${token}`
           return api(error.config)
         }
-      }
-      // The editor retains its pending files and reports the expired session inline.
-      // Authentication is still enforced by the server; no request is replayed unauthenticated.
-      if (/\/products\/(?:\d+\/)?editor$/.test(error.config?.url || '')) {
-        return Promise.reject(error)
       }
       revokeBrowserSession(sentToken ? { key: 'token', value: sentToken } : undefined)
     }
