@@ -1,8 +1,12 @@
 from django.urls import path
 from . import views
 from .offline import SincronizarVisitaView
+from .contact_views import ContactDetailView, ContactHistoryView, ContactSearchView
 
 urlpatterns = [
+    path('clientes/buscar/', ContactSearchView.as_view(), name='visitas-clientes-buscar'),
+    path('clientes/<int:pk>/', ContactDetailView.as_view(), name='visitas-cliente'),
+    path('clientes/<int:pk>/historial/', ContactHistoryView.as_view(), name='visitas-cliente-historial'),
     path('tipos/', views.TiposVisitaView.as_view(), name='visitas-tipos'),
     path('tipos/<int:pk>/', views.TipoVisitaDetailView.as_view(), name='visitas-tipo-detail'),
     path('exportar/', views.ExportarVisitasView.as_view(), name='visitas-exportar'),

@@ -3,7 +3,7 @@ from django.db.models import Q
 
 
 class ClienteVisita(models.Model):
-    """Información del cliente para una visita técnica."""
+    """Ficha reutilizable o copia independiente de los datos de una visita."""
     nombre = models.CharField(max_length=200)
     identificacion = models.CharField(max_length=30, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
@@ -11,6 +11,12 @@ class ClienteVisita(models.Model):
     direccion = models.TextField()
     indicaciones_llegada = models.TextField(blank=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
+    telefono_clave = models.CharField(max_length=20, null=True, unique=True, editable=False)
+    correo_clave = models.CharField(max_length=100, null=True, unique=True, editable=False)
+
+    @classmethod
+    def fichas(cls):
+        return cls.objects.filter(correo_clave__isnull=False)
 
     class Meta:
         db_table = 'visita_cliente'
@@ -74,6 +80,10 @@ class VisitaTecnica(models.Model):
         ClienteVisita,
         on_delete=models.CASCADE,
         related_name='visitas',
+    )
+    cliente_registrado = models.ForeignKey(
+        ClienteVisita, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='historial_visitas', editable=False,
     )
     tipo_tarea = models.CharField(max_length=50)
     tipo_tarea_etiqueta = models.CharField(max_length=150, blank=True)

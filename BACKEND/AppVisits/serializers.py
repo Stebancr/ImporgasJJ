@@ -2,11 +2,13 @@ from decimal import Decimal
 import re
 
 from django.utils import timezone
+from django.db import transaction
 from rest_framework import serializers
 from django.core import signing
 from django.urls import reverse
 from .models import ClienteVisita, VisitaTecnica, ReporteVisita, EvidenciaFotografica, TipoVisita, CambioCostoVisita
 from usuarios.models import Credenciales
+from .contacts import CONTACT_FIELDS, save_contact
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -45,7 +47,20 @@ class TecnicoSerializer(serializers.ModelSerializer):
 class ClienteVisitaSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClienteVisita
-        fields = '__all__'
+        fields = ('id', *CONTACT_FIELDS, 'fecha_creacion')
+
+
+class FichaClienteUpdateSerializer(serializers.ModelSerializer):
+    correo = serializers.EmailField(max_length=100)
+    telefono = serializers.CharField(max_length=20)
+
+    class Meta:
+        model = ClienteVisita
+        fields = CONTACT_FIELDS
+
+    def update(self, instance, validated_data):
+        values = {field: getattr(instance, field) for field in CONTACT_FIELDS}
+        return save_contact(ClienteVisita.fichas(), {**values, **validated_data}, instance)
 
 
 class TipoVisitaSerializer(serializers.ModelSerializer):
@@ -231,12 +246,14 @@ class VisitaDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = VisitaTecnica
-        exclude = ['pdf_final']
+        exclude = ['pdf_final', 'cliente_registrado']
 
 
 # ─── create ────────────────────────────────────────────────────────────────────
 
 class VisitaCreateSerializer(serializers.Serializer):
+    cliente_registrado_id = serializers.IntegerField(min_value=1, required=False)
+    registrar_cliente = serializers.BooleanField(required=False, default=False)
     # Cliente
     cliente_nombre = serializers.CharField(
         max_length=200,
@@ -326,20 +343,30 @@ class VisitaCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Debe seleccionar un técnico válido y activo.')
         return value
 
+    def validate(self, attrs):
+        if attrs.get('cliente_registrado_id') and attrs.get('registrar_cliente'):
+            raise serializers.ValidationError('Selecciona una ficha existente o registra una nueva.')
+        return attrs
+
+    @transaction.atomic
     def create(self, validated_data):
-        cliente = ClienteVisita.objects.create(
-            nombre=validated_data['cliente_nombre'],
-            identificacion=validated_data.get('cliente_identificacion', ''),
-            telefono=validated_data.get('cliente_telefono', ''),
-            correo=validated_data.get('cliente_correo', ''),
-            direccion=validated_data['cliente_direccion'],
-            indicaciones_llegada=validated_data.get('cliente_indicaciones_llegada', ''),
-        )
+        data = {field: validated_data.get(f'cliente_{field}', '') for field in CONTACT_FIELDS}
+        profile = None
+        if profile_id := validated_data.get('cliente_registrado_id'):
+            profile = ClienteVisita.fichas().select_for_update().filter(pk=profile_id).first()
+            if profile is None:
+                raise serializers.ValidationError({'cliente_registrado_id': 'Selecciona una ficha válida.'})
+            for field in ('nombre', 'identificacion', 'telefono', 'correo'):
+                data[field] = getattr(profile, field)
+        elif validated_data.get('registrar_cliente'):
+            profile = save_contact(ClienteVisita.fichas(), data)
+        cliente = ClienteVisita.objects.create(**data)
         tecnico_id = validated_data.get('tecnico_id')
         tecnico = Credenciales.objects.get(id=tecnico_id, tipo_usuario=1, estado=1)
         creado_por = self.context.get('request').user if self.context.get('request') else None
         visita = VisitaTecnica.objects.create(
             cliente=cliente,
+            cliente_registrado=profile,
             tecnico=tecnico,
             tipo_tarea=validated_data['tipo_tarea'],
             tipo_tarea_etiqueta=TipoVisita.objects.get(codigo=validated_data['tipo_tarea']).nombre,

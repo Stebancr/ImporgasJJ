@@ -7,6 +7,12 @@ class ClienteVisitaAdmin(admin.ModelAdmin):
     list_display = ['nombre', 'identificacion', 'telefono', 'correo', 'direccion']
     search_fields = ['nombre', 'identificacion', 'correo']
 
+    def get_readonly_fields(self, request, obj=None):
+        # El flujo del módulo valida las claves de búsqueda y conserva las copias.
+        if obj and (obj.correo_clave or obj.visitas.filter(cliente_registrado__isnull=False).exists()):
+            return ('nombre', 'identificacion', 'telefono', 'correo', 'direccion', 'indicaciones_llegada')
+        return super().get_readonly_fields(request, obj)
+
 
 class EvidenciaInline(admin.TabularInline):
     model = EvidenciaFotografica

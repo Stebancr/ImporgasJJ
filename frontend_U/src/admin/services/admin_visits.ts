@@ -100,6 +100,8 @@ export interface EvidenciaFoto {
 }
 
 export interface CreateVisitaData {
+  registrar_cliente?: boolean
+  cliente_registrado_id?: number
   cliente_nombre: string
   cliente_identificacion?: string
   cliente_telefono?: string
@@ -144,6 +146,16 @@ export interface CalendarioItem {
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 export const visitsService = {
+  searchContacts: (term: string) =>
+    api.post<ClienteVisita[]>('/visits/clientes/buscar/', { term }).then(r => r.data),
+  getContact: (id: number) =>
+    api.get<ClienteVisita>(`/visits/clientes/${id}/`).then(r => r.data),
+  updateContact: (id: number, data: Partial<ClienteVisita>) =>
+    api.patch<ClienteVisita>(`/visits/clientes/${id}/`, data).then(r => r.data),
+  getContactHistory: (id: number, page: number) =>
+    api.get<{ next: string | null; results: Pick<VisitaItem, 'id' | 'numero_tarea' | 'fecha' | 'estado'>[] }>(
+      `/visits/clientes/${id}/historial/`, { params: { page } },
+    ).then(r => r.data),
   getTipos: () => api.get<TipoVisita[]>('/visits/tipos/').then((r) => r.data),
   createTipo: (data: Pick<TipoVisita, 'codigo' | 'nombre'>) =>
     api.post<TipoVisita>('/visits/tipos/', data).then((r) => r.data),
