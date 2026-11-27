@@ -3,6 +3,7 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 from usuarios.models import Credenciales
+from .session_security import attach_claims, validate_claims, revoked
 
 class TokenLMSSerializer(TokenObtainPairSerializer):
     """
@@ -13,8 +14,7 @@ class TokenLMSSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        token['password_version'] = user.password_version
-        return token
+        return attach_claims(token, user)
 
     def validate(self, attrs):
         try:
@@ -35,6 +35,7 @@ class PasswordVersionRefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
         token = RefreshToken(attrs['refresh'])
         user = Credenciales.objects.filter(pk=token.get('user_id'), estado=1).first()
-        if not user or token.get('password_version', 0) != user.password_version:
-            raise AuthenticationFailed('La sesión expiró. Inicia sesión de nuevo.')
+        if not user:
+            raise revoked()
+        validate_claims(user, token, credential_type='jwt')
         return super().validate(attrs)

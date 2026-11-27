@@ -57,6 +57,7 @@ export const authService = {
     const profile = await api.get<ProfileResponse>('/user/perfil')
     const user = mapUser(profile, credentials.email, token)
     localStorage.setItem('user', JSON.stringify(user))
+    sessionStorage.removeItem('auth:revoked')
     return { user, token: token.access }
   },
   register: async (data: RegisterData): Promise<void> => {
@@ -72,9 +73,12 @@ export const authService = {
     })
   },
   logout: () => {
+    const hadSession = !!localStorage.getItem('authToken')
+    if (hadSession) void api.post('/auth/logout/', {}).catch(() => undefined)
     localStorage.removeItem('authToken')
     localStorage.removeItem('refreshToken')
     localStorage.removeItem('user')
+    if (hadSession) window.dispatchEvent(new Event('auth:logout'))
   },
   getStoredUser: (): User | null => {
     const raw = localStorage.getItem('user')

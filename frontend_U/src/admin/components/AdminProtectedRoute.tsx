@@ -23,7 +23,7 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/admin/login" state={{ from: location }} replace />
+    return <Navigate to={`/admin/login?redirect=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {

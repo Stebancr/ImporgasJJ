@@ -24,7 +24,7 @@ Content-Type: application/json
 **Respuesta Exitosa**:
 ```json
 {
-    "token": "abc123def456ghi789..."
+    "token": "<TOKEN_DE_PRUEBA_DESDE_ENTORNO>"
 }
 ```
 
@@ -105,7 +105,7 @@ Body:
 
 Response:
   {
-    "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b"
+    "token": "<TOKEN_DE_PRUEBA_DESDE_ENTORNO>"
   }
 ```
 

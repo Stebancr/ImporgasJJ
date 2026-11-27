@@ -18,9 +18,12 @@ from django.contrib import admin
 from django.http import HttpResponseNotFound
 from django.urls import path, include, re_path
 from auth.views import TokenLMSView, PasswordVersionRefreshView
+from auth.session_views import LogoutView, PersonalTokenView
 from .health import api_root
 
 urlpatterns = [
+    path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
+    path('auth/personal-token/', PersonalTokenView.as_view(), name='auth-personal-token'),
     path('admin/', admin.site.urls),
     path('auth/token/', TokenLMSView.as_view(), name='token_obtain_pair'),
     # Alias sin barra para proxies que normalizan la URL y redirigen los POST.

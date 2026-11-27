@@ -1,7 +1,7 @@
 name: Development release validation
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
     branches: [dev, main]
 permissions:
@@ -29,7 +29,7 @@ jobs:
       - name: Lint, typecheck, build and dependency audit in Docker
         run: >-
           docker run --rm -v "$PWD/frontend_U:/app" -w /app node:20
-          sh -c 'npm ci --legacy-peer-deps && npm run lint && npx tsc --noEmit && npm run build && npm audit --omit=dev'
+          sh -c 'npm ci --legacy-peer-deps && npm run lint && npm test && npx tsc --noEmit && npm run build && npm audit --omit=dev'
   whatsapp:
     runs-on: ubuntu-latest
     timeout-minutes: 15

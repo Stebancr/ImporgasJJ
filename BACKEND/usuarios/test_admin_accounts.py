@@ -1,3 +1,4 @@
+from auth.serializers import TokenLMSSerializer
 from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -60,7 +61,7 @@ class AdministrativeAccountsTests(APITestCase):
 
     def test_password_policy_confirmation_and_revocation(self):
         url = reverse('admin-account-password', kwargs={'usuario_id':self.worker.usuario_rel_id})
-        token = RefreshToken.for_user(self.worker)
+        token = TokenLMSSerializer.get_token(self.worker)
         token['password_version'] = self.worker.password_version
         for password, confirmation in [('123','123'), ('Safe@929!VeryLong','different')]:
             self.assertEqual(self.client.post(url, {'new_password':password,'confirm_password':confirmation}).status_code, 400)
@@ -114,7 +115,7 @@ class AccountRealtimeRevocationTests(TransactionTestCase):
         from core.asgi import application
         for index, change in enumerate(({'password_version':1}, {'estado':0}, {'tipo_usuario':0})):
             account = Credenciales.objects.create(usuario=f'ws-revoke-{index}', tipo_usuario=1, estado=1)
-            token = str(AccessToken.for_user(account))
+            token = str(TokenLMSSerializer.get_token(account).access_token)
 
             async def scenario():
                 socket = WebsocketCommunicator(application, '/ws/crm-chat/', subprotocols=['crm-chat', f'jwt.{token}'])
